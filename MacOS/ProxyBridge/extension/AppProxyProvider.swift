@@ -798,6 +798,14 @@ class AppProxyProvider: NETransparentProxyProvider {
             } else {
                 completionHandler?(nil)
             }
+        case "setDNSPolicy":
+            if let raw = message["policy"] as? [String: Any] {
+                // published in the shared container so the DNS proxy provider,
+                // which cannot be sent a message, sees the same policy
+                DNSPolicyStore.shared.publish(DNSPolicy.fromDictionary(raw))
+                log("DNS policy updated")
+            }
+            completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok"]))
         case "setProxyConfigs":
             if let configs = message["configs"] as? [[String: Any]] {
                 proxyLock.lock()
@@ -1576,10 +1584,21 @@ class AppProxyProvider: NETransparentProxyProvider {
         // resolved this address through our DNS proxy, ask the proxy for the name
         // (socks5 domain address / CONNECT host:port) and fall back to the ip
         var destination = originalDestination
-        if config.sendDomain,
-           IPv4Address(originalDestination) != nil || IPv6Address(originalDestination) != nil,
+        if IPv4Address(originalDestination) != nil || IPv6Address(originalDestination) != nil,
            let name = DNSMapStore.shared.latestDomain(forIP: originalDestination, maxAge: AppProxyProvider.dnsNameMaxAge) {
-            destination = name
+            // the DNS policy has the last word: in local mode the proxy server
+            // must not resolve names, in remote mode it must, and leak protection
+            // forces the name even when the proxy's own setting says otherwise
+            let addressing = DNSPolicyStore.shared.policy.addressing(for: name)
+            let sendName: Bool
+            switch addressing {
+            case .some(.hostname): sendName = true
+            case .some(.address): sendName = false
+            case .none: sendName = config.sendDomain
+            }
+            if sendName {
+                destination = name
+            }
         }
         let proxyEndpoint = NWHostEndpoint(hostname: config.host, port: String(config.port))
         let proxyConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)

@@ -56,7 +56,11 @@ struct ProxyBridgeGUIApp: App {
                     openProxyRulesWindow()
                 }
                 .keyboardShortcut("r", modifiers: .command)
-                
+
+                Button("DNS Settings...") {
+                    openDNSSettingsWindow()
+                }
+
                 Divider()
                 
                 Toggle("Enable Traffic Logging", isOn: Binding(
@@ -171,6 +175,10 @@ struct ProxyBridgeGUIApp: App {
     
     private func openProxyRulesWindow() {
         NSApp.sendAction(#selector(AppDelegate.openProxyRules), to: nil, from: nil)
+    }
+
+    private func openDNSSettingsWindow() {
+        NSApp.sendAction(#selector(AppDelegate.openDNSSettings), to: nil, from: nil)
     }
     
     private func openAboutWindow() {
@@ -341,6 +349,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func openProxyRules() {
         openWindow(title: "Proxy Rules", size: NSSize(width: 1200, height: 600), resizable: true) {
             ProxyRulesView(viewModel: AppDelegate.viewModel!)
+        }
+    }
+
+    @objc func openDNSSettings() {
+        openWindow(title: "DNS Settings", size: NSSize(width: 620, height: 560)) {
+            DNSSettingsView(viewModel: AppDelegate.viewModel!)
         }
     }
     

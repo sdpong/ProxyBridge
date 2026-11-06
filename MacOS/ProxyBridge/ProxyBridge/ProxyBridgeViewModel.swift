@@ -188,12 +188,48 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     
     private func loadDNSSetting() {
         isDNSEnabled = UserDefaults.standard.object(forKey: "dnsEnabled") as? Bool ?? true
+        loadDNSPolicySetting()
     }
 
     func toggleDNS() {
         isDNSEnabled.toggle()
         UserDefaults.standard.set(isDNSEnabled, forKey: "dnsEnabled")
         applyDNSProxy()
+    }
+
+    // the DNS policy decides which names may become a proxy destination, which
+    // resolver answers them and whether the proxy server resolves them itself
+    @Published var dnsPolicy = DNSPolicySettings()
+
+    private func loadDNSPolicySetting() {
+        let d = UserDefaults.standard
+        if let data = d.data(forKey: "dnsPolicy"),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dnsPolicy = DNSPolicySettings.fromDictionary(dict)
+        } else {
+            dnsPolicy = DNSPolicySettings()
+        }
+    }
+
+    // saves the policy and hands it to the extension, which publishes it where
+    // the DNS proxy provider can see it
+    func updateDNSPolicy(_ policy: DNSPolicySettings) {
+        dnsPolicy = policy
+        let d = UserDefaults.standard
+        if let data = try? JSONSerialization.data(withJSONObject: policy.toDictionary()) {
+            d.set(data, forKey: "dnsPolicy")
+        }
+        sendDNSPolicyToExtension()
+    }
+
+    private func sendDNSPolicyToExtension() {
+        guard let session = tunnelSession else { return }
+        let message: [String: Any] = [
+            "action": "setDNSPolicy",
+            "policy": dnsPolicy.toDictionary()
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        try? session.sendProviderMessage(data) { _ in }
     }
 
     private func sendTrafficLoggingToExtension(_ enabled: Bool) {
@@ -286,6 +322,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             sendProxyConfigsToExtension(session: session)
             RuleManager.resyncRules(session: session) { _, _ in }
             sendTrafficLoggingToExtension(isTrafficLoggingEnabled)
+            sendDNSPolicyToExtension()
         }
         applyDNSProxy()
         updatePollingState()
