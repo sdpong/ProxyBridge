@@ -157,6 +157,24 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 - **UDP 只走 SOCKS5**：HTTP 没有 UDP，SOCKS4 也没有。规则指向这两种代理时 UDP 走直连，
   并且要**明说**，不能静默回落。
 
+### DNS 策略层（两端唯一不能一致的地方）
+
+- **macOS 能替应用回答 DNS，Windows 不能**：macOS 的 `NEDNSProxyProvider` 拦下应用的查询，
+  自己回答，所以「上游解析器」决定的是**应用**拿到什么答案。
+  Windows 上应用永远先问自己系统的解析器（WinDivert 只能旁观，没法替它回答），
+  所以「上游解析器」决定的是**代理**被告知什么——本地模式下引擎自己去问那个解析器，
+  把它的答案交给代理。
+- **能对齐的部分全部对齐**：三选一策略（system / local / remote）的语义、
+  排除名单的匹配规则（`example.com` 只匹配自己、`*.example.com` 匹配其下全部、`*` 匹配全部）、
+  排除的名字不进名字缓存、防泄漏开关压过其他设置——
+  这些两端一模一样，profile 的键名也用同一套
+  （`dnsPolicy` / `mode` / `excludedDomains` / `upstreamResolvers` / `autoDetectUpstream` / `leakProtection`）。
+- **防漂移靠测试**：macOS 的 `dnspolicy_tests.swift` 同时编译 App 侧与扩展侧两份模型，
+  逐字段比对「App 写出去的」与「扩展读回来的」；
+  Windows 的 `test_dnspolicy.c` 跑同一批用例。
+- **Windows 的 `FIXED_INFO.DnsServerList` 只有一个解析器**，而且是 `IP_ADDRESS_STRING`，
+  地址在 `.String` 里，不是数组。
+
 ## 已知限制
 
 - **本机（macOS）没有 MSVC / mingw 交叉编译器**，Windows 侧改动只能逐行人工复核 +
