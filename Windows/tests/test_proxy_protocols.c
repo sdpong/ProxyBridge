@@ -271,7 +271,8 @@ int main(void)
           SOCKET c = start(&sv, &sc); int r = socks4_connect_name(c, "example.com", 443, &none); finish(&sv, c);
           CHECK(r == 0);
           CHECK(sc.req[4] == 0 && sc.req[5] == 0 && sc.req[6] == 0 && sc.req[7] == 1);
-          CHECK(sc.req_len == 9 + 11 && !memcmp(sc.req + 9, "example.com", 11) && sc.req[sc.req_len - 1] == 0); }
+          /* 8 header bytes, the empty user id with its NUL, then the name with its own NUL */
+          CHECK(sc.req_len == 9 + 11 + 1 && !memcmp(sc.req + 9, "example.com", 11) && sc.req[sc.req_len - 1] == 0); }
 
         /* a rejected request is refused */
         { Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; set_reply(&sc, S4REJ, 8);
