@@ -147,6 +147,7 @@ Windows / Android 走各自的平台机制，但语义要对齐。
 | 能力 | 状态 | 说明 |
 |---|---|---|
 | 代理链（冗余 / 负载均衡） | `[~]` | macOS：**简单链已落地**（`Proxy Chains` 窗口 + 规则动作选链 + 扩展逐跳握手）。Windows：**简单链也已落地**（引擎链表 + 多跳握手 + `Proxy Chains` 窗口 + profile + CLI）。冗余 / 负载均衡链类型仍待做 |
+| **Proxifier 配置导入（.ppx）** | `[x]` | macOS 与 Windows **两端都能读** Proxifier 导出的 `.ppx`（XML）。映射规格见 [docs/PPX-IMPORT.md](PPX-IMPORT.md)；导入落在**新配置**里，已有配置不动；映射不了的 Proxifier 特性给警告，不静默丢弃 |
 | 流量统计面板 | `[ ]` | |
 | 托盘流量图 | `[ ]` | |
 | Proxy Checker 延迟测量 | `[x]` | Windows 与 macOS 的测试都已报出毫秒数（Windows `TestProxyConfigEx`、macOS `ProxyCheckerView` 的 Test 3） |
@@ -194,6 +195,37 @@ Windows / Android 走各自的平台机制，但语义要对齐。
 > **两端一致 / 不一致**：链的**语义**（能放什么、坏了怎么办、UDP 怎么办、删了怎么办）两端一致，
 > 链的**表示**按平台各自的规则模型来（macOS action 前缀 vs Windows 号段），
 > 但 profile 里的键名与形状一致，一个配置文件在两端意思相同。
+
+---
+
+## Proxifier 配置导入（.ppx）
+
+Proxifier 把配置存成一个 XML 文件 `.ppx`。从 Proxifier 换过来的人手里就是这个文件，
+手抄一遍规则不现实，所以直接读。**完整映射规格见 [docs/PPX-IMPORT.md](PPX-IMPORT.md)**。
+
+### 本阶段实际交付
+
+1. **两端都有读取器，共用一张映射表**
+   - macOS：`MacOS/ProxyBridge/ProxyBridge/PPXImporter.swift`（用系统 `XMLParser`）
+   - Windows：`Windows/gui/profile/ppx.c`（自写最小 XML 解析器）
+   - 规格写在一份文档里，两端各有一份**内容完全相同的 fixture 与用例**
+     （`ppx_tests.swift` ↔ `test_ppx.c`），用例逐条对应，防止说法漂移。
+2. **导入落在新配置里**：macOS 新建 profile 并切过去，Windows 写一个新的 `.pbprofile`
+   并切过去；**已有的配置一个都不动**。
+3. **映射要点**
+   - 代理类型：`SOCKS5`→socks5、`SOCKS4`→socks4（不带域名）、`SOCKS4A`→socks4（带域名）、
+     `HTTPS`→HTTP 代理（Proxifier 的 "HTTPS" 是「会开 CONNECT 隧道的 HTTP 代理」）、
+     `HTTP`→HTTP 代理 **+ 警告**（Proxifier 的纯 HTTP 没有 CONNECT 隧道）。
+   - 链：只走 `enabled="true"` 的跳；**所有跳都关的链被丢弃**，指向它的规则**改直连**。
+   - 规则：保留文件顺序（Proxifier 取第一条命中的规则）；协议固定 `TCP`
+     （**Proxifier 只代理 TCP**）；应用名去掉引号、`.app` 后缀并去重。
+   - 名字解析：`ViaProxy=true` → `remote` + 防泄漏；`false` → `local`；
+     `AutoModeDetection` → `system` + 警告；排除名单里的 `%ComputerName%` 展开成本机主机名。
+4. **不静默丢弃**：Proxifier 有而 ProxyBridge 没有的东西（流量加密、QUIC 阻断、
+   连接环检测、逐代理 `<Options>` 位掩码……）要么给用户一条警告，要么在规格文档里写明。
+   逐代理的位掩码**不猜**——公开资料查不到位定义，实测值只有 0/4，宁可原样忽略。
+5. **CLI 同样能用**：macOS 的 `--profile x.ppx` 与标准输入都能读；
+   Windows GUI 菜单「Profile → Import Proxifier Profile (.ppx)...」。
 
 ---
 

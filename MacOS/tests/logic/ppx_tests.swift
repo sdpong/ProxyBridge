@@ -25,6 +25,7 @@ let sample = """
         <HttpProxiesSupport enabled="true"/>
     </Options>
     <ProxyList>
+        <!-- the proxy servers of this profile -->
         <Proxy id="101" type="SOCKS5">
             <Address>127.0.0.1</Address>
             <Port>1080</Port>
@@ -67,6 +68,12 @@ let sample = """
         <Proxy id="108" type="SOCKS5">
             <Label>work</Label>
             <Address>10.0.0.8</Address>
+            <Port>1080</Port>
+            <Options>0</Options>
+        </Proxy>
+        <Proxy id="109" type="SOCKS5">
+            <Label>R&amp;D</Label>
+            <Address>10.0.0.9</Address>
             <Port>1080</Port>
             <Options>0</Options>
         </Proxy>
@@ -137,7 +144,7 @@ let policy = profile["dnsPolicy"] as? [String: Any] ?? [:]
 
 func config(_ host: String) -> [String: Any]? { return configs.first { ($0["host"] as? String) == host } }
 
-t("the proxies are imported", configs.count == 7)
+t("the proxies are imported", configs.count == 8)
 t("a socks5 proxy stays a socks5 proxy", config("127.0.0.1")?["type"] as? String == "socks5")
 t("an http proxy stays an http proxy", config("10.0.0.2")?["type"] as? String == "http")
 t("a socks4 proxy stays a socks4 proxy", config("10.0.0.3")?["type"] as? String == "socks4")
@@ -149,6 +156,7 @@ t("the port is imported", config("127.0.0.1")?["port"] as? Int == 1080)
 t("the credentials are imported", config("10.0.0.6")?["username"] as? String == "alice" && config("10.0.0.6")?["password"] as? String == "secret")
 t("a proxy without credentials has none", config("127.0.0.1")?["username"] == nil)
 t("the label becomes the name", config("10.0.0.8")?["name"] as? String == "work")
+t("the entities in a label are decoded", config("10.0.0.9")?["name"] as? String == "R&D")
 t("an unknown type is reported", imported.warnings.contains { $0.contains("CARRIER-PIGEON") })
 
 // ── the chains ────────────────────────────────────────────────────────────────

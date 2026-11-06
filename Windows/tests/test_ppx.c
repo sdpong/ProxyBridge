@@ -34,6 +34,7 @@ static const char* SAMPLE =
 "        <HttpProxiesSupport enabled=\"true\"/>\n"
 "    </Options>\n"
 "    <ProxyList>\n"
+"        <!-- the proxy servers of this profile -->\n"
 "        <Proxy id=\"101\" type=\"SOCKS5\">\n"
 "            <Address>127.0.0.1</Address>\n"
 "            <Port>1080</Port>\n"
@@ -76,6 +77,12 @@ static const char* SAMPLE =
 "        <Proxy id=\"108\" type=\"SOCKS5\">\n"
 "            <Label>work</Label>\n"
 "            <Address>10.0.0.8</Address>\n"
+"            <Port>1080</Port>\n"
+"            <Options>0</Options>\n"
+"        </Proxy>\n"
+"        <Proxy id=\"109\" type=\"SOCKS5\">\n"
+"            <Label>R&amp;D</Label>\n"
+"            <Address>10.0.0.9</Address>\n"
 "            <Port>1080</Port>\n"
 "            <Options>0</Options>\n"
 "        </Proxy>\n"
@@ -186,7 +193,7 @@ int main(void)
 
     // ── the proxies ────────────────────────────────────────────────────────
     CHECK(import_text(SAMPLE));
-    CHECK(g.cfgCount == 7);
+    CHECK(g.cfgCount == 8);
     {
         const PBConfig* c = cfg_by_host("127.0.0.1");
         CHECK(c && _wcsicmp(c->type, L"SOCKS5") == 0);
@@ -231,7 +238,13 @@ int main(void)
         const PBConfig* c = cfg_by_host("10.0.0.8");
         CHECK(c && _wcsicmp(c->name, L"work") == 0);         // the label becomes the name
     }
+    {
+        const PBConfig* c = cfg_by_host("10.0.0.9");
+        CHECK(c && _wcsicmp(c->name, L"R&D") == 0);           // the entities in a label are decoded
+    }
     CHECK(has_note(L"CARRIER-PIGEON"));                      // the unknown type is reported
+    // a proxy that is added later gets an id of its own, never one that is in use
+    CHECK(g.nextCfgId > 109);
 
     // ── the chains ─────────────────────────────────────────────────────────
     CHECK(g.chainCount == 1);

@@ -473,6 +473,18 @@ static BOOL pbx_is_wspace(wchar_t c)
     return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n';
 }
 
+// The name of this machine, which is what Proxifier's %ComputerName% stands for.
+// GetComputerNameW takes the size of the buffer in characters and needs it up front:
+// a size of zero asks for the length and fails.
+static BOOL pbx_computer_name(wchar_t* out, int cch)
+{
+    if (cch <= 0) return FALSE;
+    DWORD n = (DWORD)cch;
+    if (!GetComputerNameW(out, &n) || n == 0) { out[0] = 0; return FALSE; }
+    out[cch - 1] = 0;
+    return TRUE;
+}
+
 // a list separated by semicolons: the pieces are trimmed and the empty ones go away
 static void pbx_normalize_list(const char* raw, wchar_t* out, int cch)
 {
@@ -577,7 +589,7 @@ static void pbx_normalize_apps(const char* raw, wchar_t* out, int cch)
 
 typedef struct {
     UINT32 id;
-    char   type[16];       // "SOCKS5" | "SOCKS4" | "HTTP"
+    wchar_t type[16];       // L"SOCKS5" | L"SOCKS4" | L"HTTP"
     int    sendDomain;
 } PBXProxyInfo;
 
@@ -632,13 +644,13 @@ BOOL PB_ImportPPXData(const char* data, size_t len, PBProfile* p, wchar_t* notes
         PBXProxyInfo info;
         ZeroMemory(&info, sizeof(info));
         info.id = (UINT32)strtoul(idText, NULL, 10);
-        if (strcmp(type, "SOCKS5") == 0) { strcpy_s(info.type, sizeof(info.type), "SOCKS5"); info.sendDomain = TRUE; }
-        else if (strcmp(type, "SOCKS4") == 0) { strcpy_s(info.type, sizeof(info.type), "SOCKS4"); info.sendDomain = FALSE; }
-        else if (strcmp(type, "SOCKS4A") == 0) { strcpy_s(info.type, sizeof(info.type), "SOCKS4"); info.sendDomain = TRUE; }
-        else if (strcmp(type, "HTTPS") == 0) { strcpy_s(info.type, sizeof(info.type), "HTTP"); info.sendDomain = TRUE; }
+        if (strcmp(type, "SOCKS5") == 0) { wcscpy_s(info.type, 16, L"SOCKS5"); info.sendDomain = TRUE; }
+        else if (strcmp(type, "SOCKS4") == 0) { wcscpy_s(info.type, 16, L"SOCKS4"); info.sendDomain = FALSE; }
+        else if (strcmp(type, "SOCKS4A") == 0) { wcscpy_s(info.type, 16, L"SOCKS4"); info.sendDomain = TRUE; }
+        else if (strcmp(type, "HTTPS") == 0) { wcscpy_s(info.type, 16, L"HTTP"); info.sendDomain = TRUE; }
         else if (strcmp(type, "HTTP") == 0)
         {
-            strcpy_s(info.type, sizeof(info.type), "HTTP");
+            wcscpy_s(info.type, 16, L"HTTP");
             info.sendDomain = TRUE;
             if (!httpAllowed) { httpSkipped++; continue; }
             httpProxies++;
@@ -848,8 +860,7 @@ BOOL PB_ImportPPXData(const char* data, size_t len, PBProfile* p, wchar_t* notes
             if (_wcsicmp(s, L"%ComputerName%") == 0)
             {
                 wchar_t host[256];
-                DWORD n = 0;
-                if (GetComputerNameW(host, &n) && n > 0)
+                if (pbx_computer_name(host, 256))
                 {
                     // the name goes where the constant was, so it has to fit there
                     size_t room = (size_t)(wide + 16384 - s);
@@ -881,8 +892,7 @@ BOOL PB_ImportPPXData(const char* data, size_t len, PBProfile* p, wchar_t* notes
         if (pbx_attr_bool(list, "ExcludeSelfHostname", FALSE))
         {
             wchar_t host[256];
-            DWORD n = 0;
-            if (GetComputerNameW(host, &n) && n > 0)
+            if (pbx_computer_name(host, 256))
             {
                 BOOL seen = FALSE;
                 for (int j = 0; j < count; j++) if (_wcsicmp(names[j], host) == 0) { seen = TRUE; break; }

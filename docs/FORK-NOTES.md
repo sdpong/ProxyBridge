@@ -185,6 +185,25 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 - **Windows 的 `FIXED_INFO.DnsServerList` 只有一个解析器**，而且是 `IP_ADDRESS_STRING`，
   地址在 `.String` 里，不是数组。
 
+### Proxifier 配置导入（.ppx）
+
+- **两端共用一张映射表**：`docs/PPX-IMPORT.md` 是契约。
+  两端各有一份**内容完全相同**的 fixture 与用例
+  （`MacOS/tests/logic/ppx_tests.swift` ↔ `Windows/tests/test_ppx.c`），
+  改了一边的映射就要改另一边，否则测试对不上。
+- **macOS 用系统 `XMLParser`**（`shouldResolveExternalEntities = false`）；
+  **Windows 自己写了一个最小 XML 解析器**（`Windows/gui/profile/ppx.c`）：
+  只认元素 / 属性 / 文本、5 个内建实体与数字实体，DOCTYPE 整段跳过（不解析实体定义），
+  深度 24、节点 20000、文件 8 MB 上限。
+- **导入落在新配置里**，已有配置不动（macOS 新建 profile；Windows 写新 `.pbprofile`）。
+- **链被丢弃时，指向它的规则必须改直连**——macOS 早期版本把链 id 先收进集合再判空，
+  结果「所有跳都关」的链被丢掉了、规则却还指着它。Windows 侧按「已导入的链」查找，
+  两端现在一致，各有一条用例守着。
+- **逐代理 `<Options>` 位掩码不映射**：公开资料查不到位定义（实测 0 / 4，
+  第三方生成的 .ppx 里常见 48）。宁可原样忽略并在规格文档里写明，也不按猜的语义改用户的路由。
+- **Windows 的 `PBProfile` 有 4 MB 多**（128 条规则 × 两条 8 KB 长的列表），
+  **不能放栈上**。导入时用 `malloc` 拿。
+
 ## 已知限制
 
 - **本机（macOS）没有 MSVC / mingw 交叉编译器**，Windows 侧改动只能逐行人工复核 +
@@ -194,6 +213,7 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 ## 相关文件
 
 - `docs/ROADMAP.md` —— 功能路线图（超集 Proxifier）
+- `docs/PPX-IMPORT.md` —— Proxifier `.ppx` 导入的映射规格（两端共用）
 - `Windows/README.md` —— Windows 端架构说明
 - `MacOS/README.md` —— macOS 端架构说明
 - `CONTRIBUTING.md` —— 上游贡献指南（提交 PR 前看这个）
