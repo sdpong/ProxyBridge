@@ -255,7 +255,7 @@ private struct PPXConverter {
                 warnings.append("A rule has the action '\(actionType)', which ProxyBridge does not know. It goes direct.")
                 actionValue = "DIRECT"
             }
-            var rule: [String: Any] = [
+            let rule: [String: Any] = [
                 "name": node.child("Name")?.value ?? "",
                 "processNames": normalizeApplications(node.child("Applications")?.value ?? ""),
                 "targetHosts": normalizeList(node.child("Targets")?.value ?? ""),
