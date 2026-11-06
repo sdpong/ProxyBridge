@@ -1698,6 +1698,8 @@ class AppProxyProvider: NETransparentProxyProvider {
         switch config.type.lowercased() {
         case "socks5":
             handleSOCKS5Proxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, password: config.password, onEstablished: onEstablished)
+        case "socks4":
+            handleSOCKS4Proxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, onEstablished: onEstablished)
         case "http":
             handleHTTPProxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, password: config.password, onEstablished: onEstablished)
         default:
@@ -1707,6 +1709,51 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
+    // SOCKS4 and SOCKS4a. there is no method negotiation, only a user id in
+    // the request, and the reply is eight bytes.
+    private func handleSOCKS4Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, onEstablished: ((Data?) -> Void)? = nil) {
+        guard let request = Socks4Request.build(destination: destination, port: port, username: username) else {
+            log("SOCKS4 cannot ask for \(destination)", level: "ERROR")
+            closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+            return
+        }
+
+        proxyConnection.write(request) { [weak self] error in
+            if let error = error {
+                self?.log("SOCKS4 request write failed: \(error.localizedDescription)", level: "ERROR")
+                self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
+                return
+            }
+
+            proxyConnection.readMinimumLength(8, maximumLength: 8) { [weak self] data, error in
+                guard let self = self else { return }
+
+                if let error = error {
+                    self.log("SOCKS4 reply failed: \(error.localizedDescription)", level: "ERROR")
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
+                    return
+                }
+
+                guard let data = data, data.count == 8 else {
+                    self.log("SOCKS4 invalid reply", level: "ERROR")
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
+                    return
+                }
+
+                if Socks4Request.isGranted(data) {
+                    if let onEstablished = onEstablished {
+                        onEstablished(nil)
+                    } else {
+                        self.relayData(clientFlow: clientFlow, proxyConnection: proxyConnection)
+                    }
+                } else {
+                    self.log("SOCKS4 connect rejected (\(Socks4Request.reason(data)))", level: "ERROR")
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                }
+            }
+        }
+    }
+
     private func handleSOCKS5Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, onEstablished: ((Data?) -> Void)? = nil) {
         var greeting: [UInt8]
         if username != nil && password != nil {

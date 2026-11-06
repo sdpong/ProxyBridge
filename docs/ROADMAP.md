@@ -135,6 +135,8 @@ Windows / Android 走各自的平台机制，但语义要对齐。
 | Traffic dump | `[ ]` | |
 | 手动代理化 | `[ ]` | |
 | 规则绑定网卡 | `[ ]` | |
+| 更多代理协议 | `[~]` | macOS：**SOCKS4 / SOCKS4a 已落地**（代理类型下拉、扩展握手、代理检查器、链中可用）。HTTPS 代理（到代理走 TLS）仍待做；Windows 未做 |
+| 代理认证增强 | `[ ]` | NTLM / Kerberos / 交互式登录弹窗 / 自定义 Label / Authentication URL |
 
 ### macOS 代理链（本阶段实际交付）
 

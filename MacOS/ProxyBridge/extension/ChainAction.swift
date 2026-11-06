@@ -48,8 +48,8 @@ enum ChainPlan {
                 out.append("proxy \(i + 1) of the chain does not exist")
                 continue
             }
-            if type != "socks5" && type != "http" {
-                out.append("proxy \(i + 1) of the chain has the type '\(type)', it must be socks5 or http")
+            if type != "socks5" && type != "socks4" && type != "http" {
+                out.append("proxy \(i + 1) of the chain has the type '\(type)', it must be socks5, socks4 or http")
                 continue
             }
             // only the last hop may be an http proxy

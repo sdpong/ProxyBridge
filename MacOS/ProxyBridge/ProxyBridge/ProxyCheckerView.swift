@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import Darwin
+import Network
 
 struct ProxyCheckerView: View {
     let config: ProxyBridgeViewModel.ProxyConfig
@@ -78,7 +79,9 @@ final class ProxyCheckerModel: ObservableObject {
     private func performTests(targetHost: String, targetPort: Int) {
         let proxyHost = config.host
         let proxyPort = config.port
-        let isSocks5 = config.type.lowercased() == "socks5"
+        let proxyType = config.type.lowercased()
+        let isSocks5 = proxyType == "socks5"
+        let isSocks4 = proxyType == "socks4"
         let hasAuth = config.username != nil && config.password != nil
 
         line("Proxy:    \(proxyHost):\(proxyPort)")
@@ -111,6 +114,10 @@ final class ProxyCheckerModel: ObservableObject {
             } else {
                 line("  SOCKS5 handshake or auth failed")
             }
+        } else if isSocks4 {
+            let (ok, reason) = socks4Connect(fd1, host: targetHost, port: targetPort, username: config.username)
+            connected = ok
+            if !ok { line("  SOCKS4 CONNECT failed: \(reason)") }
         } else {
             let (ok, firstLine) = httpConnect(fd1, host: targetHost, port: targetPort)
             connected = ok
@@ -295,6 +302,35 @@ final class ProxyCheckerModel: ObservableObject {
     }
 
     // MARK: - HTTP CONNECT
+
+    // SOCKS4 and SOCKS4a: there is no method negotiation, only a user id in
+    // the request, and the name of the host follows the user id for socks4a
+    private func socks4Connect(_ fd: Int32, host: String, port: Int, username: String?) -> (Bool, String) {
+        var request: [UInt8] = [0x04, 0x01, UInt8(port >> 8), UInt8(port & 0xFF)]
+        var isName = false
+        if let ip = IPv4Address(host) {
+            request.append(contentsOf: ip.rawValue)
+        } else {
+            // the address says "a name follows"
+            request.append(contentsOf: [0, 0, 0, 1])
+            isName = true
+        }
+        let user = Array((username ?? "").utf8)
+        guard user.count <= 255 else { return (false, "the user id is too long") }
+        request.append(contentsOf: user)
+        request.append(0)
+        if isName {
+            let name = Array(host.utf8)
+            guard !name.isEmpty, name.count <= 255 else { return (false, "the host name cannot be sent") }
+            request.append(contentsOf: name)
+            request.append(0)
+        }
+        guard sendAll(fd, request) else { return (false, "the request could not be sent") }
+        guard let reply = recvExact(fd, 8), reply.count == 8 else { return (false, "the reply was too short") }
+        if reply[1] == 90 { return (true, "granted") }
+        if reply[1] == 91 { return (false, "rejected") }
+        return (false, "unknown reply code \(reply[1])")
+    }
 
     private func httpConnect(_ fd: Int32, host: String, port: Int) -> (Bool, String) {
         let target = host.contains(":") ? "[\(host)]" : host

@@ -145,7 +145,7 @@ enum CLIProfileLoader {
             if p.host.trimmingCharacters(in: .whitespaces).isEmpty { out.append("a \(p.type) proxy has no host") }
             if !(1...65535).contains(p.port) { out.append("proxy \(p.host) has the port \(p.port), it must be 1-65535") }
             let type = p.type.lowercased()
-            if type != "socks5" && type != "http" { out.append("proxy \(p.label) has the type '\(p.type)', it must be socks5 or http") }
+            if type != "socks5" && type != "socks4" && type != "http" { out.append("proxy \(p.label) has the type '\(p.type)', it must be socks5, socks4 or http") }
             if type == "socks5", (p.username?.utf8.count ?? 0) > 255 || (p.password?.utf8.count ?? 0) > 255 {
                 out.append("proxy \(p.label) has a username or password longer than 255 bytes, SOCKS5 can't carry that")
             }

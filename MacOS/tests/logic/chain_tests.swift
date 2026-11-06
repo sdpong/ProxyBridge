@@ -34,7 +34,8 @@ t("a missing proxy is a problem", ChainPlan.problems(withProxyIds: ["p1", "gone"
 t("an http proxy in the middle is a problem", ChainPlan.problems(withProxyIds: ["http1", "p2"], proxyTypes: types).contains { $0.contains("http") })
 t("an http proxy at the end is fine", ChainPlan.problems(withProxyIds: ["p1", "http1"], proxyTypes: types).isEmpty)
 t("the same proxy twice in a row is a problem", ChainPlan.problems(withProxyIds: ["p1", "p1"], proxyTypes: types).contains { $0.contains("twice") })
-t("an unknown type is a problem", ChainPlan.problems(withProxyIds: ["x"], proxyTypes: ["x": "socks4"]).contains { $0.contains("socks4") })
+t("an unknown type is a problem", ChainPlan.problems(withProxyIds: ["x"], proxyTypes: ["x": "socks3"]).contains { $0.contains("socks3") })
+t("a socks4 proxy may sit in a chain", ChainPlan.problems(withProxyIds: ["p4", "p2"], proxyTypes: ["p4": "socks4", "p2": "socks5"]).isEmpty)
 
 // the app and the extension must agree on what is wrong with a chain, or the
 // app accepts a chain the extension refuses to run

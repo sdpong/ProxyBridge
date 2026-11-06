@@ -183,7 +183,7 @@ struct ProxyConfigEditorView: View {
     @State private var sendDomain = true
     @State private var validationError = ""
 
-    private let proxyTypes = ["http", "socks5"]
+    private let proxyTypes = ["http", "socks5", "socks4"]
     private var isSaveDisabled: Bool {
         proxyHost.isEmpty || proxyPort.isEmpty || !validationError.isEmpty
     }
