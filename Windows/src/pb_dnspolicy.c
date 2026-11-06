@@ -261,15 +261,15 @@ BOOL dns_policy_preferred_resolver(char *host, size_t host_cap, UINT16 *port)
 
     if (!p.auto_detect_upstream) return FALSE;
 
-    // the resolver the system uses. GetNetworkParams hands back the servers of
-    // every adapter, the first one is good enough.
+    // The resolver the system uses. GetNetworkParams reports the one the system
+    // itself would ask, which is the natural fallback when the user configured none.
     FIXED_INFO info;
     ULONG size = sizeof(info);
-    if (GetNetworkParams(&info, &size) == ERROR_SUCCESS && info.DnsServerList.IpAddress[0] != 0)
+    if (GetNetworkParams(&info, &size) == ERROR_SUCCESS && info.DnsServerList.IpAddress.String[0] != '\0')
     {
         char h[PB_DNS_NAME_MAX];
         UINT16 pt = 53;
-        if (!dns_policy_normalize_resolver(info.DnsServerList.IpAddress[0], h, sizeof(h), &pt)) return FALSE;
+        if (!dns_policy_normalize_resolver(info.DnsServerList.IpAddress.String, h, sizeof(h), &pt)) return FALSE;
         if (port) *port = pt;
         if (host) strncpy_s(host, host_cap, h, _TRUNCATE);
         return TRUE;
@@ -483,7 +483,7 @@ BOOL dns_policy_resolve_for_proxy(const char *name, UINT32 *out_ip)
 
 // ---- the exported API --------------------------------------------------
 
-PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const PBDnsPolicy *policy)
+PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const DnsPolicy *policy)
 {
     if (policy == NULL) return FALSE;
     dns_policy_init();
@@ -505,7 +505,7 @@ PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const PBDnsPolicy *policy)
     return dns_policy_set(&p);
 }
 
-PROXYBRIDGE_API BOOL ProxyBridge_GetDNSPolicy(PBDnsPolicy *policy)
+PROXYBRIDGE_API BOOL ProxyBridge_GetDNSPolicy(DnsPolicy *policy)
 {
     if (policy == NULL) return FALSE;
     dns_policy_init();

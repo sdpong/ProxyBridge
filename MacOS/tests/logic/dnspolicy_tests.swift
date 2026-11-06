@@ -140,5 +140,73 @@ t("an empty message keeps leak protection off", empty.leakProtection == false)
 let odd = DNSPolicy.fromDictionary(["mode": "sideways"])
 t("an unknown mode falls back to the default", odd.mode == .system)
 
+// ---- the app and the extension must agree ------------------------------------
+// The app writes the policy into the profile, the extension reads it back. If the two
+// models drift apart the policy silently stops working, so every field is compared
+// here, in every combination.
+do {
+    var app = DNSPolicySettings()
+    app.mode = .remote
+    app.excludedDomains = ["a.test", "*.b.test"]
+    app.upstreamResolvers = ["9.9.9.9"]
+    app.autoDetectUpstream = false
+    app.leakProtection = true
+
+    var ext = DNSPolicy()
+    ext.mode = .remote
+    ext.excludedDomains = ["a.test", "*.b.test"]
+    ext.upstreamResolvers = ["9.9.9.9"]
+    ext.autoDetectUpstream = false
+    ext.leakProtection = true
+
+    let appWire = app.toDictionary()
+    let extWire = ext.toDictionary()
+    t("the app and the extension write the same keys",
+      Set(appWire.keys) == Set(extWire.keys))
+    t("the app and the extension write the same mode", appWire["mode"] as? String == extWire["mode"] as? String)
+    t("the app and the extension write the same exclusions",
+      (appWire["excludedDomains"] as? [String]) == (extWire["excludedDomains"] as? [String]))
+    t("the app and the extension write the same resolvers",
+      (appWire["upstreamResolvers"] as? [String]) == (extWire["upstreamResolvers"] as? [String]))
+    t("the app and the extension write the same auto detect flag",
+      (appWire["autoDetectUpstream"] as? Bool) == (extWire["autoDetectUpstream"] as? Bool))
+    t("the app and the extension write the same leak protection flag",
+      (appWire["leakProtection"] as? Bool) == (extWire["leakProtection"] as? Bool))
+
+    // what the app writes is what the extension reads back
+    let back = DNSPolicy.fromDictionary(appWire)
+    t("the extension reads the mode the app wrote", back.mode == .remote)
+    t("the extension reads the exclusions the app wrote", back.excludedDomains == ["a.test", "*.b.test"])
+    t("the extension reads the resolvers the app wrote", back.upstreamResolvers == ["9.9.9.9"])
+    t("the extension reads the auto detect flag the app wrote", back.autoDetectUpstream == false)
+    t("the extension reads the leak protection flag the app wrote", back.leakProtection == true)
+
+    // every mode and flag combination must survive the trip
+    for modeName in ["system", "local", "remote"] {
+        for leak in [true, false] {
+            for auto in [true, false] {
+                var a = DNSPolicySettings()
+                a.mode = DNSPolicySettings.Mode(rawValue: modeName)!
+                a.leakProtection = leak
+                a.autoDetectUpstream = auto
+                a.excludedDomains = ["x.test"]
+                a.upstreamResolvers = ["1.1.1.1"]
+                let e = DNSPolicy.fromDictionary(a.toDictionary())
+                t("the mode survives the trip (\(modeName))", e.mode.rawValue == modeName)
+                t("the leak protection survives the trip (\(modeName))", e.leakProtection == leak)
+                t("the auto detect flag survives the trip (\(modeName))", e.autoDetectUpstream == auto)
+                t("the exclusions survive the trip (\(modeName))", e.excludedDomains == ["x.test"])
+                t("the resolvers survive the trip (\(modeName))", e.upstreamResolvers == ["1.1.1.1"])
+            }
+        }
+    }
+
+    // the list the user typed survives the round trip through the app's own model
+    t("the app keeps the names the user typed",
+      DNSPolicySettings.parseList("a.test\n *.b.test \n\nc.test") == ["a.test", "*.b.test", "c.test"])
+    t("the app writes the list back the way it reads it",
+      DNSPolicySettings.formatList(["a.test", "*.b.test"]) == "a.test\n*.b.test")
+}
+
 print(fails == 0 ? "dns policy tests: ALL PASS" : "dns policy tests: \(fails) FAILED")
 exit(fails == 0 ? 0 : 1)

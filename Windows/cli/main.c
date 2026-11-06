@@ -39,7 +39,7 @@ typedef struct {
     int  resolver_count;
 } PBDnsPolicyCfg;
 
-// The shape the engine expects (must match PBDnsPolicy in ../src/ProxyBridge.h).
+// The shape the engine expects (must match DnsPolicy in ../src/ProxyBridge.h).
 typedef struct {
     uint32_t mode;
     uint32_t leakProtection;
@@ -48,7 +48,7 @@ typedef struct {
     uint32_t resolverCount;
     char     excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
     char     resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
-} PBDnsPolicy;
+} DnsPolicy;
 
 
 typedef uint32_t (*pfnAddProxyConfig)(int type, const char* ip, uint16_t port,
@@ -63,7 +63,7 @@ typedef void (*pfnSetLogCallback)(void (*cb)(const char*));
 typedef void (*pfnSetConnectionCallback)(void (*cb)(const char*, DWORD,
                                           const char*, uint16_t, const char*));
 typedef void (*pfnSetTrafficLogging)(int enable);
-typedef int  (*pfnSetDNSPolicy)(const PBDnsPolicy* policy);
+typedef int  (*pfnSetDNSPolicy)(const DnsPolicy* policy);
 typedef int  (*pfnStart)(void);
 typedef int  (*pfnStop)(void);
 
@@ -1171,7 +1171,7 @@ int main(int argc, char* argv[])
     // ── DNS policy ──────────────────────────────────────────────────────────────
     if (g_SetDNSPolicy)
     {
-        static PBDnsPolicy dp;   // large: keep it off the stack
+        static DnsPolicy dp;   // large: keep it off the stack
         memset(&dp, 0, sizeof(dp));
         dp.mode = (uint32_t)prof.dns.mode;
         dp.leakProtection = prof.dns.leak_protection ? 1 : 0;

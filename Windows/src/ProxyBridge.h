@@ -110,9 +110,9 @@ typedef struct {
     UINT32 resolverCount;                   // the resolvers to ask, in order
     char   excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
     char   resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
-} PBDnsPolicy;
-PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const PBDnsPolicy* policy);
-PROXYBRIDGE_API BOOL ProxyBridge_GetDNSPolicy(PBDnsPolicy* policy);
+} DnsPolicy;
+PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const DnsPolicy* policy);
+PROXYBRIDGE_API BOOL ProxyBridge_GetDNSPolicy(DnsPolicy* policy);
 
 PROXYBRIDGE_API BOOL ProxyBridge_Start(void);
 PROXYBRIDGE_API BOOL ProxyBridge_Stop(void);

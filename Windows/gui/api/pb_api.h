@@ -43,7 +43,7 @@ static __inline PBProxyType pb_proxy_type_enum(const wchar_t *name)
 typedef enum { PB_ACTION_PROXY = 0, PB_ACTION_DIRECT = 1, PB_ACTION_BLOCK = 2 } PBRuleAction;
 typedef enum { PB_PROTO_TCP = 0, PB_PROTO_UDP = 1, PB_PROTO_BOTH = 2 } PBRuleProtocol;
 
-// The DNS policy (must match PBDnsPolicy in ../../src/ProxyBridge.h). It decides what
+// The DNS policy (must match DnsPolicy in ../../src/ProxyBridge.h). It decides what
 // happens to a name before it may reach a proxy server.
 // profile\profile.h carries the same numbers for the profile file, so they are only
 // defined once (here).

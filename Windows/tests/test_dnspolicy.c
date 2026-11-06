@@ -238,7 +238,7 @@ int main(void)
 
     // ── the exported API ───────────────────────────────────────────────────────
     {
-        PBDnsPolicy wire;
+        DnsPolicy wire;
         ZeroMemory(&wire, sizeof(wire));
         wire.mode = PB_DNS_MODE_REMOTE;
         wire.leakProtection = 1;
@@ -250,7 +250,7 @@ int main(void)
         strncpy_s(wire.resolvers[0], sizeof(wire.resolvers[0]), "9.9.9.9", _TRUNCATE);
         CHECK(ProxyBridge_SetDNSPolicy(&wire));
 
-        PBDnsPolicy back;
+        DnsPolicy back;
         ZeroMemory(&back, sizeof(back));
         CHECK(ProxyBridge_GetDNSPolicy(&back));
         CHECK(back.mode == PB_DNS_MODE_REMOTE);
@@ -266,7 +266,7 @@ int main(void)
         CHECK(dns_policy_addressing("example.com") == PB_DNS_ADDR_HOSTNAME);
 
         // an unknown mode falls back to the default rather than being taken
-        PBDnsPolicy odd = wire;
+        DnsPolicy odd = wire;
         odd.mode = 99;
         CHECK(ProxyBridge_SetDNSPolicy(&odd));
         ZeroMemory(&back, sizeof(back));
