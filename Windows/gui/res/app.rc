@@ -270,6 +270,45 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 360, 242, 60, 16
 END
 
+// Proxy Chains (list) dialog
+IDD_CHAINS DIALOGEX 0, 0, 460, 200
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Proxy Chains"
+FONT 11, "Segoe UI", 400, 0, 0x0
+BEGIN
+    PUSHBUTTON      "Add...",    IDC_CN_ADD,     8,   8, 60, 16
+    PUSHBUTTON      "Edit...",   IDC_CN_EDIT,   72,   8, 60, 16
+    PUSHBUTTON      "Remove",    IDC_CN_REMOVE,136,   8, 60, 16
+    CONTROL         "", IDC_CN_LIST, "SysListView32",
+                    LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP,
+                    8, 32, 444, 128
+    LTEXT           "", IDC_CN_HINT, 8, 166, 444, 10
+    DEFPUSHBUTTON   "Close",     IDCANCEL,      392, 180, 60, 16
+END
+
+// Proxy Chain (edit) sub-dialog
+IDD_CHAIN DIALOGEX 0, 0, 420, 250
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Proxy Chain"
+FONT 11, "Segoe UI", 400, 0, 0x0
+BEGIN
+    LTEXT           "Name:",         IDC_CH_L_NAME, 8,  10, 44, 10
+    EDITTEXT        IDC_CH_NAME,     56,   8, 200, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "Proxies (in order):", IDC_CH_L_HOPS, 8, 32, 120, 10
+    CONTROL         "", IDC_CH_LIST, "SysListView32",
+                    LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP,
+                    8, 46, 260, 116
+    LTEXT           "Add proxy:",    IDC_CH_L_PICK, 8, 170, 60, 10
+    COMBOBOX        IDC_CH_PICK,     70, 168, 130, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Add",           IDC_CH_ADD,    208, 167, 40, 14
+    PUSHBUTTON      "Remove",        IDC_CH_REMOVE, 252, 167, 40, 14
+    PUSHBUTTON      "Up",            IDC_CH_UP,      8, 188, 40, 14
+    PUSHBUTTON      "Down",          IDC_CH_DOWN,   52, 188, 40, 14
+    LTEXT           "",              IDC_CH_NOTE,   8, 210, 404, 18
+    DEFPUSHBUTTON   "OK",            IDOK,         306, 228, 46, 14
+    PUSHBUTTON      "Cancel",        IDCANCEL,     356, 228, 46, 14
+END
+
 // About dialog
 IDD_ABOUT DIALOGEX 0, 0, 250, 170
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU

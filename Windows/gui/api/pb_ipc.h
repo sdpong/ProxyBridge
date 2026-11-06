@@ -169,6 +169,75 @@ static UINT32 IpcGetFlows(PBFlow *out, UINT32 max)
 }
 static void IpcSetEnabled(BOOL v)     { PBIPC_BEGIN(PBOP_SET_ENABLED);     PbW_U32(&_w, v != 0); PbIpcCall(_b, _w.len); }
 
+// The proxy chains. The ids live in a range of their own, so a chain and a proxy can
+// never be mistaken for one another on the wire either.
+static UINT32 IpcAddChain(const char* name, const UINT32* hops, UINT32 hopCount)
+{
+    if (name == NULL || hops == NULL || hopCount == 0 || hopCount > PB_CHAIN_MAX_HOPS) return 0;
+    PBIPC_BEGIN(PBOP_ADD_CHAIN);
+    PbW_Str(&_w, name);
+    PbW_U32(&_w, hopCount);
+    for (UINT32 i = 0; i < hopCount; i++) PbW_U32(&_w, hops[i]);
+    PBIPC_END();
+}
+static BOOL IpcEditChain(UINT32 id, const char* name, const UINT32* hops, UINT32 hopCount)
+{
+    if (name == NULL || hops == NULL || hopCount == 0 || hopCount > PB_CHAIN_MAX_HOPS) return FALSE;
+    PBIPC_BEGIN(PBOP_EDIT_CHAIN);
+    PbW_U32(&_w, id);
+    PbW_Str(&_w, name);
+    PbW_U32(&_w, hopCount);
+    for (UINT32 i = 0; i < hopCount; i++) PbW_U32(&_w, hops[i]);
+    PBIPC_END();
+}
+static BOOL IpcDeleteChain(UINT32 id) { PBIPC_BEGIN(PBOP_DELETE_CHAIN); PbW_U32(&_w, id); PBIPC_END(); }
+static UINT32 IpcGetChains(PBChain* out, UINT32 max)
+{
+    if (out == NULL || max == 0) return 0;
+    if (max > PB_CHAINS_MAX_GUI) max = PB_CHAINS_MAX_GUI;
+    BYTE req[16]; PbW w; PbW_Init(&w, req, sizeof(req)); PbW_U32(&w, PBOP_GET_CHAINS); PbW_U32(&w, max);
+    static BYTE rsp[PB_MSG_MAX];
+    DWORD got = 0;
+    if (!PbIpcExchange(req, w.len, rsp, sizeof(rsp), &got)) return 0;
+    PbR r; PbR_Init(&r, rsp, got);
+    UINT32 n = PbR_U32(&r);
+    if (!r.ok || n > max) return 0;
+    UINT32 i = 0;
+    for (; i < n; i++)
+    {
+        PBChain* c = &out[i];
+        ZeroMemory(c, sizeof(*c));
+        c->id = PbR_U32(&r);
+        c->hopCount = PbR_U32(&r);
+        if (!r.ok || c->hopCount > PB_CHAIN_MAX_HOPS) break;
+        for (UINT32 h = 0; h < c->hopCount; h++) c->hops[h] = PbR_U32(&r);
+        PbR_Str(&r, c->name, sizeof(c->name), NULL);
+        if (!r.ok) break;
+    }
+    return i == n ? n : 0;
+}
+// The reasons a chain cannot work. The engine decides, so the GUI and the command
+// line refuse the same chains.
+static UINT32 IpcChainProblems(const UINT32* hops, UINT32 hopCount, char* out, size_t cap)
+{
+    if (out && cap) out[0] = 0;
+    if (hops == NULL || hopCount == 0 || hopCount > PB_CHAIN_MAX_HOPS) return 1;
+    BYTE req[64]; PbW w; PbW_Init(&w, req, sizeof(req));
+    PbW_U32(&w, PBOP_CHAIN_PROBLEMS); PbW_U32(&w, hopCount);
+    for (UINT32 i = 0; i < hopCount; i++) PbW_U32(&w, hops[i]);
+    static BYTE rsp[4096];
+    DWORD got = 0;
+    if (!PbIpcExchange(req, w.len, rsp, sizeof(rsp), &got)) return 1;
+    PbR r; PbR_Init(&r, rsp, got);
+    UINT32 n = PbR_U32(&r);
+    if (!r.ok) return 1;
+    char text[1024];
+    PbR_Str(&r, text, sizeof(text), NULL);
+    if (!r.ok) return 1;
+    if (out && cap) { strncpy_s(out, cap, text, _TRUNCATE); }
+    return n;
+}
+
 // The DNS policy. The lists travel as strings, so the message stays small no matter
 // how many names and resolvers the user configured.
 static BOOL IpcSetDNSPolicy(const PBDnsPolicy* p)
@@ -339,6 +408,11 @@ static int PB_LoadService(PBApi* api)
     api->KillFlow = IpcKillFlow;
     api->SetDNSPolicy = IpcSetDNSPolicy;
     api->GetDNSPolicy = IpcGetDNSPolicy;
+    api->AddChain      = IpcAddChain;
+    api->EditChain     = IpcEditChain;
+    api->DeleteChain   = IpcDeleteChain;
+    api->GetChains     = IpcGetChains;
+    api->ChainProblems = IpcChainProblems;
     return PB_IPC_OK;
 }
 

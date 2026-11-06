@@ -243,6 +243,53 @@ static BOOL Dispatch(const BYTE *req, DWORD reqLen, PbW *resp)
         PbW_U32(resp, nRs);
         for (UINT32 i = 0; i < nRs; i++) PbW_Str(resp, policy.resolvers[i]);
         return resp->ok; }
+
+    case PBOP_ADD_CHAIN: case PBOP_EDIT_CHAIN: {
+        UINT32 id = (op == PBOP_EDIT_CHAIN) ? PbR_U32(&r) : 0;
+        PbR_Str(&r, host, sizeof(host), NULL);
+        UINT32 hopCount = PbR_U32(&r);
+        if (!r.ok || hopCount == 0 || hopCount > PB_CHAIN_MAX_HOPS) return FALSE;
+        static UINT32 hops[PB_CHAIN_MAX_HOPS];
+        for (UINT32 i = 0; i < hopCount; i++) hops[i] = PbR_U32(&r);
+        if (!r.ok) return FALSE;
+        if (op == PBOP_ADD_CHAIN)
+            ret = (g_api.AddChain != NULL) ? g_api.AddChain(host, hops, hopCount) : 0;
+        else
+            ret = (g_api.EditChain != NULL) ? g_api.EditChain(id, host, hops, hopCount) : 0;
+        break; }
+    case PBOP_DELETE_CHAIN: { UINT32 id = PbR_U32(&r); if (!r.ok) return FALSE; ret = (g_api.DeleteChain != NULL) ? g_api.DeleteChain(id) : 0; break; }
+    case PBOP_GET_CHAINS: {
+        UINT32 max = PbR_U32(&r);
+        if (!r.ok) return FALSE;
+        if (max > PB_CHAINS_MAX_GUI) max = PB_CHAINS_MAX_GUI;
+        static PBChain chains[PB_CHAINS_MAX_GUI];
+        UINT32 n = (g_api.GetChains != NULL && max > 0) ? g_api.GetChains(chains, max) : 0;
+        if (n > max) n = max;
+        // a chain takes an id, a hop count, its hops and its name: never write past the reply
+        if (n > (resp->cap - resp->len - 4) / (PB_CHAIN_MAX_HOPS * 4 + 140)) n = (resp->cap - resp->len - 4) / (PB_CHAIN_MAX_HOPS * 4 + 140);
+        PbW_U32(resp, n);
+        for (UINT32 i = 0; i < n; i++)
+        {
+            PBChain *c = &chains[i];
+            c->name[sizeof(c->name) - 1] = '\0';
+            PbW_U32(resp, c->id);
+            PbW_U32(resp, c->hopCount);
+            for (UINT32 h = 0; h < c->hopCount && h < PB_CHAIN_MAX_HOPS; h++) PbW_U32(resp, c->hops[h]);
+            PbW_Str(resp, c->name);
+        }
+        return resp->ok; }
+    case PBOP_CHAIN_PROBLEMS: {
+        UINT32 hopCount = PbR_U32(&r);
+        if (!r.ok || hopCount == 0 || hopCount > PB_CHAIN_MAX_HOPS) return FALSE;
+        static UINT32 hops[PB_CHAIN_MAX_HOPS];
+        for (UINT32 i = 0; i < hopCount; i++) hops[i] = PbR_U32(&r);
+        if (!r.ok) return FALSE;
+        char problems[1024];
+        UINT32 n = (g_api.ChainProblems != NULL) ? g_api.ChainProblems(hops, hopCount, problems, sizeof(problems)) : 1;
+        PbW_U32(resp, n);
+        // the problems come back as one string with one problem per line
+        PbW_Str(resp, problems);
+        return resp->ok; }
     default: return FALSE;
     }
     PbW_U32(resp, ret);

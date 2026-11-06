@@ -854,6 +854,11 @@ PROXYBRIDGE_API UINT32 ProxyBridge_AddRule(const char* process_name, const char*
     if (process_name == NULL || process_name[0] == '\0' || strnlen_s(process_name, MAX_RULE_PROCESS_LIST) >= MAX_RULE_PROCESS_LIST)
         return 0;
 
+    // a rule that names a chain must name one that can exist. The chain ids live in
+    // a range of their own, so a rule can never point at a proxy by accident.
+    if (action == RULE_ACTION_CHAIN && proxy_config_id < PB_CHAIN_ID_BASE)
+        return 0;
+
     PROCESS_RULE *rule = (PROCESS_RULE *)malloc(sizeof(PROCESS_RULE));
     if (rule == NULL)
         return 0;
@@ -1076,6 +1081,10 @@ PROXYBRIDGE_API BOOL ProxyBridge_EditRule(UINT32 rule_id, const char* process_na
         strnlen_s(process_name, MAX_RULE_PROCESS_LIST) >= MAX_RULE_PROCESS_LIST)
         return FALSE;
 
+    // a rule that names a chain must name one that can exist
+    if (action == RULE_ACTION_CHAIN && proxy_config_id < PB_CHAIN_ID_BASE)
+        return FALSE;
+
     // NULL/"" domains means "no restriction" -> stored as "*"
     const char *domains_in = (target_domains != NULL && target_domains[0] != '\0') ? target_domains : "*";
 
@@ -1131,6 +1140,36 @@ PROXYBRIDGE_API BOOL ProxyBridge_EditRule(UINT32 rule_id, const char* process_na
     update_has_active_rules();
     log_message("Updated rule ID: %u (ProxyConfigId: %u, Domains: %s)", rule_id, proxy_config_id, domains_in);
     return TRUE;
+}
+
+// A chain that goes away leaves the rules that used it on DIRECT. They would go
+// direct anyway (the chain is gone, so there is nothing to walk through), but a
+// rule that says DIRECT says so; a rule that says CHAIN and points at nothing
+// says something that is no longer true. The macOS app does the same.
+void rules_detach_chain(UINT32 chain_id)
+{
+    if (chain_id < PB_CHAIN_ID_BASE) return;
+
+    UINT32 changed = 0;
+    AcquireSRWLockExclusive(&g_rules_lock);
+    PROCESS_RULE *rule = rules_list;
+    while (rule != NULL)
+    {
+        if (rule->action == RULE_ACTION_CHAIN && rule->proxy_config_id == chain_id)
+        {
+            rule->action = RULE_ACTION_DIRECT;
+            rule->proxy_config_id = 0;
+            changed++;
+        }
+        rule = rule->next;
+    }
+    ReleaseSRWLockExclusive(&g_rules_lock);
+
+    if (changed > 0)
+    {
+        update_has_active_rules();
+        log_message("Chain %u is gone: %u rule(s) now go direct", chain_id, changed);
+    }
 }
 
 PROXYBRIDGE_API UINT32 ProxyBridge_GetRulePosition(UINT32 rule_id)

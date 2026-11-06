@@ -280,6 +280,12 @@ DWORD WINAPI packet_processor(LPVOID arg)
                     if (action6u == RULE_ACTION_PROXY && (dp == 546 || dp == 547))
                         action6u = RULE_ACTION_DIRECT;
 
+                    // UDP cannot walk a chain: only a socks5 proxy can carry it, and a
+                    // chain of several proxies cannot. The traffic goes direct, the way
+                    // the macOS app does it.
+                    if (action6u == RULE_ACTION_CHAIN)
+                        action6u = RULE_ACTION_DIRECT;
+
                     if (g_connection_callback != NULL && pid6u > 0)
                     {
                         // Fold the 128-bit destination into a 32-bit key so the log-dedup
@@ -477,6 +483,11 @@ DWORD WINAPI packet_processor(LPVOID arg)
                         action6 = RULE_ACTION_DIRECT;
                 }
 
+                // A rule that names a chain goes direct when the chain is gone or cannot
+                // work: the traffic has nowhere else to go. The macOS app does the same.
+                if (action6 == RULE_ACTION_CHAIN && !chain_usable(proxy_config_id6))
+                    action6 = RULE_ACTION_DIRECT;
+
                 if (g_connection_callback != NULL && tcp_header->Syn && !tcp_header->Ack && pid6 > 0)
                 {
                     // Fold the 128-bit destination into a 32-bit dedup key so different
@@ -506,6 +517,8 @@ DWORD WINAPI packet_processor(LPVOID arg)
                             }
                             else if (action6 == RULE_ACTION_DIRECT)
                                 snprintf(proxy_info, sizeof(proxy_info), "Direct");
+                            else if (action6 == RULE_ACTION_CHAIN)
+                                chain_label(proxy_config_id6, proxy_info, sizeof(proxy_info));
                             else
                                 snprintf(proxy_info, sizeof(proxy_info), "Blocked");
 
@@ -667,6 +680,12 @@ DWORD WINAPI packet_processor(LPVOID arg)
 
                     // Override PROXY to DIRECT for DHCP ports (67=server, 68=client)
                     if (action == RULE_ACTION_PROXY && (dest_port == 67 || dest_port == 68))
+                        action = RULE_ACTION_DIRECT;
+
+                    // UDP cannot walk a chain: only a socks5 proxy can carry it, and a
+                    // chain of several proxies cannot. The traffic goes direct, the way
+                    // the macOS app does it.
+                    if (action == RULE_ACTION_CHAIN)
                         action = RULE_ACTION_DIRECT;
 
                     // only log if callback is set
@@ -922,6 +941,11 @@ DWORD WINAPI packet_processor(LPVOID arg)
                 if (action == RULE_ACTION_PROXY && is_broadcast_or_multicast(orig_dest_ip))
                     action = RULE_ACTION_DIRECT;
 
+                // A rule that names a chain goes direct when the chain is gone or cannot
+                // work: the traffic has nowhere else to go. The macOS app does the same.
+                if (action == RULE_ACTION_CHAIN && !chain_usable(proxy_config_id))
+                    action = RULE_ACTION_DIRECT;
+
                 // only new TCP/SYN inital fist packet
                 if (g_connection_callback != NULL && tcp_header->Syn && !tcp_header->Ack && pid > 0)
                 {
@@ -953,6 +977,10 @@ DWORD WINAPI packet_processor(LPVOID arg)
                             else if (action == RULE_ACTION_BLOCK)
                             {
                                 snprintf(proxy_info, sizeof(proxy_info), "Blocked");
+                            }
+                            else if (action == RULE_ACTION_CHAIN)
+                            {
+                                chain_label(proxy_config_id, proxy_info, sizeof(proxy_info));
                             }
 
                             const char* display_name = extract_filename(process_name);

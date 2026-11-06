@@ -29,6 +29,7 @@
 #define IDM_PROXY_ENABLE            226   // main on/off switch
 #define IDM_SET_LOGALL              227   // log every connection (no de-duplication)
 #define IDM_DNS_SETTINGS            228   // the DNS policy dialog
+#define IDM_PROXY_CHAINS            229   // the proxy chains window
 #define IDM_PROFILE_RENAME          244
 
 // Log Filters (list) dialog
@@ -190,5 +191,27 @@
 #define IDC_DNS_L_RES              909
 #define IDC_DNS_EXCLHINT           910
 #define IDC_DNS_RESHINT            911
+
+// Proxy Chains (list) dialog
+#define IDD_CHAINS                 920
+#define IDC_CN_LIST                921
+#define IDC_CN_ADD                 922
+#define IDC_CN_EDIT                923
+#define IDC_CN_REMOVE              924
+#define IDC_CN_HINT                925
+
+// Proxy Chain (edit) sub-dialog
+#define IDD_CHAIN                  940
+#define IDC_CH_NAME                941
+#define IDC_CH_LIST                942
+#define IDC_CH_PICK                943
+#define IDC_CH_ADD                 944
+#define IDC_CH_REMOVE              945
+#define IDC_CH_UP                  946
+#define IDC_CH_DOWN                947
+#define IDC_CH_NOTE                948
+#define IDC_CH_L_NAME              949
+#define IDC_CH_L_HOPS              950
+#define IDC_CH_L_PICK              951
 
 #endif // RESOURCE_H

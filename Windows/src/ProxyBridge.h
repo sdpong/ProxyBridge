@@ -27,7 +27,10 @@ typedef enum {
 typedef enum {
     RULE_ACTION_PROXY = 0,
     RULE_ACTION_DIRECT = 1,
-    RULE_ACTION_BLOCK = 2
+    RULE_ACTION_BLOCK = 2,
+    // the connection walks through a chain of proxies. The proxy field of the rule
+    // holds the chain's id, which lives in a range of its own (PB_CHAIN_ID_BASE).
+    RULE_ACTION_CHAIN = 3
 } RuleAction;
 
 typedef enum {
@@ -113,6 +116,26 @@ typedef struct {
 } DnsPolicy;
 PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const DnsPolicy* policy);
 PROXYBRIDGE_API BOOL ProxyBridge_GetDNSPolicy(DnsPolicy* policy);
+
+// A proxy chain: the proxies a connection walks through, in order.
+// The chain ids live in a range of their own, so a chain and a proxy can never be
+// mistaken for one another, whatever they are called.
+#define PB_CHAIN_ID_BASE   1000
+#define PB_CHAIN_MAX_HOPS  8
+#define PB_CHAIN_MAX       32
+typedef struct {
+    UINT32 id;
+    UINT32 hopCount;
+    UINT32 hops[PB_CHAIN_MAX_HOPS];
+    char   name[128];
+} PB_CHAIN;
+PROXYBRIDGE_API UINT32 ProxyBridge_AddChain(const char* name, const UINT32* hop_ids, UINT32 hop_count);
+PROXYBRIDGE_API BOOL   ProxyBridge_EditChain(UINT32 chain_id, const char* name, const UINT32* hop_ids, UINT32 hop_count);
+PROXYBRIDGE_API BOOL   ProxyBridge_DeleteChain(UINT32 chain_id);
+PROXYBRIDGE_API UINT32 ProxyBridge_GetChains(PB_CHAIN* out, UINT32 max);
+// What is wrong with a chain of these proxies, one problem per line. Zero problems
+// means the chain can work.
+PROXYBRIDGE_API UINT32 ProxyBridge_ChainProblems(const UINT32* hop_ids, UINT32 hop_count, char* out_message, size_t cap);
 
 PROXYBRIDGE_API BOOL ProxyBridge_Start(void);
 PROXYBRIDGE_API BOOL ProxyBridge_Stop(void);

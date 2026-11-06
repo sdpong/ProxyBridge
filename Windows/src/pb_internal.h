@@ -353,8 +353,7 @@ void flush_dns_resolver_cache(void);
 // the engine's own copy of the policy. The exported one (PBDnsPolicy) uses
 // UINT32 for the flags because it crosses the DLL boundary, this one uses BOOL
 // because it lives inside the engine.
-typedef struct PB_DNS_POLICY {
-    UINT32 mode;
+typedef struct PB_DNS_POLICY {    UINT32 mode;
     BOOL   leak_protection;
     BOOL   auto_detect_upstream;
     int    excluded_count;
@@ -374,6 +373,30 @@ BOOL dns_policy_preferred_resolver(char *host, size_t host_cap, UINT16 *port);
 int  dns_policy_build_query(const char *name, UINT8 *out, int cap);
 BOOL dns_policy_parse_answer(const UINT8 *msg, int msg_len, UINT32 *out_ip);
 BOOL dns_policy_resolve_for_proxy(const char *name, UINT32 *out_ip);
+
+// ---- pb_chain.c ----
+// a chain of proxies, as the engine keeps it. The id lives in a range of its own
+// (PB_CHAIN_ID_BASE), so a chain and a proxy never share one.
+#define MAX_CHAINS     PB_CHAIN_MAX
+#define MAX_CHAIN_HOPS PB_CHAIN_MAX_HOPS
+typedef struct {
+    UINT32 chain_id;
+    char   name[128];
+    int    hop_count;
+    UINT32 hop_ids[MAX_CHAIN_HOPS];
+} PROXY_CHAIN;
+
+void chain_init(void);
+PROXY_CHAIN *find_chain(UINT32 chain_id);
+UINT32 chain_problems(const UINT32 *hop_ids, UINT32 hop_count, char *out_message, size_t cap);
+// can this chain carry the traffic? a rule that names one that cannot goes direct
+BOOL chain_usable(UINT32 chain_id);
+// the hops of a chain, copied out under the lock
+int chain_hops_of(UINT32 chain_id, UINT32 *out_hops, int max);
+// the proxies a chain walks through, for the connection log
+void chain_label(UINT32 chain_id, char *out, size_t cap);
+// the rules that used this chain go direct when it goes away
+void rules_detach_chain(UINT32 chain_id);
 
 // ---- pb_socks5.c ----
 int socks5_read_connect_reply(SOCKET s, int *reply);

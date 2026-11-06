@@ -40,7 +40,7 @@ static __inline PBProxyType pb_proxy_type_enum(const wchar_t *name)
         default: return PB_PROXY_SOCKS5;
     }
 }
-typedef enum { PB_ACTION_PROXY = 0, PB_ACTION_DIRECT = 1, PB_ACTION_BLOCK = 2 } PBRuleAction;
+typedef enum { PB_ACTION_PROXY = 0, PB_ACTION_DIRECT = 1, PB_ACTION_BLOCK = 2, PB_ACTION_CHAIN = 3 } PBRuleAction;
 typedef enum { PB_PROTO_TCP = 0, PB_PROTO_UDP = 1, PB_PROTO_BOTH = 2 } PBRuleProtocol;
 
 // The DNS policy (must match DnsPolicy in ../../src/ProxyBridge.h). It decides what
@@ -64,6 +64,19 @@ typedef struct {
     char   excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
     char   resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
 } PBDnsPolicy;
+
+// A proxy chain (must match PB_CHAIN in ../../src/ProxyBridge.h). The ids live in a
+// range of their own, so a chain and a proxy can never be mistaken for one another.
+#define PB_CHAIN_ID_BASE   1000
+#define PB_CHAIN_MAX_HOPS  8
+#define PB_CHAIN_MAX       32
+#define PB_CHAINS_MAX_GUI  64
+typedef struct {
+    UINT32 id;
+    UINT32 hopCount;
+    UINT32 hops[PB_CHAIN_MAX_HOPS];
+    char   name[128];
+} PBChain;
 
 // one live connection (must match PB_FLOW in ../../src/ProxyBridge.h)
 typedef struct {
@@ -111,6 +124,11 @@ typedef UINT32 (*PFN_GetFlows)(PBFlow*, UINT32);
 typedef BOOL   (*PFN_KillFlow)(UINT64);
 typedef BOOL   (*PFN_SetDNSPolicy)(const PBDnsPolicy*);
 typedef BOOL   (*PFN_GetDNSPolicy)(PBDnsPolicy*);
+typedef UINT32 (*PFN_AddChain)(const char*, const UINT32*, UINT32);
+typedef BOOL   (*PFN_EditChain)(UINT32, const char*, const UINT32*, UINT32);
+typedef BOOL   (*PFN_DeleteChain)(UINT32);
+typedef UINT32 (*PFN_GetChains)(PBChain*, UINT32);
+typedef UINT32 (*PFN_ChainProblems)(const UINT32*, UINT32, char*, size_t);
 typedef BOOL   (*PFN_Start)(void);
 typedef BOOL   (*PFN_Stop)(void);
 
@@ -139,6 +157,11 @@ typedef struct {
     PFN_KillFlow                  KillFlow;
     PFN_SetDNSPolicy              SetDNSPolicy;
     PFN_GetDNSPolicy              GetDNSPolicy;
+    PFN_AddChain                  AddChain;
+    PFN_EditChain                 EditChain;
+    PFN_DeleteChain               DeleteChain;
+    PFN_GetChains                 GetChains;
+    PFN_ChainProblems             ChainProblems;
     PFN_Start                     Start;
     PFN_Stop                      Stop;
 } PBApi;
@@ -193,6 +216,13 @@ static BOOL PB_LoadDirect(PBApi* api)
     // older core simply cannot show the DNS settings.
     api->SetDNSPolicy = (PFN_SetDNSPolicy)(void*)GetProcAddress(api->dll, "ProxyBridge_SetDNSPolicy");
     api->GetDNSPolicy = (PFN_GetDNSPolicy)(void*)GetProcAddress(api->dll, "ProxyBridge_GetDNSPolicy");
+    // The proxy chains came later than the rest, so they are optional too: a GUI that
+    // talks to an older core simply cannot show the chain window.
+    api->AddChain      = (PFN_AddChain)(void*)GetProcAddress(api->dll, "ProxyBridge_AddChain");
+    api->EditChain     = (PFN_EditChain)(void*)GetProcAddress(api->dll, "ProxyBridge_EditChain");
+    api->DeleteChain   = (PFN_DeleteChain)(void*)GetProcAddress(api->dll, "ProxyBridge_DeleteChain");
+    api->GetChains     = (PFN_GetChains)(void*)GetProcAddress(api->dll, "ProxyBridge_GetChains");
+    api->ChainProblems = (PFN_ChainProblems)(void*)GetProcAddress(api->dll, "ProxyBridge_ChainProblems");
     PB_BIND(Start,                    "Start");
     PB_BIND(Stop,                     "Stop");
     #undef PB_BIND

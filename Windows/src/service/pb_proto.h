@@ -19,7 +19,7 @@
 #define PB_SERVICE_NAME  L"ProxyBridgeSvc"
 #define PB_PIPE_CTL      L"\\\\.\\pipe\\ProxyBridgeCtl"
 #define PB_PIPE_EVT      L"\\\\.\\pipe\\ProxyBridgeEvt"
-#define PB_PROTO_VERSION 8   // 8: PBOP_SET_DNS_POLICY / PBOP_GET_DNS_POLICY; 7: PBOP_KILL_FLOW (terminate one live connection); 6: rule id per flow; 5: PBOP_GET_FLOWS (live connections); 4: PBOP_SET_LOG_ALL; 3: PBOP_SET_ENABLED (main switch); 2: per-rule localhost flag
+#define PB_PROTO_VERSION 9   // 9: PBOP_*_CHAIN (proxy chains); 8: PBOP_SET_DNS_POLICY / PBOP_GET_DNS_POLICY; 7: PBOP_KILL_FLOW (terminate one live connection); 6: rule id per flow; 5: PBOP_GET_FLOWS (live connections); 4: PBOP_SET_LOG_ALL; 3: PBOP_SET_ENABLED (main switch); 2: per-rule localhost flag
 #define PB_MSG_MAX       (64u * 1024u)
 #define PB_STR_MAX       (32u * 1024u)
 #define PB_NULL_STR      0xFFFFFFFFu
@@ -48,6 +48,11 @@ enum {
     PBOP_KILL_FLOW,           // u32 idLo, u32 idHi -> bool (terminate one live connection, the id from PBOP_GET_FLOWS)
     PBOP_SET_DNS_POLICY,      // mode, leakProtection, autoDetectUpstream, excludedCount, names..., resolverCount, resolvers... -> bool
     PBOP_GET_DNS_POLICY       // () -> mode, leakProtection, autoDetectUpstream, excludedCount, names..., resolverCount, resolvers...
+    PBOP_ADD_CHAIN,           // name, hopCount, hops... -> id
+    PBOP_EDIT_CHAIN,          // id, name, hopCount, hops... -> bool
+    PBOP_DELETE_CHAIN,        // id -> bool
+    PBOP_GET_CHAINS           // u32 max -> u32 count, then per chain: u32 id, u32 hopCount, hops..., str name
+    PBOP_CHAIN_PROBLEMS       // u32 hopCount, hops... -> u32 count, then the problems, one per line
 };
 #define PB_FLOW_ROW_MAX (12u * 4u + (4u + 39u) + (4u + 63u))   // largest encoded flow row, in bytes
 

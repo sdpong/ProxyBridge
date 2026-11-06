@@ -46,6 +46,8 @@ enum {
     S_DNS_HINT_SYS, S_DNS_HINT_LOCAL, S_DNS_HINT_REMOTE,
     S_L_DNSEXCL, S_DNS_EXCLHINT, S_L_DNSRES, S_DNS_RESHINT,
     S_DNS_AUTODETECT, S_DNS_LEAK, S_DNS_SAVED,
+    S_M_CHAINS, S_DLG_CHAINS, S_DLG_CHAIN, S_L_CHAINNAME, S_L_CHAINHOPS,
+    S_CHAIN_HINT, S_CHAIN_PICK, S_CHAIN_EMPTY, S_CHAIN_BROKEN, S_CHAIN_COL, S_CHAIN_DELHINT,
     S_COUNT
 };
 
@@ -256,6 +258,18 @@ static const wchar_t* const g_strings[S_COUNT][2] = {
     /* S_DNS_AUTODETECT    */ { L"Use the resolver the system uses when the list above is empty", L"上面的列表为空时，使用系统所用的解析器" },
     /* S_DNS_LEAK          */ { L"Never let the local resolver answer (the proxy server resolves the name)", L"绝不让本地解析器应答（由代理服务器解析名称）" },
     /* S_DNS_SAVED         */ { L"The DNS policy was saved.", L"DNS 策略已保存。" },
+    /* S_M_CHAINS          */ { L"Proxy &Chains...", L"代理链(&C)..." },
+    /* S_DLG_CHAINS        */ { L"Proxy Chains", L"代理链" },
+    /* S_DLG_CHAIN         */ { L"Proxy Chain", L"代理链" },
+    /* S_L_CHAINNAME       */ { L"Name:", L"名称:" },
+    /* S_L_CHAINHOPS       */ { L"Proxies (in order):", L"代理（按顺序）:" },
+    /* S_CHAIN_HINT        */ { L"The connection walks through these proxies in this order. Only the last one may be an HTTP proxy, because an HTTP proxy can leave bytes behind that the next handshake would read as its own answer.",
+                                 L"连接按此顺序经过这些代理。只有最后一个可以是 HTTP 代理，因为 HTTP 代理可能留下多余的字节，下一次握手会把它当成自己的应答。" },
+    /* S_CHAIN_PICK        */ { L"Add proxy:", L"添加代理:" },
+    /* S_CHAIN_EMPTY       */ { L"A chain needs at least one proxy.", L"一条链至少需要一个代理。" },
+    /* S_CHAIN_BROKEN      */ { L"This chain cannot work:\r\n%s", L"这条链无法工作：\r\n%s" },
+    /* S_CHAIN_COL         */ { L"Proxies", L"代理" },
+    /* S_CHAIN_DELHINT     */ { L"The rules that use this chain now go direct.", L"使用这条链的规则改为直连。" },
 };
 
 static const wchar_t* T(int id) { return g_strings[id][g_lang ? 1 : 0]; }

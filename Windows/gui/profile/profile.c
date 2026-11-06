@@ -291,6 +291,14 @@ void PB_ProfileDefaults(PBProfile* p, const wchar_t* name)
     p->dns.resolverCount    = 0;
 }
 
+// The id a chain in this profile uses, or 0 when no chain has it.
+static UINT32 chain_id_used(const PBProfile* p, UINT32 id)
+{
+    for (int i = 0; i < p->chainCount; i++)
+        if (p->chain[i].storedId == id) return id;
+    return 0;
+}
+
 // Makes proxy-config ids unique and non-zero and positions the allocator past every id in use.
 // Older profiles stored the engine's per-session id here, so duplicates and gaps are possible; a
 // duplicate keeps its id for the first config (rules referencing it stay with that one) and the
@@ -299,7 +307,14 @@ static void normalize_cfg_ids(PBProfile* p)
 {
     UINT32 hi = 0;
     for (int i = 0; i < p->cfgCount; i++) if (p->cfg[i].storedId > hi) hi = p->cfg[i].storedId;
-    for (int i = 0; i < p->ruleCount; i++) if (p->rule[i].cfgStoredId > hi) hi = p->rule[i].cfgStoredId;
+    for (int i = 0; i < p->ruleCount; i++)
+    {
+        UINT32 id = p->rule[i].cfgStoredId;
+        if (id == 0) continue;
+        // a rule that names a chain carries the chain's id, not a proxy's
+        if (chain_id_used(p, id) != 0) continue;
+        if (id > hi) hi = id;
+    }
     if (p->nextCfgId <= hi) p->nextCfgId = hi + 1;
     if (p->nextCfgId == 0) p->nextCfgId = 1;
     for (int j = 0; j < p->cfgCount; j++)
@@ -313,7 +328,33 @@ static void normalize_cfg_ids(PBProfile* p)
 UINT32 PB_AllocConfigId(PBProfile* p)
 {
     if (p->nextCfgId == 0) normalize_cfg_ids(p);
+    // a proxy id never equals a chain id, so a rule that names one can never be
+    // mistaken for a rule that names the other
+    while (chain_id_used(p, p->nextCfgId) != 0) p->nextCfgId++;
     return p->nextCfgId++;
+}
+
+// The chain with this id, or NULL.
+const PBChainProfile* PB_FindChain(const PBProfile* p, UINT32 stored_id)
+{
+    if (stored_id == 0) return NULL;
+    for (int i = 0; i < p->chainCount; i++)
+        if (p->chain[i].storedId == stored_id) return &p->chain[i];
+    return NULL;
+}
+
+// A fresh id for a chain. The ids live in a range of their own and are never reused,
+// so a rule that names a chain keeps pointing at the same chain.
+UINT32 PB_AllocChainId(PBProfile* p)
+{
+    UINT32 hi = PB_CHAIN_ID_BASE;
+    for (int i = 0; i < p->chainCount; i++)
+        if (p->chain[i].storedId >= hi) hi = p->chain[i].storedId + 1;
+    // a proxy that happens to carry the same number would make the two look alike
+    for (int i = 0; i < p->cfgCount; i++)
+        if (p->cfg[i].storedId >= hi) hi = p->cfg[i].storedId + 1;
+    return hi;
+}
 }
 
 void PB_ProfileLoad(const wchar_t* name, PBProfile* p)
@@ -383,8 +424,6 @@ void PB_ProfileLoad(const wchar_t* name, PBProfile* p)
                 ru->cfgStoredId = (UINT32)json_long(r, "ProxyConfigId", 0);
             }
 
-        normalize_cfg_ids(p);
-
         JVal* filters = json_get(root, "LogFilters");
         if (filters && filters->type == J_ARR)
             for (JVal* f = filters->child; f && p->filterCount < PB_MAX_FILTER; f = f->next)
@@ -398,6 +437,36 @@ void PB_ProfileLoad(const wchar_t* name, PBProfile* p)
                 u2w(json_str(f, "Protocol", "All"), fi->proto, 8);
                 u2w(json_str(f, "Action", "All"), fi->action, 16);
             }
+
+        // The proxy chains. The keys are the ones the macOS app writes, so one profile
+        // file means the same thing on both platforms: a list of {id, name, proxies}.
+        // A rule that names a chain carries the chain's id in its proxy field, and
+        // the action says CHAIN.
+        JVal* chains = json_get(root, "proxyChains");
+        if (!chains) chains = json_get(root, "ProxyChains");   // an earlier build wrote it this way
+        if (chains && chains->type == J_ARR)
+            for (JVal* c = chains->child; c && p->chainCount < PB_MAX_CHAIN; c = c->next)
+            {
+                if (c->type != J_OBJ) continue;
+                PBChainProfile* ch = &p->chain[p->chainCount++];
+                ch->storedId = (UINT32)json_long(c, "id", 0);
+                if (ch->storedId == 0) ch->storedId = (UINT32)json_long(c, "Id", 0);
+                u2w(json_str(c, "name", ""), ch->name, 128);
+                if (ch->name[0] == '\0') u2w(json_str(c, "Name", ""), ch->name, 128);
+                JVal* hops = json_get(c, "proxies");
+                if (!hops) hops = json_get(c, "ProxyConfigIds");
+                if (hops && hops->type == J_ARR)
+                    for (JVal* h = hops->child; h && ch->hopCount < PB_MAX_CHAIN_HOPS; h = h->next)
+                    {
+                        if (h->type != J_NUM) continue;
+                        ch->hops[ch->hopCount++] = (UINT32)h->nval;
+                    }
+            }
+
+        // The proxy ids are made unique after the chains are known: a rule that names a
+        // chain carries the chain's id in the same field a proxy id would go, and only
+        // the chain list can say which one it is.
+        normalize_cfg_ids(p);
 
         // The DNS policy. The keys are the ones the macOS app writes, so one profile
         // file means the same thing on both platforms.
@@ -532,6 +601,27 @@ BOOL PB_ProfileSave(const wchar_t* name, const PBProfile* p)
         sb_put(&b, "    }");
     }
     sb_put(&b, p->filterCount ? "\n  ],\n" : "],\n");
+
+    // The proxy chains. The keys are the ones the macOS app writes, so one profile file
+    // means the same thing on both platforms: a list of {id, name, proxies}.
+    sb_put(&b, "  \"proxyChains\": [");
+    for (int i = 0; i < p->chainCount; i++)
+    {
+        const PBChainProfile* c = &p->chain[i];
+        sb_put(&b, i ? ",\n" : "\n"); sb_put(&b, "    {\n");
+        snprintf(tmp, sizeof(tmp), "%u", c->storedId);
+        sb_put(&b, "      \"id\": "); sb_put(&b, tmp); sb_put(&b, ",\n");
+        put_kv_str(&b, "      ", "name", c->name, ",\n");
+        sb_put(&b, "      \"proxies\": [");
+        for (int h = 0; h < c->hopCount; h++)
+        {
+            snprintf(tmp, sizeof(tmp), "%u", c->hops[h]);
+            sb_put(&b, h ? ", " : ""); sb_put(&b, tmp);
+        }
+        sb_put(&b, "]\n");
+        sb_put(&b, "    }");
+    }
+    sb_put(&b, p->chainCount ? "\n  ],\n" : "],\n");
 
     // The DNS policy. The keys are the ones the macOS app writes, so one profile file
     // means the same thing on both platforms.

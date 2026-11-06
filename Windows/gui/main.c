@@ -161,7 +161,7 @@ static wchar_t* U2Wdup(const char* s)
 }
 
 static int ProtoIdx(const wchar_t* s)  { if (!_wcsicmp(s, L"UDP")) return 1; if (!_wcsicmp(s, L"BOTH")) return 2; return 0; }
-static int ActionIdx(const wchar_t* s) { if (!_wcsicmp(s, L"DIRECT")) return 1; if (!_wcsicmp(s, L"BLOCK")) return 2; return 0; }
+static int ActionIdx(const wchar_t* s) { if (!_wcsicmp(s, L"DIRECT")) return 1; if (!_wcsicmp(s, L"BLOCK")) return 2; if (!_wcsicmp(s, L"CHAIN")) return 3; return 0; }
 static const wchar_t* ProtoName(int i)  { return i == 1 ? L"UDP" : i == 2 ? L"BOTH" : L"TCP"; }
 
 // log panel + connection filters (split out)
@@ -183,11 +183,13 @@ static void ApplyZoom(HWND hwnd);
 static void RelocalizeUI(HWND hwnd);
 static UINT32 EngineAddRule(PBRule* r);
 static void EngineEditRule(PBRule* r);
+static UINT32 RuleTarget(const PBRule* r);
 INT_PTR CALLBACK ServersDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK ServerEditDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK RulesDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK RuleEditDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK DnsSettingsDlgProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK ChainsDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK FiltersDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK FilterEditDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK NameDlgProc(HWND, UINT, WPARAM, LPARAM);
@@ -282,10 +284,50 @@ static void ApplyRules(void)
         if (!s) continue;
         r->nativeId = g_api.AddRule(s->proc, s->ips, s->ports, s->doms,
                                     (PBRuleProtocol)ProtoIdx(r->proto), (PBRuleAction)ActionIdx(r->action),
-                                    ResolveNativeCfg(r->cfgStoredId), r->localhost != 0);
+                                    RuleTarget(r), r->localhost != 0);
         if (r->nativeId && !r->enabled) g_api.DisableRule(r->nativeId);
         free(s);
     }
+}
+
+// The proxy chains. They go to the engine before the rules, because a rule that names
+// a chain needs the engine's chain id.
+static void ApplyChains(void)
+{
+    if (!g_api.AddChain) return;
+    for (int i = 0; i < g_profile.chainCount; i++)
+    {
+        PBChainProfile* c = &g_profile.chain[i];
+        // the hops are the profile's proxy ids; the engine wants its own
+        UINT32 hops[PB_MAX_CHAIN_HOPS];
+        int n = 0;
+        for (int h = 0; h < c->hopCount && n < PB_MAX_CHAIN_HOPS; h++)
+        {
+            UINT32 native = ResolveNativeCfg(c->hops[h]);
+            if (native == 0) continue;      // the proxy is gone: the hop is left out
+            hops[n++] = native;
+        }
+        if (n == 0) { c->nativeId = 0; continue; }
+        // a chain the engine already knows is edited in place, a new one is added
+        if (c->nativeId && g_api.EditChain && g_api.EditChain(c->nativeId, c->name, hops, (UINT32)n))
+            continue;
+        c->nativeId = g_api.AddChain(c->name, hops, (UINT32)n);
+        if (c->storedId == 0) c->storedId = PB_AllocChainId(&g_profile);
+    }
+}
+
+// The engine's chain id for a chain the profile knows, 0 when there is none.
+static UINT32 ResolveNativeChain(UINT32 storedId)
+{
+    const PBChainProfile* c = PB_FindChain(&g_profile, storedId);
+    return c ? c->nativeId : 0;
+}
+
+// What a rule points at: a proxy, or a chain when the rule's action says so.
+static UINT32 RuleTarget(const PBRule* r)
+{
+    if (ActionIdx(r->action) == 3) return ResolveNativeChain(r->cfgStoredId);
+    return ResolveNativeCfg(r->cfgStoredId);
 }
 
 // The DNS policy decides what a proxy server is told about a name. It lives in the
@@ -311,7 +353,7 @@ static UINT32 EngineAddRule(PBRule* r)
     if (!s) return 0;
     UINT32 id = g_api.AddRule(s->proc, s->ips, s->ports, s->doms,
                               (PBRuleProtocol)ProtoIdx(r->proto), (PBRuleAction)ActionIdx(r->action),
-                              ResolveNativeCfg(r->cfgStoredId), r->localhost != 0);
+                              RuleTarget(r), r->localhost != 0);
     if (id && !r->enabled) g_api.DisableRule(id);
     free(s);
     return id;
@@ -323,15 +365,21 @@ static void EngineEditRule(PBRule* r)
     if (!s) return;
     g_api.EditRule(r->nativeId, s->proc, s->ips, s->ports, s->doms,
                    (PBRuleProtocol)ProtoIdx(r->proto), (PBRuleAction)ActionIdx(r->action),
-                   ResolveNativeCfg(r->cfgStoredId), r->localhost != 0);
+                   RuleTarget(r), r->localhost != 0);
     if (r->enabled) g_api.EnableRule(r->nativeId); else g_api.DisableRule(r->nativeId);
     free(s);
 }
 
 static void UnapplyProfile(void)
 {
+    // the chains go before the rules: a rule that names a chain has to be told
+    // the chain is gone, not left pointing at a chain that was never removed
+    for (int i = 0; i < g_profile.chainCount; i++)
+        if (g_profile.chain[i].nativeId && g_api.DeleteChain) g_api.DeleteChain(g_profile.chain[i].nativeId);
     for (int i = 0; i < g_profile.ruleCount; i++) if (g_profile.rule[i].nativeId) g_api.DeleteRule(g_profile.rule[i].nativeId);
     for (int i = 0; i < g_profile.cfgCount; i++) if (g_profile.cfg[i].nativeId) g_api.DeleteProxyConfig(g_profile.cfg[i].nativeId);
+    // the ids belong to this run of the engine, the next one hands out new ones
+    for (int i = 0; i < g_profile.chainCount; i++) g_profile.chain[i].nativeId = 0;
 }
 
 static void SwitchToProfile(const wchar_t* name)
@@ -349,6 +397,7 @@ static void SwitchToProfile(const wchar_t* name)
     g_api.SetTrafficLoggingEnabled(g_trafficLog);
     g_api.SetLogEveryConnection(g_logEvery);
     ApplyConfigs();
+    ApplyChains();
     ApplyRules();
     ApplyDnsPolicy();
     SyncMenuChecks(g_hMain);
@@ -388,6 +437,7 @@ static void BuildMainMenu(HWND hwnd)
     AppendMenuW(proxy, MF_STRING, IDM_PROXY_SETTINGS, T(S_M_PROXY_SETTINGS));
     AppendMenuW(proxy, MF_STRING, IDM_PROXY_RULES,    T(S_M_PROXY_RULES));
     AppendMenuW(proxy, MF_STRING, IDM_DNS_SETTINGS,    T(S_M_DNS));
+    AppendMenuW(proxy, MF_STRING, IDM_PROXY_CHAINS,    T(S_M_CHAINS));
     AppendMenuW(proxy, MF_STRING, IDM_LOG_FILTERS,    T(S_M_LOGFILTERS));
     AppendTopMenu(bar, proxy, T(S_M_PROXY));
 
@@ -954,6 +1004,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDM_PROXY_SETTINGS: DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_SERVERS), hwnd, ServersDlgProc); return 0;
         case IDM_PROXY_RULES:    DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_RULES),   hwnd, RulesDlgProc);   return 0;
         case IDM_DNS_SETTINGS:  DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_DNS),     hwnd, DnsSettingsDlgProc); return 0;
+        case IDM_PROXY_CHAINS:  DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_CHAINS),  hwnd, ChainsDlgProc);     return 0;
         case IDM_PROXY_ENABLE:
             g_proxyEnabled = !g_proxyEnabled;
             g_api.SetEnabled(g_proxyEnabled);
@@ -1258,6 +1309,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int show)
     g_api.SetLogCallback(PBLogCb);
     g_api.SetConnectionCallback(PBConnCb);
     ApplyConfigs();
+    ApplyChains();
     ApplyDnsPolicy();
     g_started = g_api.Start();
     if (g_started) { ApplyRules(); LogStoreAdd(&g_actStore, T(S_STARTED)); }

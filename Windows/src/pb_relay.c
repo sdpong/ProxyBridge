@@ -593,6 +593,22 @@ DWORD WINAPI connection_handler(LPVOID arg)
     return r;
 }
 
+// Asks the proxy at `sock` to open a tunnel to the next hop of a chain.
+// A name goes over as it is, so that the hop resolves it and not this machine.
+static int chain_hop_connect(SOCKET sock, PROXY_CONFIG *via, PROXY_CONFIG *next)
+{
+    if (via == NULL || next == NULL) return -1;
+    UINT32 ip = parse_ipv4(next->host);
+    if (ip == 0)
+    {
+        if (next->host[0] == '\0') return -1;
+        if (via->type == PROXY_TYPE_SOCKS4) return socks4_connect_name(sock, next->host, next->port, via);
+        return socks5_connect_domain(sock, next->host, next->port, via);
+    }
+    if (via->type == PROXY_TYPE_SOCKS4) return socks4_connect(sock, ip, next->port, via);
+    return socks5_connect(sock, ip, next->port, via);
+}
+
 static DWORD WINAPI connection_handler_impl(LPVOID arg)
 {
     CONNECTION_CONFIG *config = (CONNECTION_CONFIG *)arg;
@@ -609,20 +625,56 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
     if (is_ipv6) memcpy(meta.dest, dest_ip6, 16); else memcpy(meta.dest, &dest_ip, 4);
     SOCKET socks_sock;
     struct sockaddr_in socks_addr;
+    PROXY_CONFIG *chain_hops[MAX_CHAIN_HOPS];
+    UINT32        chain_hop_ids[MAX_CHAIN_HOPS];
+    int chain_hop_count = 0;
 
     free(config);
 
-    // Look up the proxy config for this connection
-    PROXY_CONFIG *proxy = find_proxy_config(proxy_config_id);
-    if (proxy == NULL || proxy->host[0] == '\0' || proxy->port == 0)
+    // Look up the proxy config for this connection. A rule that names a chain carries
+    // the chain's id, and those ids live in a range of their own, so a chain and a
+    // proxy can never be mistaken for one another.
+    PROXY_CONFIG *proxy = NULL;        // the last hop: the one that reaches the target
+    PROXY_CONFIG *first_hop = NULL;    // the one this machine opens the connection to
+    if (proxy_config_id >= PB_CHAIN_ID_BASE)
+    {
+        // the hops are copied out: the chain can be edited or deleted while the
+        // connection walks through it
+        chain_hop_count = chain_hops_of(proxy_config_id, chain_hop_ids, MAX_CHAIN_HOPS);
+        if (chain_hop_count <= 0)
+        {
+            log_message("[RELAY] No chain (id=%u) - dropping connection", proxy_config_id);
+            closesocket(client_sock);
+            return 1;
+        }
+        for (int i = 0; i < chain_hop_count; i++)
+        {
+            chain_hops[i] = find_proxy_config(chain_hop_ids[i]);
+            if (chain_hops[i] == NULL)
+            {
+                log_message("[RELAY] Chain %u has no proxy %u - dropping connection",
+                            proxy_config_id, chain_hop_ids[i]);
+                closesocket(client_sock);
+                return 1;
+            }
+        }
+        first_hop = chain_hops[0];
+        proxy = chain_hops[chain_hop_count - 1];
+    }
+    else
+    {
+        proxy = find_proxy_config(proxy_config_id);
+        first_hop = proxy;
+    }
+    if (proxy == NULL || first_hop == NULL || first_hop->host[0] == '\0' || first_hop->port == 0)
     {
         log_message("[RELAY] No proxy config (id=%u) - dropping connection", proxy_config_id);
         closesocket(client_sock);
         return 1;
     }
 
-    // Connect to proxy, use cached resolved IP to avoid DNS per connection
-    UINT32 proxy_ip = proxy->resolved_ip ? proxy->resolved_ip : resolve_hostname(proxy->host);
+    // Connect to the first hop, use cached resolved IP to avoid DNS per connection
+    UINT32 proxy_ip = first_hop->resolved_ip ? first_hop->resolved_ip : resolve_hostname(first_hop->host);
     if (proxy_ip == 0)
     {
         closesocket(client_sock);
@@ -651,14 +703,27 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
     memset(&socks_addr, 0, sizeof(socks_addr));
     socks_addr.sin_family = AF_INET;
     socks_addr.sin_addr.s_addr = proxy_ip;
-    socks_addr.sin_port = htons(proxy->port);
+    socks_addr.sin_port = htons(first_hop->port);
 
     if (connect(socks_sock, (struct sockaddr *)&socks_addr, sizeof(socks_addr)) == SOCKET_ERROR)
     {
-        log_message("[RELAY] Failed to connect to proxy %s:%d (%d)", proxy->host, proxy->port, WSAGetLastError());
+        log_message("[RELAY] Failed to connect to proxy %s:%d (%d)", first_hop->host, first_hop->port, WSAGetLastError());
         closesocket(client_sock);
         closesocket(socks_sock);
         return 0;
+    }
+
+    // The chain: every hop but the last is asked to open a tunnel to the next one.
+    // Only the last hop reaches the target, so it is the one that gets the name.
+    for (int i = 0; i + 1 < chain_hop_count; i++)
+    {
+        if (chain_hop_connect(socks_sock, chain_hops[i], chain_hops[i + 1]) != 0)
+        {
+            log_message("[RELAY] Chain %u failed at proxy %u", proxy_config_id, chain_hop_ids[i]);
+            reset_close(client_sock);
+            closesocket(socks_sock);
+            return 0;
+        }
     }
 
     // What the proxy server is told about the destination. The DNS policy wins over

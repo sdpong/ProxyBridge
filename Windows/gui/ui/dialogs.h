@@ -943,6 +943,16 @@ INT_PTR CALLBACK RuleEditDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             LRESULT idx = SendMessageW(ac, CB_ADDSTRING, 0, (LPARAM)label);
             SendMessageW(ac, CB_SETITEMDATA, idx, c->storedId);
         }
+        // and then the chains: a rule that names one walks through it
+        for (int i = 0; i < g_profile.chainCount; i++)
+        {
+            PBChainProfile* c = &g_profile.chain[i];
+            wchar_t label[320];
+            _snwprintf_s(label, 320, _TRUNCATE, L"Chain: %s", c->name[0] ? c->name : L"?");
+            label[319] = 0;
+            LRESULT idx = SendMessageW(ac, CB_ADDSTRING, 0, (LPARAM)label);
+            SendMessageW(ac, CB_SETITEMDATA, idx, c->storedId);
+        }
         SendMessageW(ac, CB_SETDROPPEDWIDTH, 360, 0);
         // Seed fields from the rule.
         SetDlgItemTextW(dlg, IDC_RE_NAME,    r->name[0]    ? r->name    : L"ProxyBridge Rule");
@@ -962,7 +972,7 @@ INT_PTR CALLBACK RuleEditDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         int target = 0;
         if (!_wcsicmp(r->action, L"BLOCK")) target = 1;
         else if (!_wcsicmp(r->action, L"DIRECT")) target = 0;
-        else if (!_wcsicmp(r->action, L"PROXY"))
+        else if (!_wcsicmp(r->action, L"PROXY") || !_wcsicmp(r->action, L"CHAIN"))
         {
             int n = (int)SendMessageW(ac, CB_GETCOUNT, 0, 0);
             for (int k = 2; k < n; k++)
@@ -1044,8 +1054,22 @@ INT_PTR CALLBACK RuleEditDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             int asel = (int)SendMessageW(ac, CB_GETCURSEL, 0, 0);
             if (asel == 0)      { lstrcpynW(r->action, L"DIRECT", 16); r->cfgStoredId = 0; }
             else if (asel == 1) { lstrcpynW(r->action, L"BLOCK",  16); r->cfgStoredId = 0; }
-            else                { lstrcpynW(r->action, L"PROXY",  16);
-                                  r->cfgStoredId = (UINT32)SendMessageW(ac, CB_GETITEMDATA, asel, 0); }
+            else
+            {
+                UINT32 targetId = (UINT32)SendMessageW(ac, CB_GETITEMDATA, asel, 0);
+                // the chain ids live in a range of their own, and the chain list says
+                // which of the two this id is
+                if (PB_FindChain(&g_profile, targetId) != NULL)
+                {
+                    lstrcpynW(r->action, L"CHAIN", 16);
+                    r->cfgStoredId = targetId;
+                }
+                else
+                {
+                    lstrcpynW(r->action, L"PROXY", 16);
+                    r->cfgStoredId = targetId;
+                }
+            }
             r->enabled = (IsDlgButtonChecked(dlg, IDC_RE_ENABLED) == BST_CHECKED) ? 1 : 0;
             r->localhost = (asel >= 2 && IsDlgButtonChecked(dlg, IDC_RE_LOCALHOST) == BST_CHECKED) ? 1 : 0;   // only for PROXY rules
             EndDialog(dlg, 1);
@@ -1567,6 +1591,304 @@ INT_PTR CALLBACK DnsSettingsDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         case IDCANCEL:
             EndDialog(dlg, 0);
             return TRUE;
+        }
+        return FALSE;
+    }
+    }
+    return FALSE;
+}
+
+// ---- the proxy chains ----------------------------------------------------
+
+// The label a proxy gets in a chain: name, type and address.
+static void ChainProxyLabel(UINT32 storedId, wchar_t* out, int cch)
+{
+    for (int i = 0; i < g_profile.cfgCount; i++)
+    {
+        PBConfig* c = &g_profile.cfg[i];
+        if (c->storedId != storedId) continue;
+        _snwprintf_s(out, cch, _TRUNCATE, L"%s  %s  %s:%s", c->name[0] ? c->name : c->type, c->type, c->host, c->port);
+        out[cch - 1] = 0;
+        return;
+    }
+    _snwprintf_s(out, cch, _TRUNCATE, L"proxy %u", (unsigned)storedId);
+    out[cch - 1] = 0;
+}
+
+// What the chain editor works on. It lives in the dialog's user data.
+typedef struct {
+    wchar_t name[128];
+    UINT32  hops[PB_MAX_CHAIN_HOPS];
+    int     hopCount;
+} ChainEdit;
+
+static void ChainEditorRefresh(HWND dlg)
+{
+    HWND lv = GetDlgItem(dlg, IDC_CH_LIST);
+    ListView_DeleteAllItems(lv);
+    ChainEdit* c = (ChainEdit*)GetWindowLongPtrW(dlg, GWLP_USERDATA);
+    if (!c) return;
+    for (int i = 0; i < c->hopCount; i++)
+    {
+        wchar_t label[320];
+        ChainProxyLabel(c->hops[i], label, 320);
+        LVITEMW it; ZeroMemory(&it, sizeof(it));
+        it.mask = LVIF_TEXT; it.iItem = i; it.pszText = label;
+        ListView_InsertItem(lv, &it);
+    }
+}
+
+// The chain list: the name and the proxies the connection walks through.
+static void ChainsRefresh(HWND dlg)
+{
+    HWND lv = GetDlgItem(dlg, IDC_CN_LIST);
+    ListView_DeleteAllItems(lv);
+    for (int i = 0; i < g_profile.chainCount; i++)
+    {
+        PBChainProfile* c = &g_profile.chain[i];
+        LVITEMW it; ZeroMemory(&it, sizeof(it));
+        it.mask = LVIF_TEXT; it.iItem = i; it.pszText = c->name;
+        ListView_InsertItem(lv, &it);
+
+        wchar_t summary[512];
+        size_t used = 0;
+        summary[0] = 0;
+        for (int h = 0; h < c->hopCount; h++)
+        {
+            wchar_t label[320];
+            ChainProxyLabel(c->hops[h], label, 320);
+            int n = _snwprintf_s(summary + used, 512 - used, _TRUNCATE, L"%s%s", used ? L" -> " : L"", label);
+            if (n <= 0) break;
+            used += (size_t)n;
+            if (used >= 511) { used = 511; break; }
+        }
+        ListView_SetItemText(lv, i, 1, summary);
+    }
+}
+
+INT_PTR CALLBACK ChainEditDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    ChainEdit* c = (ChainEdit*)lp;
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+    {
+        SetWindowLongPtrW(dlg, GWLP_USERDATA, (LONG_PTR)lp);
+        SetWindowTextW(dlg, T(S_DLG_CHAIN));
+        SetDlgItemTextW(dlg, IDC_CH_L_NAME, T(S_L_CHAINNAME));
+        SetDlgItemTextW(dlg, IDC_CH_L_HOPS, T(S_L_CHAINHOPS));
+        SetDlgItemTextW(dlg, IDC_CH_L_PICK, T(S_CHAIN_PICK));
+        SetDlgItemTextW(dlg, IDC_CH_NOTE,  T(S_CHAIN_HINT));
+        SetDlgItemTextW(dlg, IDOK,         T(S_BTN_OK));
+        SetDlgItemTextW(dlg, IDCANCEL,     T(S_BTN_CANCEL));
+        SetDlgItemTextW(dlg, IDC_CH_NAME,  c->name);
+
+        // the proxies that can be picked
+        HWND pick = GetDlgItem(dlg, IDC_CH_PICK);
+        for (int i = 0; i < g_profile.cfgCount; i++)
+        {
+            PBConfig* cfg = &g_profile.cfg[i];
+            wchar_t label[320];
+            _snwprintf_s(label, 320, _TRUNCATE, L"%s  %s  %s:%s", cfg->name[0] ? cfg->name : cfg->type, cfg->type, cfg->host, cfg->port);
+            label[319] = 0;
+            LRESULT idx = SendMessageW(pick, CB_ADDSTRING, 0, (LPARAM)label);
+            SendMessageW(pick, CB_SETITEMDATA, idx, cfg->storedId);
+        }
+        if (g_profile.cfgCount > 0) SendMessageW(pick, CB_SETCURSEL, 0, 0);
+
+        HWND lv = GetDlgItem(dlg, IDC_CH_LIST);
+        LVCOLUMNW col; ZeroMemory(&col, sizeof(col));
+        col.mask = LVCF_TEXT | LVCF_WIDTH;
+        col.cx = 250;
+        col.pszText = (LPWSTR)T(S_CHAIN_COL);
+        ListView_InsertColumn(lv, 0, &col);
+
+        ChainEditorRefresh(dlg);
+        InitDarkMode(dlg);
+        return TRUE;
+    }
+    PB_DARK_CTLCOLORS;
+    case WM_COMMAND:
+    {
+        HWND lv = GetDlgItem(dlg, IDC_CH_LIST);
+        int sel = ListView_GetNextItem(lv, -1, LVNI_SELECTED);
+        switch (LOWORD(wp))
+        {
+        case IDC_CH_ADD:
+        {
+            HWND pick = GetDlgItem(dlg, IDC_CH_PICK);
+            int psel = (int)SendMessageW(pick, CB_GETCURSEL, 0, 0);
+            if (psel < 0) return TRUE;
+            if (c->hopCount >= PB_MAX_CHAIN_HOPS)
+            {
+                wchar_t m[160];
+                _snwprintf_s(m, ARRAYSIZE(m), _TRUNCATE, L"A chain can hold at most %d proxies.", PB_MAX_CHAIN_HOPS);
+                MessageBoxW(dlg, m, T(S_DLG_CHAIN), MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+            c->hops[c->hopCount++] = (UINT32)SendMessageW(pick, CB_GETITEMDATA, psel, 0);
+            ChainEditorRefresh(dlg);
+            return TRUE;
+        }
+        case IDC_CH_REMOVE:
+            if (sel < 0 || sel >= c->hopCount) return TRUE;
+            for (int i = sel; i < c->hopCount - 1; i++) c->hops[i] = c->hops[i + 1];
+            c->hopCount--;
+            ChainEditorRefresh(dlg);
+            return TRUE;
+        case IDC_CH_UP:
+            if (sel <= 0 || sel >= c->hopCount) return TRUE;
+            { UINT32 t = c->hops[sel - 1]; c->hops[sel - 1] = c->hops[sel]; c->hops[sel] = t; }
+            ChainEditorRefresh(dlg);
+            ListView_SetItemState(lv, sel - 1, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+            return TRUE;
+        case IDC_CH_DOWN:
+            if (sel < 0 || sel + 1 >= c->hopCount) return TRUE;
+            { UINT32 t = c->hops[sel + 1]; c->hops[sel + 1] = c->hops[sel]; c->hops[sel] = t; }
+            ChainEditorRefresh(dlg);
+            ListView_SetItemState(lv, sel + 1, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+            return TRUE;
+        case IDOK:
+        {
+            if (c->hopCount == 0)
+            {
+                MessageBoxW(dlg, T(S_CHAIN_EMPTY), T(S_DLG_CHAIN), MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+            // the engine has the last word on whether a chain can work
+            UINT32 hops[PB_MAX_CHAIN_HOPS];
+            for (int i = 0; i < c->hopCount; i++) hops[i] = ResolveNativeCfg(c->hops[i]);
+            char problems[1024];
+            UINT32 n = g_api.ChainProblems ? g_api.ChainProblems(hops, (UINT32)c->hopCount, problems, sizeof(problems)) : 0;
+            if (n > 0)
+            {
+                wchar_t* wide = U2Wdup(problems);
+                wchar_t msg[2048];
+                _snwprintf_s(msg, ARRAYSIZE(msg), _TRUNCATE, T(S_CHAIN_BROKEN), wide ? wide : L"");
+                free(wide);
+                MessageBoxW(dlg, msg, T(S_DLG_CHAIN), MB_OK | MB_ICONWARNING);
+                return TRUE;   // the chain stays open so it can be fixed
+            }
+            GetDlgItemTextW(dlg, IDC_CH_NAME, c->name, 128);
+            EndDialog(dlg, 1);
+            return TRUE;
+        }
+        case IDCANCEL: EndDialog(dlg, 0); return TRUE;
+        }
+        return FALSE;
+    }
+    }
+    return FALSE;
+}
+
+// The rules that name a chain that is going away go direct, so nothing is left
+// pointing at something that does not exist.
+static void ChainsDetachRules(UINT32 storedId)
+{
+    for (int i = 0; i < g_profile.ruleCount; i++)
+    {
+        PBRule* r = &g_profile.rule[i];
+        if (r->cfgStoredId != storedId) continue;
+        if (ActionIdx(r->action) != 3) continue;
+        lstrcpynW(r->action, L"DIRECT", 16);
+        r->cfgStoredId = 0;
+        EngineEditRule(r);
+    }
+}
+
+INT_PTR CALLBACK ChainsDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    (void)lp;
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+    {
+        SetWindowTextW(dlg, T(S_DLG_CHAINS));
+        SetDlgItemTextW(dlg, IDC_CN_ADD,    T(S_BTN_ADDDOTS));
+        SetDlgItemTextW(dlg, IDC_CN_EDIT,   T(S_BTN_EDITDOTS));
+        SetDlgItemTextW(dlg, IDC_CN_REMOVE, T(S_BTN_REMOVE));
+        SetDlgItemTextW(dlg, IDC_CN_HINT,   T(S_CHAIN_HINT));
+        SetDlgItemTextW(dlg, IDCANCEL,      T(S_BTN_CLOSE));
+
+        HWND lv = GetDlgItem(dlg, IDC_CN_LIST);
+        LVCOLUMNW col; ZeroMemory(&col, sizeof(col));
+        col.mask = LVCF_TEXT | LVCF_WIDTH;
+        col.cx = 160;
+        col.pszText = (LPWSTR)T(S_L_NAME);
+        ListView_InsertColumn(lv, 0, &col);
+        col.cx = 270;
+        col.pszText = (LPWSTR)T(S_CHAIN_COL);
+        ListView_InsertColumn(lv, 1, &col);
+
+        InitDarkMode(dlg);
+        ChainsRefresh(dlg);
+        return TRUE;
+    }
+    PB_DARK_CTLCOLORS;
+    case WM_COMMAND:
+    {
+        HWND lv = GetDlgItem(dlg, IDC_CN_LIST);
+        int sel = ListView_GetNextItem(lv, -1, LVNI_SELECTED);
+        switch (LOWORD(wp))
+        {
+        case IDC_CN_ADD:
+        {
+            if (g_profile.chainCount >= PB_MAX_CHAIN)
+            {
+                wchar_t m[160];
+                _snwprintf_s(m, ARRAYSIZE(m), _TRUNCATE, L"The chain limit is %d.", PB_MAX_CHAIN);
+                MessageBoxW(dlg, m, T(S_DLG_CHAINS), MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+            ChainEdit c; ZeroMemory(&c, sizeof(c));
+            _snwprintf_s(c.name, 128, _TRUNCATE, L"Chain %d", g_profile.chainCount + 1);
+            if (DialogBoxParamW(g_hInst, MAKEINTRESOURCEW(IDD_CHAIN), dlg, ChainEditDlgProc, (LPARAM)&c) == 1)
+            {
+                PBChainProfile* p = &g_profile.chain[g_profile.chainCount++];
+                ZeroMemory(p, sizeof(*p));
+                p->storedId = PB_AllocChainId(&g_profile);
+                lstrcpynW(p->name, c.name, 128);
+                p->hopCount = c.hopCount;
+                for (int i = 0; i < c.hopCount && i < PB_MAX_CHAIN_HOPS; i++) p->hops[i] = c.hops[i];
+                ApplyChains();
+                SaveActive();
+                ChainsRefresh(dlg);
+            }
+            return TRUE;
+        }
+        case IDC_CN_EDIT:
+        {
+            if (sel < 0 || sel >= g_profile.chainCount) return TRUE;
+            PBChainProfile* p = &g_profile.chain[sel];
+            ChainEdit c; ZeroMemory(&c, sizeof(c));
+            lstrcpynW(c.name, p->name, 128);
+            c.hopCount = p->hopCount;
+            for (int i = 0; i < p->hopCount && i < PB_MAX_CHAIN_HOPS; i++) c.hops[i] = p->hops[i];
+            if (DialogBoxParamW(g_hInst, MAKEINTRESOURCEW(IDD_CHAIN), dlg, ChainEditDlgProc, (LPARAM)&c) == 1)
+            {
+                lstrcpynW(p->name, c.name, 128);
+                p->hopCount = c.hopCount;
+                for (int i = 0; i < c.hopCount && i < PB_MAX_CHAIN_HOPS; i++) p->hops[i] = c.hops[i];
+                ApplyChains();
+                SaveActive();
+                ChainsRefresh(dlg);
+            }
+            return TRUE;
+        }
+        case IDC_CN_REMOVE:
+        {
+            if (sel < 0 || sel >= g_profile.chainCount) return TRUE;
+            PBChainProfile gone = g_profile.chain[sel];
+            if (gone.nativeId && g_api.DeleteChain) g_api.DeleteChain(gone.nativeId);
+            for (int i = sel; i < g_profile.chainCount - 1; i++) g_profile.chain[i] = g_profile.chain[i + 1];
+            g_profile.chainCount--;
+            ChainsDetachRules(gone.storedId);
+            SaveActive();
+            ChainsRefresh(dlg);
+            MessageBoxW(dlg, T(S_CHAIN_DELHINT), T(S_DLG_CHAINS), MB_OK | MB_ICONINFORMATION);
+            return TRUE;
+        }
+        case IDCANCEL: EndDialog(dlg, 0); return TRUE;
         }
         return FALSE;
     }

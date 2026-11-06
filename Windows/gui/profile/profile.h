@@ -71,11 +71,27 @@ typedef struct {
     int     resolverCount;
 } PBDnsPolicyProfile;
 
+// A proxy chain: the proxies a connection walks through, in order. The id lives in a
+// range of its own, so a chain and a proxy can never be mistaken for one another.
+#define PB_MAX_CHAIN      32
+#define PB_MAX_CHAIN_HOPS 8
+#define PB_CHAIN_ID_BASE  1000
+typedef struct {
+    UINT32  storedId;              // the chain id as written in the profile
+    UINT32  nativeId;              // the id the engine gave it after apply
+    wchar_t name[128];
+    UINT32  hops[PB_MAX_CHAIN_HOPS];
+    int     hopCount;
+} PBChainProfile;
+
 // Stable ids for proxy configs. These are owned by the profile and are NOT the id the engine returns
 // from AddProxyConfig (that one is only valid for the current engine session and is remapped on load).
 // Never reused, so a rule can never silently start pointing at a proxy added after its own was deleted.
 typedef struct PBProfile PBProfile;
 UINT32 PB_AllocConfigId(PBProfile* p);
+// A fresh id for a chain. The ids live in a range of their own and are never reused,
+// so a rule that names a chain keeps pointing at the same chain.
+UINT32 PB_AllocChainId(PBProfile* p);
 
 typedef struct PBProfile {
     int      trafficLogging;
@@ -89,7 +105,12 @@ typedef struct PBProfile {
     PBRule   rule[PB_MAX_RULE]; int ruleCount;
     PBFilter filter[PB_MAX_FILTER]; int filterCount;
     PBDnsPolicyProfile dns;    // the DNS policy
+    PBChainProfile chain[PB_MAX_CHAIN]; int chainCount;
 } PBProfile;
+
+// The chain with this id, or NULL. A rule that names a chain carries the chain's id
+// in the same field a proxy id goes in, and this is what tells the two apart.
+const PBChainProfile* PB_FindChain(const PBProfile* p, UINT32 stored_id);
 
 // Target Hosts list helpers. Line breaks only exist in the editor for readability:
 //   PB_ListNormalize - in place; removes line breaks/tabs/control characters, trims blanks around the

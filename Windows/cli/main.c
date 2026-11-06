@@ -20,6 +20,14 @@
 #define VERSION "4.3.0"
 #define MAX_PROXY_CONFIGS 32
 #define MAX_RULES         256
+#define MAX_CHAINS        32
+#define MAX_CHAIN_HOPS    8
+
+// The proxy chains, as the profile carries them. The keys are the ones the macOS app
+// writes, so one profile file means the same thing on both platforms: a list of
+// {id, name, proxies}. The chain ids live in a range of their own, so a chain and a
+// proxy can never be mistaken for one another.
+#define PB_CHAIN_ID_BASE 1000
 
 // The DNS policy, as the profile carries it. The keys are the ones the macOS app
 // writes, so one profile file means the same thing on both platforms.
@@ -64,6 +72,7 @@ typedef void (*pfnSetConnectionCallback)(void (*cb)(const char*, DWORD,
                                           const char*, uint16_t, const char*));
 typedef void (*pfnSetTrafficLogging)(int enable);
 typedef int  (*pfnSetDNSPolicy)(const DnsPolicy* policy);
+typedef uint32_t (*pfnAddChain)(const char* name, const uint32_t* hop_ids, uint32_t hop_count);
 typedef int  (*pfnStart)(void);
 typedef int  (*pfnStop)(void);
 
@@ -74,6 +83,7 @@ static pfnSetLogCallback        g_SetLog         = NULL;
 static pfnSetConnectionCallback g_SetConn        = NULL;
 static pfnSetTrafficLogging     g_SetTraffic     = NULL;
 static pfnSetDNSPolicy          g_SetDNSPolicy   = NULL;
+static pfnAddChain              g_AddChain       = NULL;
 static pfnStart                 g_Start          = NULL;
 static pfnStop                  g_Stop           = NULL;
 static HMODULE                  g_hDll           = NULL;
@@ -95,11 +105,20 @@ typedef struct {
     char     target_ports[256];
     char     target_domains[8192]; // "*", "google.com", "*.google.com;*.gstatic.com" (long lists)
     int      protocol;        // 0=TCP, 1=UDP, 2=BOTH
-    int      action;          // 0=PROXY, 1=DIRECT, 2=BLOCK
+    int      action;          // 0=PROXY, 1=DIRECT, 2=BLOCK, 3=CHAIN
     int      is_enabled;
-    uint32_t proxy_config_id; // maps to PBProxyConfig.profile_id
+    uint32_t proxy_config_id; // maps to PBProxyConfig.profile_id, or to a chain's id for a CHAIN rule
     int      localhost_via_proxy; // 1 = localhost (127.x / ::1) traffic matching this rule is proxied too
 } PBRule;
+
+// A proxy chain: the proxies a connection walks through, in order.
+typedef struct {
+    uint32_t id;                          // the chain id as written in the profile
+    char     name[128];
+    uint32_t proxies[MAX_CHAIN_HOPS];     // the proxy config ids, in order
+    int      num_proxies;
+    uint32_t dll_id;                      // the id the engine gave it
+} PBChain;
 
 typedef struct {
     int         localhost_via_proxy;   // legacy global key; only the default for rules that lack their own
@@ -109,6 +128,8 @@ typedef struct {
     PBRule      rules[MAX_RULES];
     int         num_rules;
     PBDnsPolicyCfg dns;
+    PBChain     chains[MAX_CHAINS];
+    int         num_chains;
 } PBProfile;
 
 // Globals
@@ -481,6 +502,26 @@ static int jstring_array(const char* json, const char* key, char (*out)[PB_DNS_N
     return n;
 }
 
+// Reads an array of numbers into out[max], one element per entry. Returns the count.
+static int jnumber_array(const char* json, const char* key, uint32_t* out, int max)
+{
+    const char* arr = jarray(json, key);
+    if (!arr) return 0;
+    int n = 0;
+    const char* p = arr;
+    while (*p && n < max)
+    {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (*p < '0' || *p > '9') break;
+        char* end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p) break;
+        p = end;
+        out[n++] = (uint32_t)v;
+    }
+    return n;
+}
+
 // Advances to the next {...} object within an array.
 // Returns pointer to '{', updates *next to char after matching '}'.
 // Returns NULL when no more objects.
@@ -655,6 +696,7 @@ static bool load_profile(const char* path, PBProfile* prof)
             jstr(buf, "Action", as, sizeof(as));
             if      (_stricmp(as, "DIRECT") == 0) r->action = 1;
             else if (_stricmp(as, "BLOCK")  == 0) r->action = 2;
+            else if (_stricmp(as, "CHAIN")  == 0) r->action = 3;
             else                                  r->action = 0;
 
             r->is_enabled      = jbool(buf, "IsEnabled", true) ? 1 : 0;
@@ -663,6 +705,39 @@ static bool load_profile(const char* path, PBProfile* prof)
 
             free(buf);
             prof->num_rules++;
+        }
+    }
+
+    // ── proxyChains ────────────────────────────────────────────────────────────
+    // The keys are the ones the macOS app writes, so one profile file means the same
+    // thing on both platforms: a list of {id, name, proxies}.
+    arr = jarray(json, "proxyChains");
+    if (!arr) arr = jarray(json, "ProxyChains");   // an earlier build wrote it this way
+    if (arr)
+    {
+        const char* next = arr;
+        const char* obj;
+        while ((obj = jnext_obj(next, &next)) != NULL &&
+               prof->num_chains < MAX_CHAINS)
+        {
+            size_t len = (size_t)(next - obj);
+            char*  buf = (char*)malloc(len + 1);
+            if (!buf) break;
+            memcpy(buf, obj, len);
+            buf[len] = '\0';
+
+            PBChain* c = &prof->chains[prof->num_chains];
+            c->id = (uint32_t)jint(buf, "id", 0);
+            if (c->id == 0) c->id = (uint32_t)jint(buf, "Id", 0);
+            if (c->id == 0) c->id = PB_CHAIN_ID_BASE + (uint32_t)prof->num_chains;   // a profile without ids
+            jstr(buf, "name", c->name, sizeof(c->name));
+            if (c->name[0] == '\0') jstr(buf, "Name", c->name, sizeof(c->name));
+            c->num_proxies = jnumber_array(buf, "proxies", c->proxies, MAX_CHAIN_HOPS);
+            if (c->num_proxies == 0)
+                c->num_proxies = jnumber_array(buf, "ProxyConfigIds", c->proxies, MAX_CHAIN_HOPS);
+
+            free(buf);
+            prof->num_chains++;
         }
     }
 
@@ -736,6 +811,10 @@ static bool load_dll(void)
     // The DNS policy arrived later than the rest, so it is optional: an older core
     // DLL simply runs without a policy instead of refusing to start.
     g_SetDNSPolicy = (pfnSetDNSPolicy)GetProcAddress(g_hDll, "ProxyBridge_SetDNSPolicy");
+
+    // The proxy chains came later still. Without them a profile that names a chain
+    // has its chain rules go direct, which is what the profile would do anyway.
+    g_AddChain = (pfnAddChain)GetProcAddress(g_hDll, "ProxyBridge_AddChain");
 
     return true;
 }
@@ -1150,6 +1229,7 @@ int main(int argc, char* argv[])
 
     printf("  Proxy configs : %d\n", prof.num_configs);
     printf("  Rules         : %d\n", prof.num_rules);
+    if (prof.num_chains > 0) printf("  Proxy chains  : %d\n", prof.num_chains);
 
     if (prof.num_rules == 0)
     {
@@ -1214,9 +1294,44 @@ int main(int argc, char* argv[])
         id_map_n++;
     }
 
+    // ── Add proxy chains ──────────────────────────────────────────────────────
+    // The chains go in before the rules, because a rule that names a chain needs
+    // the id the engine gave it.
+    if (prof.num_chains > 0)
+    {
+        printf("\nProxy chains:\n");
+        for (int i = 0; i < prof.num_chains; i++)
+        {
+            PBChain* c = &prof.chains[i];
+            uint32_t hops[MAX_CHAIN_HOPS];
+            int n = 0;
+            for (int h = 0; h < c->num_proxies; h++)
+            {
+                uint32_t native = 0;
+                for (int j = 0; j < id_map_n; j++)
+                    if (id_map[j].profile_id == c->proxies[h]) { native = id_map[j].dll_id; break; }
+                if (native == 0) continue;      // the proxy is gone: the hop is left out
+                hops[n++] = native;
+            }
+            if (n == 0)
+            {
+                fprintf(stderr, "  [%d] WARNING: the chain '%s' has no usable proxy, it is skipped\n",
+                        i + 1, c->name);
+                continue;
+            }
+            c->dll_id = g_AddChain ? g_AddChain(c->name, hops, (uint32_t)n) : 0;
+            if (c->dll_id == 0)
+            {
+                fprintf(stderr, "  [%d] WARNING: the engine refused the chain '%s'\n", i + 1, c->name);
+                continue;
+            }
+            printf("  [%d] %s  (%d proxy/proxies, id=%u)\n", i + 1, c->name, n, c->dll_id);
+        }
+    }
+
     // ── Add rules ─────────────────────────────────────────────────────────────
     static const char* PROTO[]  = { "TCP", "UDP", "BOTH" };
-    static const char* ACTION[] = { "PROXY", "DIRECT", "BLOCK" };
+    static const char* ACTION[] = { "PROXY", "DIRECT", "BLOCK", "CHAIN" };
 
     printf("\nRules:\n");
     int ok = 0, fail = 0;
@@ -1233,6 +1348,19 @@ int main(int argc, char* argv[])
                     { dll_cfg_id = id_map[j].dll_id; break; }
             if (dll_cfg_id == 0)
                 dll_cfg_id = id_map[0].dll_id; // fallback: first config
+        }
+        // A CHAIN rule names a chain, and the chain's id is what the engine wants
+        else if (r->action == 3)
+        {
+            for (int j = 0; j < prof.num_chains; j++)
+                if (prof.chains[j].id == r->proxy_config_id) { dll_cfg_id = prof.chains[j].dll_id; break; }
+            if (dll_cfg_id == 0)
+            {
+                fprintf(stderr, "  [%d] WARNING: the chain this rule names is not in the profile, it goes direct\n",
+                        i + 1);
+                fail++;
+                continue;
+            }
         }
 
         const char* proc    = r->process_name[0]   ? r->process_name   : "*";
@@ -1254,7 +1382,7 @@ int main(int argc, char* argv[])
             g_DisableRule(rid);
 
         int p = r->protocol < 3 ? r->protocol : 0;
-        int a = r->action    < 3 ? r->action    : 0;
+        int a = r->action    < 4 ? r->action    : 0;
         printf("  [%d] %-28s %-22s %-14s %-20s %s  %s%s\n",
                i + 1, proc, hosts, ports, domains,
                PROTO[p], ACTION[a],
