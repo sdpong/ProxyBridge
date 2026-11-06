@@ -48,24 +48,25 @@ static DWORD WINAPI server_thread(LPVOID p)
 
     if (sc->socks4)
     {
-        /* SOCKS4: the request comes first, then the user id, then the name of a 4a request */
-        if (!rx(c, b, 8)) { closesocket(c); return 0; }
-        sc->req_len = 8; memcpy(sc->req, b, 8);
+        /* SOCKS4: the request comes first, then the user id, then the name of a 4a request.
+           It is read straight into the capture buffer, so the test can look at all of it. */
+        if (!rx(c, sc->req, 8)) { closesocket(c); return 0; }
+        sc->req_len = 8;
         for (;;)
         {
-            if (!rx(c, b + sc->req_len, 1)) { closesocket(c); return 0; }
+            if (!rx(c, sc->req + sc->req_len, 1)) { closesocket(c); return 0; }
             sc->req_len++;
-            if (b[sc->req_len - 1] == 0) break;
+            if (sc->req[sc->req_len - 1] == 0) break;
             if (sc->req_len >= (int)sizeof(sc->req) - 2) { closesocket(c); return 0; }
         }
         /* 0.0.0.x with x != 0 means the name of the host follows */
-        if (b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] != 0)
+        if (sc->req[4] == 0 && sc->req[5] == 0 && sc->req[6] == 0 && sc->req[7] != 0)
         {
             for (;;)
             {
-                if (!rx(c, b + sc->req_len, 1)) { closesocket(c); return 0; }
+                if (!rx(c, sc->req + sc->req_len, 1)) { closesocket(c); return 0; }
                 sc->req_len++;
-                if (b[sc->req_len - 1] == 0) break;
+                if (sc->req[sc->req_len - 1] == 0) break;
                 if (sc->req_len >= (int)sizeof(sc->req) - 2) { closesocket(c); return 0; }
             }
         }

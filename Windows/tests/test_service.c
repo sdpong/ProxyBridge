@@ -77,7 +77,9 @@ int main(void)
     CHECK(run(&ret) && ret == 41 && P.type == 1 && !strcmp(P.ip, "127.0.0.1") && P.port == 1080 && !strcmp(P.user, "alice") && !strcmp(P.pass, "pw") && P.sd);
     begin(PBOP_ADD_PROXY); PbW_U32(&W, 0); PbW_Str(&W, "10.0.0.1"); PbW_U32(&W, 8080); PbW_Str(&W, NULL); PbW_Str(&W, NULL); PbW_U32(&W, 0);
     CHECK(run(&ret) && P.type == 0 && P.userNull && P.passNull && !P.sd);                       /* NULL strings reach the engine as NULL */
-    begin(PBOP_ADD_PROXY); PbW_U32(&W, 2); PbW_Str(&W, "x"); PbW_U32(&W, 1); PbW_Str(&W, NULL); PbW_Str(&W, NULL); PbW_U32(&W, 0); { int c = P.calls; CHECK(!run(&ret) && P.calls == c); }   /* unknown type */
+    begin(PBOP_ADD_PROXY); PbW_U32(&W, 2); PbW_Str(&W, "127.0.0.1"); PbW_U32(&W, 1080); PbW_Str(&W, NULL); PbW_Str(&W, NULL); PbW_U32(&W, 0);
+    CHECK(run(&ret) && P.type == 2);                                                                                                              /* 2 = SOCKS4 */
+    begin(PBOP_ADD_PROXY); PbW_U32(&W, 3); PbW_Str(&W, "x"); PbW_U32(&W, 1); PbW_Str(&W, NULL); PbW_Str(&W, NULL); PbW_U32(&W, 0); { int c = P.calls; CHECK(!run(&ret) && P.calls == c); }   /* unknown type */
     begin(PBOP_ADD_PROXY); PbW_U32(&W, 1); PbW_Str(&W, "x"); PbW_U32(&W, 70000); PbW_Str(&W, NULL); PbW_Str(&W, NULL); PbW_U32(&W, 0); { int c = P.calls; CHECK(!run(&ret) && P.calls == c); }   /* port > 65535 */
     begin(PBOP_ADD_PROXY); PbW_U32(&W, 1); { int c = P.calls; CHECK(!run(&ret) && P.calls == c); }                                       /* truncated */
     begin(PBOP_EDIT_PROXY); PbW_U32(&W, 9); PbW_U32(&W, 1); PbW_Str(&W, "h"); PbW_U32(&W, 5); PbW_Str(&W, NULL); PbW_Str(&W, NULL); PbW_U32(&W, 1);
