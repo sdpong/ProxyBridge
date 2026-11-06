@@ -267,6 +267,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private func profileCloseKey(_ name: String) -> String { "profile.\(name).closeToMenuBar" }
     private func profileStartupKey(_ name: String) -> String { "profile.\(name).runAtStartup" }
     private func profileDNSKey(_ name: String) -> String { "profile.\(name).dnsEnabled" }
+    private func profileDNSPolicyKey(_ name: String) -> String { "profile.\(name).dnsPolicy" }
 
     private func loadProfiles() {
         let d = UserDefaults.standard
@@ -291,6 +292,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.bool(forKey: "closeToMenuBar"), forKey: profileCloseKey(name))
         d.set(d.bool(forKey: "runAtStartup"), forKey: profileStartupKey(name))
         d.set(isDNSEnabled, forKey: profileDNSKey(name))
+        d.set(d.data(forKey: "dnsPolicy"), forKey: profileDNSPolicyKey(name))
     }
 
     // load a profile's snapshot into the live working keys
@@ -309,6 +311,13 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.object(forKey: profileStartupKey(name)) as? Bool ?? false, forKey: "runAtStartup")
         // DNS is on by default, also for profiles saved before the setting existed
         d.set(d.object(forKey: profileDNSKey(name)) as? Bool ?? true, forKey: "dnsEnabled")
+        // the DNS policy is per profile too, a profile saved before the setting
+        // existed keeps the default policy
+        if let policyData = d.data(forKey: profileDNSPolicyKey(name)) {
+            d.set(policyData, forKey: "dnsPolicy")
+        } else {
+            d.removeObject(forKey: "dnsPolicy")
+        }
     }
 
     // reload in-memory state from the working keys and push it to the extension
@@ -360,12 +369,14 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.object(forKey: profileCloseKey(old)), forKey: profileCloseKey(new))
         d.set(d.object(forKey: profileStartupKey(old)), forKey: profileStartupKey(new))
         d.set(d.object(forKey: profileDNSKey(old)), forKey: profileDNSKey(new))
+        d.set(d.data(forKey: profileDNSPolicyKey(old)), forKey: profileDNSPolicyKey(new))
         d.removeObject(forKey: profileConfigsKey(old))
         d.removeObject(forKey: profileRulesKey(old))
         d.removeObject(forKey: profileLoggingKey(old))
         d.removeObject(forKey: profileCloseKey(old))
         d.removeObject(forKey: profileStartupKey(old))
         d.removeObject(forKey: profileDNSKey(old))
+        d.removeObject(forKey: profileDNSPolicyKey(old))
         if let i = profiles.firstIndex(of: old) { profiles[i] = new }
         d.set(profiles, forKey: "profiles")
         if activeProfile == old {
@@ -387,6 +398,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.removeObject(forKey: profileCloseKey(name))
         d.removeObject(forKey: profileStartupKey(name))
         d.removeObject(forKey: profileDNSKey(name))
+        d.removeObject(forKey: profileDNSPolicyKey(name))
         profiles.removeAll { $0 == name }
         d.set(profiles, forKey: "profiles")
     }
@@ -405,6 +417,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             "closeToMenuBar": d.object(forKey: profileCloseKey(name)) as? Bool ?? false,
             "runAtStartup": d.object(forKey: profileStartupKey(name)) as? Bool ?? false,
             "dnsEnabled": d.object(forKey: profileDNSKey(name)) as? Bool ?? true,
+            "dnsPolicy": d.data(forKey: profileDNSPolicyKey(name))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? dnsPolicy.toDictionary(),
             "proxyConfigs": configsJSON,
             "proxyRules": d.array(forKey: profileRulesKey(name)) ?? []
         ]
@@ -433,6 +447,11 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(obj["closeToMenuBar"] as? Bool ?? false, forKey: profileCloseKey(name))
         d.set(obj["runAtStartup"] as? Bool ?? false, forKey: profileStartupKey(name))
         d.set(obj["dnsEnabled"] as? Bool ?? true, forKey: profileDNSKey(name))
+        // the policy travels with the profile, a profile without one keeps the default
+        if let policyDict = obj["dnsPolicy"] as? [String: Any],
+           let policyData = try? JSONSerialization.data(withJSONObject: policyDict) {
+            d.set(policyData, forKey: profileDNSPolicyKey(name))
+        }
 
         profiles.append(name)
         d.set(profiles, forKey: "profiles")

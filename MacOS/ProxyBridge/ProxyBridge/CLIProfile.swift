@@ -35,6 +35,9 @@ struct CLIProfile {
     var proxies: [CLIProxy]
     var rules: [[String: Any]]      // as saved by the app: processNames, targetHosts, targetPorts, protocol, action, enabled
     var dnsEnabled: Bool = true     // the profile's Enable DNS setting, on when the profile has none
+    // the profile's DNS policy, as the wire form the extension understands. a profile
+    // saved before the policy existed has none, and the extension then uses its default
+    var dnsPolicy: [String: Any]? = nil
 }
 
 enum CLIProfileError: Error, Equatable {
@@ -63,7 +66,8 @@ enum CLIProfileLoader {
         let proxies = try decodeProxies(obj["proxyConfigs"] ?? [])
         let rules = obj["proxyRules"] as? [[String: Any]] ?? []
         return CLIProfile(name: (obj["name"] as? String) ?? "profile", proxies: proxies, rules: rules,
-                          dnsEnabled: obj["dnsEnabled"] as? Bool ?? true)
+                          dnsEnabled: obj["dnsEnabled"] as? Bool ?? true,
+                          dnsPolicy: obj["dnsPolicy"] as? [String: Any])
     }
 
     // a profile saved in the app. the active profile lives in the working keys
@@ -78,9 +82,18 @@ enum CLIProfileLoader {
         let configsKey = name == active ? "proxyConfigs" : "profile.\(name).proxyConfigs"
         let rulesKey = name == active ? "proxyRules" : "profile.\(name).proxyRules"
         let dnsKey = name == active ? "dnsEnabled" : "profile.\(name).dnsEnabled"
+        let dnsPolicyKey = name == active ? "dnsPolicy" : "profile.\(name).dnsPolicy"
         let proxies = try decodeProxies(read(configsKey) ?? [])
         let rules = read(rulesKey) as? [[String: Any]] ?? []
-        return CLIProfile(name: name, proxies: proxies, rules: rules, dnsEnabled: read(dnsKey) as? Bool ?? true)
+        // the policy is stored as json data, an export carries it as a plain object
+        let policy: [String: Any]?
+        if let data = read(dnsPolicyKey) as? Data {
+            policy = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        } else {
+            policy = read(dnsPolicyKey) as? [String: Any]
+        }
+        return CLIProfile(name: name, proxies: proxies, rules: rules, dnsEnabled: read(dnsKey) as? Bool ?? true,
+                          dnsPolicy: policy)
     }
 
     static func savedNames(read: Reader) -> (names: [String], active: String?) {

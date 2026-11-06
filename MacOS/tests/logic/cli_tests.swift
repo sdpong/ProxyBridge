@@ -136,6 +136,23 @@ t("hasHostName: a domain among IPs", CLIProfileLoader.hasHostName("10.*.*.*; exa
 t("hasHostName: an IPv4 address is not a name", !CLIProfileLoader.hasHostName("192.168.1.1"))
 t("hasHostName: a range is not a name", !CLIProfileLoader.hasHostName("10.0.0.1-10.0.0.254"))
 t("hasHostName: IPv6 is not a name", !CLIProfileLoader.hasHostName("2001:db8::1; fe80::1-fe80::ff"))
+
+// ---- the DNS policy (per profile)
+t("a profile without a policy has none", (try? CLIProfileLoader.parse(json: jsonProfile("")))?.dnsPolicy == nil)
+let policyJSON = ", \"dnsPolicy\": {\"mode\": \"remote\", \"excludedDomains\": [\"a.test\"], \"upstreamResolvers\": [], \"autoDetectUpstream\": true, \"leakProtection\": false}"
+let parsedPolicy = (try? CLIProfileLoader.parse(json: jsonProfile(policyJSON)))?.dnsPolicy
+t("a policy in the file is read", parsedPolicy?["mode"] as? String == "remote")
+t("the excluded names come with it", parsedPolicy?["excludedDomains"] as? [String] == ["a.test"])
+// the app stores the policy as json data, an export carries it as a plain object
+let policyStore: [String: Any] = ["profiles": ["Default", "work"], "activeProfile": "Default",
+                                  "dnsPolicy": Data("{\"mode\":\"local\"}".utf8),
+                                  "profile.work.dnsPolicy": ["mode": "remote"]]
+let policyRead: CLIProfileLoader.Reader = { policyStore[$0] }
+let activePolicy = (try? CLIProfileLoader.saved(named: "Default", read: policyRead))?.dnsPolicy
+let otherPolicy = (try? CLIProfileLoader.saved(named: "work", read: policyRead))?.dnsPolicy
+t("the active saved profile reads the policy as data", activePolicy?["mode"] as? String == "local")
+t("another saved profile reads its own policy", otherPolicy?["mode"] as? String == "remote")
+t("a saved profile without a policy has none", (try? CLIProfileLoader.saved(named: "legacy", read: policyRead))?.dnsPolicy == nil)
 t("hasHostName: star and empty are not names", !CLIProfileLoader.hasHostName("*") && !CLIProfileLoader.hasHostName(""))
 var noDNS = profile(rules: [["processNames": "*", "targetHosts": "github.com", "protocol": "TCP", "action": "DIRECT"],
                             ["processNames": "*", "targetHosts": "10.*.*.*", "protocol": "TCP", "action": "DIRECT"]])

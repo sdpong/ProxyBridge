@@ -312,15 +312,17 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         guard !started, !stopping, let session = session else { return }
         started = true
 
-        // same messages, same order as the GUI: logging, proxies, then the rules in one step
+        // same messages, same order as the GUI: logging, proxies, the DNS policy, then the rules in one step
         send(["action": "setTrafficLogging", "enabled": verbose >= 2]) { _ in
             self.send(["action": "setProxyConfigs", "configs": self.proxyMessages()]) { _ in
-                RuleManager.applyRules(session: session, rules: self.profile.rules) { _, count in
-                    CLI.say("Profile \"\(CLIText.safe(self.profile.name))\": \(self.profile.proxies.count) proxies, \(count) rules applied")
-                    // the extension skips a rule it can't read, don't let that pass silently
-                    if count < self.profile.rules.count { CLI.warn("\(self.profile.rules.count - count) rule(s) were rejected by the extension (invalid fields)") }
-                    CLI.say("Redirecting traffic. Press Ctrl+C to stop.")
-                    if self.verbose > 0 { self.startLogPolling() }
+                self.sendDNSPolicy { _ in
+                    RuleManager.applyRules(session: session, rules: self.profile.rules) { _, count in
+                        CLI.say("Profile \"\(CLIText.safe(self.profile.name))\": \(self.profile.proxies.count) proxies, \(count) rules applied")
+                        // the extension skips a rule it can't read, don't let that pass silently
+                        if count < self.profile.rules.count { CLI.warn("\(self.profile.rules.count - count) rule(s) were rejected by the extension (invalid fields)") }
+                        CLI.say("Redirecting traffic. Press Ctrl+C to stop.")
+                        if self.verbose > 0 { self.startLogPolling() }
+                    }
                 }
             }
         }
@@ -362,6 +364,17 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
                 if let error = error { CLI.warn("DNS proxy setup failed: \(error.localizedDescription)") }
             }
         }
+    }
+
+    // the DNS policy reaches the DNS proxy provider through the shared container,
+    // the same way the GUI does it. a profile without a policy leaves the
+    // extension on its default, so nothing is sent.
+    private func sendDNSPolicy(completion: @escaping ([String: Any]?) -> Void) {
+        guard let policy = profile.dnsPolicy, !policy.isEmpty else {
+            completion(nil)
+            return
+        }
+        send(["action": "setDNSPolicy", "policy": policy], completion: completion)
     }
 
     private func send(_ message: [String: Any], completion: (([String: Any]?) -> Void)? = nil) {
