@@ -155,7 +155,7 @@ static BOOL Dispatch(const BYTE *req, DWORD reqLen, PbW *resp)
         PbR_Str(&r, proc, sizeof(proc), &nProc); PbR_Str(&r, hosts, sizeof(hosts), &nHosts);
         PbR_Str(&r, ports, sizeof(ports), &nPorts); PbR_Str(&r, domains, sizeof(domains), &nDomains);
         UINT32 proto = PbR_U32(&r), action = PbR_U32(&r), cfg = PbR_U32(&r), localhost = PbR_U32(&r);
-        if (!r.ok || proto > 2 || action > 2) return FALSE;
+        if (!r.ok || proto > 2 || action > 3) return FALSE;   /* 3 = the rule walks a proxy chain */
         if (op == PBOP_ADD_RULE)
             ret = g_api.AddRule(nProc ? NULL : proc, nHosts ? NULL : hosts, nPorts ? NULL : ports, nDomains ? NULL : domains,
                                 (PBRuleProtocol)proto, (PBRuleAction)action, cfg, localhost != 0);

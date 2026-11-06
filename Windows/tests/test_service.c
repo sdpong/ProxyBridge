@@ -39,6 +39,36 @@ static UINT32 g_flowsAsked = 0, g_flowsHave = 0;
 static UINT64 g_killId = 0;
 static int    g_killCalls = 0;
 static BOOL SKillFlow(UINT64 id) { g_killId = id; g_killCalls++; return TRUE; }
+
+/* the proxy chains */
+static struct { UINT32 id; char name[128]; UINT32 hopCount; UINT32 hops[PB_CHAIN_MAX_HOPS]; int calls; } C;
+static int g_chainCalls = 0;
+static UINT32 SAddChain(const char* name, const UINT32* hops, UINT32 hopCount)
+{
+    g_chainCalls++; C.id = 1000; cp(C.name, sizeof C.name, name); C.hopCount = hopCount;
+    for (UINT32 i = 0; i < hopCount && i < PB_CHAIN_MAX_HOPS; i++) C.hops[i] = hops[i];
+    return C.id;
+}
+static BOOL SEditChain(UINT32 id, const char* name, const UINT32* hops, UINT32 hopCount)
+{
+    g_chainCalls++; C.id = id; cp(C.name, sizeof C.name, name); C.hopCount = hopCount;
+    for (UINT32 i = 0; i < hopCount && i < PB_CHAIN_MAX_HOPS; i++) C.hops[i] = hops[i];
+    return TRUE;
+}
+static BOOL SDeleteChain(UINT32 id) { g_chainCalls++; C.id = id; return TRUE; }
+static UINT32 SGetChains(PBChain* out, UINT32 max)
+{
+    if (max == 0) return 0;
+    ZeroMemory(&out[0], sizeof out[0]);
+    out[0].id = 1000; out[0].hopCount = 2; out[0].hops[0] = 11; out[0].hops[1] = 12;
+    strcpy_s(out[0].name, sizeof out[0].name, "work");
+    return 1;
+}
+static UINT32 SChainProblems(const UINT32* hops, UINT32 hopCount, char* out, size_t cap)
+{
+    if (out && cap) out[0] = '\0';
+    return (hops && hopCount) ? 0 : 1;
+}
 static UINT32 SGetFlows(PBFlow* out, UINT32 max)
 {
     g_flowsAsked = max;
@@ -69,6 +99,8 @@ int main(void)
     g_api.SetTrafficLoggingEnabled = STraffic; g_api.SetEnabled = SEnabled; g_api.SetLogEveryConnection = SLogAll; g_api.ClearConnectionLogs = SClear;
     g_api.Start = SStart; g_api.Stop = SStop; g_api.TestProxyConfigEx = NULL; g_api.GetFlows = SGetFlows;
     g_api.KillFlow = SKillFlow;
+    g_api.AddChain = SAddChain; g_api.EditChain = SEditChain; g_api.DeleteChain = SDeleteChain;
+    g_api.GetChains = SGetChains; g_api.ChainProblems = SChainProblems;
     UINT32 ret;
 
     /* ================= request handler ================= */
@@ -93,8 +125,8 @@ int main(void)
     CHECK(run(&ret) && R.hostsNull && R.portsNull && R.domainsNull && !R.procNull && R.proto == 2 && R.act == 2 && R.localhost == FALSE);
     begin(PBOP_ADD_RULE); PbW_Str(&W, "x.exe"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_U32(&W, 3); PbW_U32(&W, 0); PbW_U32(&W, 0); PbW_U32(&W, 0);
     { int c = R.adds; CHECK(!run(&ret) && R.adds == c); }                                         /* protocol 3 is invalid */
-    begin(PBOP_ADD_RULE); PbW_Str(&W, "x.exe"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_U32(&W, 0); PbW_U32(&W, 3); PbW_U32(&W, 0); PbW_U32(&W, 0);
-    { int c = R.adds; CHECK(!run(&ret) && R.adds == c); }                                         /* action 3 is invalid */
+    begin(PBOP_ADD_RULE); PbW_Str(&W, "x.exe"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_U32(&W, 0); PbW_U32(&W, 4); PbW_U32(&W, 0); PbW_U32(&W, 0);
+    { int c = R.adds; CHECK(!run(&ret) && R.adds == c); }                                         /* action 4 is invalid */
     begin(PBOP_ADD_RULE); PbW_Str(&W, "x.exe"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_U32(&W, 0); PbW_U32(&W, 0); PbW_U32(&W, 0);
     { int c = R.adds; CHECK(!run(&ret) && R.adds == c); }                                         /* an old client without the localhost field */
     begin(PBOP_EDIT_RULE); PbW_U32(&W, 5); PbW_Str(&W, "e.exe"); PbW_Str(&W, "1.1.1.1"); PbW_Str(&W, "80"); PbW_Str(&W, "*"); PbW_U32(&W, 1); PbW_U32(&W, 1); PbW_U32(&W, 2); PbW_U32(&W, 1);
@@ -148,6 +180,43 @@ int main(void)
     begin(PBOP_KILL_FLOW); PbW_U32(&W, 7); CHECK(!run(&ret));                                  /* the high half is missing */
     begin(PBOP_KILL_FLOW); CHECK(!run(&ret));                                                  /* nothing at all */
 
+    /* the proxy chains */
+    g_chainCalls = 0;
+    begin(PBOP_ADD_CHAIN); PbW_Str(&W, "work"); PbW_U32(&W, 2); PbW_U32(&W, 11); PbW_U32(&W, 12);
+    CHECK(run(&ret) && ret == 1000 && g_chainCalls == 1 && !strcmp(C.name, "work") && C.hopCount == 2 && C.hops[0] == 11 && C.hops[1] == 12);
+    begin(PBOP_EDIT_CHAIN); PbW_U32(&W, 1000); PbW_Str(&W, "home"); PbW_U32(&W, 1); PbW_U32(&W, 13);
+    CHECK(run(&ret) && ret == 1 && g_chainCalls == 2 && C.id == 1000 && !strcmp(C.name, "home") && C.hopCount == 1 && C.hops[0] == 13);
+    begin(PBOP_DELETE_CHAIN); PbW_U32(&W, 1000);
+    CHECK(run(&ret) && ret == 1 && g_chainCalls == 3 && C.id == 1000);
+    begin(PBOP_ADD_CHAIN); PbW_Str(&W, "x"); PbW_U32(&W, 0);              CHECK(!run(&ret));   /* a chain needs a proxy */
+    begin(PBOP_ADD_CHAIN); PbW_Str(&W, "x"); PbW_U32(&W, 99);             CHECK(!run(&ret));   /* too many hops */
+    begin(PBOP_ADD_CHAIN); PbW_Str(&W, "x"); PbW_U32(&W, 1);              CHECK(!run(&ret));   /* the hop is missing */
+    begin(PBOP_EDIT_CHAIN); PbW_U32(&W, 1000); PbW_Str(&W, "x");           CHECK(!run(&ret));   /* the hop count is missing */
+    begin(PBOP_DELETE_CHAIN);                                            CHECK(!run(&ret));   /* the id is missing */
+
+    begin(PBOP_GET_CHAINS); PbW_U32(&W, 10);
+    { PbW resp; PbW_Init(&resp, rs, sizeof rs); CHECK(Dispatch(rq, W.len, &resp) && resp.ok);
+      PbR r; PbR_Init(&r, rs, resp.len);
+      CHECK(PbR_U32(&r) == 1);
+      CHECK(PbR_U32(&r) == 1000 && PbR_U32(&r) == 2);
+      CHECK(PbR_U32(&r) == 11 && PbR_U32(&r) == 12);
+      char name[64]; PbR_Str(&r, name, sizeof name, NULL);
+      CHECK(r.ok && !strcmp(name, "work")); }
+    begin(PBOP_GET_CHAINS); CHECK(!run(&ret));                                                /* the count is missing */
+
+    begin(PBOP_CHAIN_PROBLEMS); PbW_U32(&W, 2); PbW_U32(&W, 11); PbW_U32(&W, 12);
+    { PbW resp; PbW_Init(&resp, rs, sizeof rs); CHECK(Dispatch(rq, W.len, &resp) && resp.ok);
+      PbR r; PbR_Init(&r, rs, resp.len);
+      CHECK(PbR_U32(&r) == 0);
+      char text[256]; PbR_Str(&r, text, sizeof text, NULL);
+      CHECK(r.ok && text[0] == '\0'); }
+    begin(PBOP_CHAIN_PROBLEMS); PbW_U32(&W, 1);                                               CHECK(!run(&ret));   /* the hop is missing */
+
+    /* a rule that walks a chain: action 3 is valid now */
+    begin(PBOP_ADD_RULE); PbW_Str(&W, "e.exe"); PbW_Str(&W, "*"); PbW_Str(&W, "*"); PbW_Str(&W, "*");
+    PbW_U32(&W, 0); PbW_U32(&W, 3); PbW_U32(&W, 1000); PbW_U32(&W, 0);
+    CHECK(run(&ret) && ret == 77 && R.act == 3 && R.cfg == 1000);
+
     /* unknown operations and garbage are rejected without touching the engine */
     begin(0);        CHECK(!run(&ret));
     begin(9999);     CHECK(!run(&ret));
@@ -157,7 +226,7 @@ int main(void)
       {
           int n = rand() % 120; BYTE tmp[160];
           for (int i = 0; i < n; i++) tmp[i] = (BYTE)(rand() % 4 ? rand() % 40 : rand());
-          if (n >= 4 && it % 2) { UINT32 op = 1 + rand() % (PBOP_GET_FLOWS + 1); memcpy(tmp, &op, 4); }
+          if (n >= 4 && it % 2) { UINT32 op = 1 + rand() % (PBOP_CHAIN_PROBLEMS + 1); memcpy(tmp, &op, 4); }
           void* base; BYTE* g = pb_guarded(tmp, (size_t)n, &base);
           PbW resp; PbW_Init(&resp, rs, sizeof rs); Dispatch(g, (DWORD)n, &resp);
           pb_guard_release(base);
