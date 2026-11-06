@@ -155,8 +155,9 @@ jobs:
 
         echo "$SUBMIT_OUTPUT"
 
-        # Extract submission ID
-        SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep "^  id:" | head -1 | awk '{print $2}')
+        # Extract submission ID (grep exits 1 when the id line is missing, which must not
+        # abort the step: the log below is optional)
+        SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep "^  id:" | head -1 | awk '{print $2}') || true
         echo "Submission ID: $SUBMISSION_ID"
 
         # Always fetch the detailed log from Apple
@@ -180,13 +181,33 @@ jobs:
         # Verify notarization
         spctl -a -vvv -t install "$APP_PATH"
 
+    - name: Package App Bundle
+      run: |
+        cd MacOS/ProxyBridge
+        # the installer requires admin rights, so also publish a portable app bundle
+        APP_VERSION=$(grep -m1 '^VERSION=' build.sh | cut -d'"' -f2)
+        mkdir -p output
+        ditto -c -k --keepParent \
+          build/DerivedData/Build/Products/Release/ProxyBridge.app \
+          "output/ProxyBridge-v${APP_VERSION}-Universal.app.zip"
+        ls -la output/
+
+    - name: Upload App Artifact
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ProxyBridge-macOS-App
+        path: MacOS/ProxyBridge/output/ProxyBridge-*.app.zip
+        retention-days: 30
+
     - name: Build PKG Installer
       env:
         PKG_ENV_CONTENT: ${{ secrets.PKG_ENV }}
       run: |
         # Write PKG_ENV to .env but strip SIGNING_IDENTITY so build.sh skips signing
         # (productsign inside build.sh cannot access build.keychain - we do it below)
-        printf '%s' "$PKG_ENV_CONTENT" | grep -v "^SIGNING_IDENTITY" > MacOS/ProxyBridge/.env
+        # grep exits 1 when it selects nothing, and a fork has no PKG_ENV secret, so the
+        # pipeline would abort the step under `bash -e` before the package is built
+        printf '%s' "$PKG_ENV_CONTENT" | grep -v "^SIGNING_IDENTITY" > MacOS/ProxyBridge/.env || true
 
         # Copy notarized .app into output/ where build.sh expects it
         mkdir -p MacOS/ProxyBridge/output
@@ -231,7 +252,7 @@ jobs:
 
         echo "$PKG_SUBMIT_OUTPUT"
 
-        PKG_SUBMISSION_ID=$(echo "$PKG_SUBMIT_OUTPUT" | grep "^  id:" | head -1 | awk '{print $2}')
+        PKG_SUBMISSION_ID=$(echo "$PKG_SUBMIT_OUTPUT" | grep "^  id:" | head -1 | awk '{print $2}') || true
         if [ -n "$PKG_SUBMISSION_ID" ]; then
           echo "--- PKG Notarization Log ---"
           xcrun notarytool log "$PKG_SUBMISSION_ID" \
