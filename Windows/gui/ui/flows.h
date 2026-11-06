@@ -451,10 +451,17 @@ static LRESULT CALLBACK FlowsListSubProc(HWND h, UINT msg, WPARAM w, LPARAM l, U
         ZeroMemory(&hit, sizeof(hit));
         hit.pt = pt;
         int i = ListView_HitTest(h, &hit);
+        // ListView_SetItemState expands to a statement block, not an expression, so it must never be
+        // the unbraced body of an if: the ';' after it would end the if and leave the else unmatched.
         if (i >= 0)
+        {
             ListView_SetItemState(h, i, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        }
         else
-            ListView_SetItemState(h, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);   // empty space: nothing is selected any more
+        {
+            // empty space: nothing is selected any more
+            ListView_SetItemState(h, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        }
         POINT screen = pt;
         ClientToScreen(h, &screen);
         FlowsShowMenu(h, screen);
