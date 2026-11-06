@@ -395,6 +395,10 @@ static int     g_rlMapN = 0;
 static wchar_t g_rlWord[RL_MAX_WORDS][RL_WORD_LEN];
 static int     g_rlWordN = 0;
 
+// The label a proxy gets in a chain: name, type and address (defined with the chain
+// window, used here too so a rule that walks a chain shows what it walks through)
+static void ChainProxyLabel(UINT32 storedId, wchar_t* out, int cch);
+
 // The text shown in the "Proxy" column (also searched).
 static void RuleProxyLabel(const PBRule* r, wchar_t* cfg, int cch)
 {
@@ -405,6 +409,29 @@ static void RuleProxyLabel(const PBRule* r, wchar_t* cfg, int cch)
             if (g_profile.cfg[k].storedId == r->cfgStoredId) { c = &g_profile.cfg[k]; break; }
         if (c) _snwprintf_s(cfg, cch, _TRUNCATE, L"%s  %s  %s:%s", c->name[0] ? c->name : c->type, c->type, c->host, c->port);
         else   _snwprintf_s(cfg, cch, _TRUNCATE, L"#%u (missing)", r->cfgStoredId);
+        cfg[cch - 1] = 0;
+    }
+    else if (_wcsicmp(r->action, L"CHAIN") == 0)
+    {
+        // a rule that walks a chain shows the chain and the proxies it walks through
+        const PBChainProfile* c = PB_FindChain(&g_profile, r->cfgStoredId);
+        if (c)
+        {
+            wchar_t hops[320];
+            size_t used = 0;
+            hops[0] = 0;
+            for (int i = 0; i < c->hopCount; i++)
+            {
+                wchar_t one[192];
+                ChainProxyLabel(c->hops[i], one, 192);
+                int n = _snwprintf_s(hops + used, 320 - used, _TRUNCATE, L"%s%s", used ? L" -> " : L"", one);
+                if (n <= 0) break;
+                used += (size_t)n;
+                if (used >= 318) break;
+            }
+            _snwprintf_s(cfg, cch, _TRUNCATE, L"%s  %s", c->name[0] ? c->name : L"Chain", hops);
+        }
+        else _snwprintf_s(cfg, cch, _TRUNCATE, L"#%u (missing)", r->cfgStoredId);
         cfg[cch - 1] = 0;
     }
     else lstrcpynW(cfg, L"\x2014", cch);   // em dash for Direct/Block
