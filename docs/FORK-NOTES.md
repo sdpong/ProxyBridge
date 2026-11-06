@@ -118,6 +118,45 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 - 缩进 4 空格，`{` 同行
 - Windows 侧偏好 `BOOL` / `UINT32` / `UINT64` 等显式类型
 
+## 平台限制（本 fork 踩过的坑，改动前先看）
+
+这些是**实测**出来的，不是猜的。改到相关代码前先读一遍，免得再踩一次。
+
+### macOS App 沙盒
+
+- **不能枚举进程**：`proc_listpids()` 被封锁（返回 0），`posix_spawn("/bin/ps")` 被封锁（EPERM）。
+  读内核进程表要用 `sysctl(KERN_PROC_ALL)`，这个**可以**用；
+  读单个进程的完整路径 `proc_pidpath` 也可以用。
+- **能读别的进程的属主**：`proc_pidinfo(pid, PROC_PIDT_SHORTBSDINFO, ...)` 可以，
+  但它填的是 **`proc_bsdshortinfo`**，不是 `proc_bsdinfo`。用错结构体，uid 会读到错误偏移。
+- **能读别的 App 的 bundle id**：`Bundle(path:).bundleIdentifier` 可以。
+- 沙盒 App 与系统扩展共用 App Group `group.com.interceptsuite.ProxyBridge`，
+  可以用共享容器当跨进程的传递通道。
+
+### macOS 系统扩展
+
+- **DNS provider 收不到 App 消息**：`sendProviderMessage` 只存在于
+  `NETunnelProviderSession`。`NEDNSProxyManager` 的 connection 没有这个方法，
+  `NEDNSProxyProvider` 也没有 `handleAppMessage` 可覆盖。
+  要给 DNS provider 送东西，只能走 **App Group 共享容器**（本 fork 用 `dns_policy.json`）。
+- **透明代理与 DNS provider 可能是两个进程**：不要假设同进程内的单例会共享，
+  共享容器才可靠。
+
+### 代理链
+
+- **中间的跳只能是 SOCKS5 / SOCKS4**：HTTP CONNECT 的应答可能把隧道数据留在缓冲区里，
+  下一跳的握手会把它当成自己的应答读走。App 与扩展各有一份校验，
+  `MacOS/tests/logic/chain_tests.swift` 比对两边的判定，防止说法漂移。
+- **链不能带 UDP**：SOCKS5 的 UDP ASSOCIATE 是独立会话，串不起来。
+
+### 代理类型
+
+- **名字与数字要一一对应**：profile 里存名字（`SOCKS5` / `SOCKS4` / `HTTP`），
+  引擎里存数字。Windows 侧用 `pb_proxy_type_*` 一对函数收敛，
+  macOS 侧用 `ProxyChain.problems` 与 `ChainPlan.problems` 各自校验（逻辑测试比对两边）。
+- **UDP 只走 SOCKS5**：HTTP 没有 UDP，SOCKS4 也没有。规则指向这两种代理时 UDP 走直连，
+  并且要**明说**，不能静默回落。
+
 ## 已知限制
 
 - **本机（macOS）没有 MSVC / mingw 交叉编译器**，Windows 侧改动只能逐行人工复核 +
