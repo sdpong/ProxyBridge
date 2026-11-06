@@ -67,7 +67,7 @@ PROXYBRIDGE_API UINT32 ProxyBridge_AddProxyConfig(ProxyType type, const char* pr
     memset(cfg, 0, sizeof(PROXY_CONFIG));
 
     cfg->config_id = g_next_config_id++;
-    cfg->type      = (type == PROXY_TYPE_HTTP) ? PROXY_TYPE_HTTP : PROXY_TYPE_SOCKS5;
+    cfg->type      = proxy_type_normalize(type);
     cfg->port      = proxy_port;
     cfg->send_domain_to_proxy = send_domain_to_proxy;
     strncpy_s(cfg->host, sizeof(cfg->host), proxy_ip, _TRUNCATE);
@@ -79,7 +79,7 @@ PROXYBRIDGE_API UINT32 ProxyBridge_AddProxyConfig(ProxyType type, const char* pr
     cfg->udp_connected = FALSE;
 
     g_proxy_config_count++;
-    log_message("Added proxy config ID %u: %s:%u (type %d)", cfg->config_id, cfg->host, cfg->port, cfg->type);
+    log_message("Added proxy config ID %u: %s:%u (%s)", cfg->config_id, cfg->host, cfg->port, proxy_type_name(cfg->type));
     return cfg->config_id;
 }
 
@@ -102,7 +102,7 @@ PROXYBRIDGE_API BOOL ProxyBridge_EditProxyConfig(UINT32 config_id, ProxyType typ
             if (cfg->udp_send_sock != INVALID_SOCKET) { closesocket(cfg->udp_send_sock); cfg->udp_send_sock = INVALID_SOCKET; }
             cfg->udp_connected = FALSE;
 
-            cfg->type = (type == PROXY_TYPE_HTTP) ? PROXY_TYPE_HTTP : PROXY_TYPE_SOCKS5;
+            cfg->type = proxy_type_normalize(type);
             cfg->port = proxy_port;
             cfg->send_domain_to_proxy = send_domain_to_proxy;
             strncpy_s(cfg->host, sizeof(cfg->host), proxy_ip, _TRUNCATE);
@@ -112,7 +112,7 @@ PROXYBRIDGE_API BOOL ProxyBridge_EditProxyConfig(UINT32 config_id, ProxyType typ
             if (username != NULL) strncpy_s(cfg->username, sizeof(cfg->username), username, _TRUNCATE);
             if (password != NULL) strncpy_s(cfg->password, sizeof(cfg->password), password, _TRUNCATE);
 
-            log_message("Edited proxy config ID %u: %s:%u (type %d)", config_id, cfg->host, cfg->port, cfg->type);
+            log_message("Edited proxy config ID %u: %s:%u (%s)", config_id, cfg->host, cfg->port, proxy_type_name(cfg->type));
             return TRUE;
         }
     }
@@ -198,6 +198,8 @@ PROXYBRIDGE_API int ProxyBridge_TestProxyConfig(UINT32 config_id, const char* ta
     int result;
     if (cfg->type == PROXY_TYPE_SOCKS5)
         result = socks5_connect(sock, dest_ip, target_port, cfg);
+    else if (cfg->type == PROXY_TYPE_SOCKS4)
+        result = socks4_connect(sock, dest_ip, target_port, cfg);
     else
         result = http_connect(sock, dest_ip, target_port, cfg);
 
@@ -227,12 +229,14 @@ PROXYBRIDGE_API int ProxyBridge_TestProxyConfigEx(UINT32 config_id, const char* 
     if (target_host == NULL || target_host[0] == '\0') target_host = "www.google.com";
     if (target_port == 0) target_port = 80;
 
-    BOOL is_socks = (cfg->type == PROXY_TYPE_SOCKS5);
+    BOOL is_socks5 = (cfg->type == PROXY_TYPE_SOCKS5);
+    BOOL is_socks4 = (cfg->type == PROXY_TYPE_SOCKS4);
     BOOL use_auth = (cfg->username[0] != '\0');
 
     TLOG("Proxy:    %s:%u", cfg->host, cfg->port);
-    TLOG("Protocol: %s", is_socks ? "SOCKS5" : "HTTP");
-    TLOG("Auth:     %s", use_auth ? "yes" : "no");
+    TLOG("Protocol: %s", proxy_type_name(cfg->type));
+    // socks4 has a user id, not a password
+    TLOG("Auth:     %s", is_socks4 ? "no (SOCKS4 has a user id, not a password)" : (use_auth ? "yes" : "no"));
     TLOG("Target:   %s:%u", target_host, target_port);
 
     UINT32 proxy_ip = resolve_hostname(cfg->host);
@@ -278,8 +282,9 @@ PROXYBRIDGE_API int ProxyBridge_TestProxyConfigEx(UINT32 config_id, const char* 
     else
     {
         ULONGLONG h0 = GetTickCount64();
-        int rc = is_socks ? socks5_connect(s, dest_ip, target_port, cfg)
-                          : http_connect(s, dest_ip, target_port, cfg);
+        int rc = is_socks5 ? socks5_connect(s, dest_ip, target_port, cfg)
+                : is_socks4 ? socks4_connect(s, dest_ip, target_port, cfg)
+                            : http_connect(s, dest_ip, target_port, cfg);
         ULONGLONG h1 = GetTickCount64();
         if (rc != 0)
         {
@@ -326,7 +331,8 @@ PROXYBRIDGE_API int ProxyBridge_TestProxyConfigEx(UINT32 config_id, const char* 
     TLOG("  Test 3 passed");
 
     // ── Test 4: SOCKS5 UDP ASSOCIATE support ─────────────────────────────────
-    if (is_socks)
+    // only socks5 has it: socks4 has no udp at all, and an http proxy cannot carry it
+    if (is_socks5)
     {
         TLOG("");
         TLOG("Test 4: SOCKS5 UDP ASSOCIATE support");

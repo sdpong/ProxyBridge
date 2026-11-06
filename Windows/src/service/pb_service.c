@@ -126,14 +126,14 @@ static BOOL Dispatch(const BYTE *req, DWORD reqLen, PbW *resp)
         UINT32 type = PbR_U32(&r); PbR_Str(&r, ip, sizeof(ip), NULL); UINT32 port = PbR_U32(&r);
         PbR_Str(&r, user, sizeof(user), &nUser); PbR_Str(&r, pass, sizeof(pass), &nPass);
         UINT32 sd = PbR_U32(&r);
-        if (!r.ok || type > 1 || port > 65535) return FALSE;
+        if (!r.ok || type > 2 || port > 65535) return FALSE;
         ret = g_api.AddProxyConfig((PBProxyType)type, ip, (unsigned short)port, nUser ? NULL : user, nPass ? NULL : pass, sd != 0);
         break; }
     case PBOP_EDIT_PROXY: {
         UINT32 id = PbR_U32(&r), type = PbR_U32(&r); PbR_Str(&r, ip, sizeof(ip), NULL); UINT32 port = PbR_U32(&r);
         PbR_Str(&r, user, sizeof(user), &nUser); PbR_Str(&r, pass, sizeof(pass), &nPass);
         UINT32 sd = PbR_U32(&r);
-        if (!r.ok || type > 1 || port > 65535) return FALSE;
+        if (!r.ok || type > 2 || port > 65535) return FALSE;
         ret = g_api.EditProxyConfig(id, (PBProxyType)type, ip, (unsigned short)port, nUser ? NULL : user, nPass ? NULL : pass, sd != 0);
         break; }
     case PBOP_DELETE_PROXY: { UINT32 id = PbR_U32(&r); if (!r.ok) return FALSE; ret = g_api.DeleteProxyConfig(id); break; }

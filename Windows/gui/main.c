@@ -246,7 +246,7 @@ static void ApplyConfigs(void)
     for (int i = 0; i < g_profile.cfgCount; i++)
     {
         PBConfig* c = &g_profile.cfg[i];
-        int type = (_wcsicmp(c->type, L"HTTP") == 0) ? PB_PROXY_HTTP : PB_PROXY_SOCKS5;
+        int type = pb_proxy_type_enum(c->type);
         char h[256], u[256], p[256];
         W2Ux(c->host, h, sizeof(h)); W2Ux(c->user, u, sizeof(u)); W2Ux(c->pass, p, sizeof(p));
         c->nativeId = g_api.AddProxyConfig((PBProxyType)type, h, (unsigned short)_wtoi(c->port), u, p, c->sendDomain ? TRUE : FALSE);

@@ -20,7 +20,8 @@ typedef void (*ConnectionCallback)(const char* process_name, DWORD pid, const ch
 
 typedef enum {
     PROXY_TYPE_HTTP = 0,
-    PROXY_TYPE_SOCKS5 = 1
+    PROXY_TYPE_SOCKS5 = 1,
+    PROXY_TYPE_SOCKS4 = 2
 } ProxyType;
 
 typedef enum {

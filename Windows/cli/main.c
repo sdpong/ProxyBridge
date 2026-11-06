@@ -100,6 +100,18 @@ static CRITICAL_SECTION  g_outq_lock;
 static HANDLE            g_outq_evt = NULL, g_outq_thread = NULL;
 static volatile LONG     g_outq_quit = 0;
 
+// the name of a proxy type, for the output. 0 = HTTP, 1 = SOCKS5, 2 = SOCKS4
+static const char* cli_proxy_type_name(int type)
+{
+    switch (type)
+    {
+        case 0:  return "HTTP";
+        case 1:  return "SOCKS5";
+        case 2:  return "SOCKS4";
+        default: return "SOCKS5";
+    }
+}
+
 static void outq_push(const char* line)
 {
     EnterCriticalSection(&g_outq_lock);
@@ -507,7 +519,10 @@ static bool load_profile(const char* path, PBProfile* prof)
 
             char type_s[32] = {0};
             jstr(buf, "Type", type_s, sizeof(type_s));
-            c->type = (_stricmp(type_s, "socks5") == 0) ? 1 : 0;
+            // 0 = HTTP, 1 = SOCKS5, 2 = SOCKS4
+            if (_stricmp(type_s, "socks5") == 0) c->type = 1;
+            else if (_stricmp(type_s, "socks4") == 0) c->type = 2;
+            else c->type = 0;
 
             jstr(buf, "Host", c->host, sizeof(c->host));
 
@@ -1072,7 +1087,7 @@ int main(int argc, char* argv[])
         if (did == 0)
         {
             fprintf(stderr, "  [%d] ERROR: Failed to add %s %s:%d\n",
-                    i + 1, c->type ? "SOCKS5" : "HTTP", c->host, c->port);
+                    i + 1, cli_proxy_type_name(c->type), c->host, c->port);
             if (g_Stop) g_Stop();
             FreeLibrary(g_hDll);
             return 1;

@@ -70,7 +70,7 @@ New-Item -ItemType Directory -Path $Out | Out-Null
 $wdDll = Join-Path $WinDivertPath "$Arch\WinDivert.dll"
 if (Test-Path $wdDll) { Copy-Item $wdDll $Out } else { Write-Host "WARNING: $wdDll not found; the engine tests need it to start" -ForegroundColor Yellow }
 
-$core = 'ProxyBridge.c','pb_util.c','pb_process.c','pb_rules.c','pb_proxy.c','pb_dns.c','pb_socks5.c','pb_http.c','pb_conntrack.c','pb_relay.c','pb_sockmap.c' | ForEach-Object { "src\$_" }
+$core = 'ProxyBridge.c','pb_util.c','pb_process.c','pb_rules.c','pb_proxy.c','pb_dns.c','pb_socks5.c','pb_socks4.c','pb_http.c','pb_conntrack.c','pb_relay.c','pb_sockmap.c' | ForEach-Object { "src\$_" }
 $warn = '/W3 /wd4100 /wd4189 /wd4267 /wd4244 /wd4996'
 $wdInc = "/I`"$WinDivertPath\include`""
 $wdLib = "/LIBPATH:`"$WinDivertPath\$Arch`""

@@ -1,7 +1,8 @@
-// test_proxy_protocols.c - the proxy client handshakes (src\pb_socks5.c, src\pb_http.c) against a scripted fake
+// test_proxy_protocols.c - the proxy client handshakes (src\pb_socks5.c, src\pb_socks4.c, src\pb_http.c) against a scripted fake
 // proxy server on loopback (ephemeral port, one short connection per case; no driver, no real proxy):
 //   SOCKS5: greeting, username/password auth, CONNECT (IPv4, IPv6, domain), every reply code, every BND.ADDR type,
 //           malformed and truncated replies, UDP ASSOCIATE
+//   SOCKS4: CONNECT with an address, with a name (socks4a), the user id, a rejected reply, no reply at all
 //   HTTP:   CONNECT request format, Proxy-Authorization, status handling, cached host names, over-long requests
 #include "pb_internal.h"
 #include "pbtest.h"
@@ -12,6 +13,7 @@ typedef struct {
     BYTE reply[600]; int reply_len;   /* raw reply sent after the request (SOCKS5 reply / HTTP response) */
     int  close_at;             /* 1 = close after the greeting, 2 = after auth, 3 = after the request without a reply */
     BOOL http;
+    BOOL socks4;               /* SOCKS4 has no greeting: the request comes first */
     /* captured */
     BYTE greeting[16]; int greeting_len;
     char user[300], pass[300];
@@ -41,6 +43,34 @@ static DWORD WINAPI server_thread(LPVOID p)
         }
         sc->http_len = n;
         if (sc->reply_len) send(c, (char*)sc->reply, sc->reply_len, 0);
+        closesocket(c); return 0;
+    }
+
+    if (sc->socks4)
+    {
+        /* SOCKS4: the request comes first, then the user id, then the name of a 4a request */
+        if (!rx(c, b, 8)) { closesocket(c); return 0; }
+        sc->req_len = 8; memcpy(sc->req, b, 8);
+        for (;;)
+        {
+            if (!rx(c, b + sc->req_len, 1)) { closesocket(c); return 0; }
+            sc->req_len++;
+            if (b[sc->req_len - 1] == 0) break;
+            if (sc->req_len >= (int)sizeof(sc->req) - 2) { closesocket(c); return 0; }
+        }
+        /* 0.0.0.x with x != 0 means the name of the host follows */
+        if (b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] != 0)
+        {
+            for (;;)
+            {
+                if (!rx(c, b + sc->req_len, 1)) { closesocket(c); return 0; }
+                sc->req_len++;
+                if (b[sc->req_len - 1] == 0) break;
+                if (sc->req_len >= (int)sizeof(sc->req) - 2) { closesocket(c); return 0; }
+            }
+        }
+        if (sc->close_at != 3 && sc->reply_len) send(c, (char*)sc->reply, sc->reply_len, 0);
+        Sleep(20);
         closesocket(c); return 0;
     }
 
@@ -216,6 +246,47 @@ int main(void)
       SOCKET c = start(&sv, &sc); int r = http_connect(c, ip4("203.0.113.9"), 443, &big); finish(&sv, c);
       CHECK(r == -1);
       CHECK(sc.http_len <= HTTP_BUFFER_SIZE); }
+
+    /* ================= SOCKS4 CONNECT ================= */
+    {
+        const BYTE S4OK[8]  = { 0, 90, 0, 0, 0, 0, 0, 0 };
+        const BYTE S4REJ[8] = { 0, 91, 0, 0, 0, 0, 0, 0 };
+
+        /* an address goes into the request as it is */
+        { Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; set_reply(&sc, S4OK, 8);
+          SOCKET c = start(&sv, &sc); int r = socks4_connect(c, ip4("1.2.3.4"), 443, &none); finish(&sv, c);
+          CHECK(r == 0);
+          CHECK(sc.req_len == 9 && sc.req[0] == 4 && sc.req[1] == 1 && sc.req[2] == 0x01 && sc.req[3] == 0xBB);
+          CHECK(sc.req[4] == 1 && sc.req[5] == 2 && sc.req[6] == 3 && sc.req[7] == 4 && sc.req[8] == 0); }
+
+        /* the user id of the proxy config is sent */
+        { PROXY_CONFIG uid = none; strcpy_s(uid.username, sizeof uid.username, "bob");
+          Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; set_reply(&sc, S4OK, 8);
+          SOCKET c = start(&sv, &sc); int r = socks4_connect(c, ip4("1.2.3.4"), 443, &uid); finish(&sv, c);
+          CHECK(r == 0 && sc.req_len == 12 && sc.req[8] == 'b' && sc.req[9] == 'o' && sc.req[10] == 'b' && sc.req[11] == 0); }
+
+        /* a name is socks4a: 0.0.0.1 and then the name */
+        { Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; set_reply(&sc, S4OK, 8);
+          SOCKET c = start(&sv, &sc); int r = socks4_connect_name(c, "example.com", 443, &none); finish(&sv, c);
+          CHECK(r == 0);
+          CHECK(sc.req[4] == 0 && sc.req[5] == 0 && sc.req[6] == 0 && sc.req[7] == 1);
+          CHECK(sc.req_len == 9 + 11 && !memcmp(sc.req + 9, "example.com", 11) && sc.req[sc.req_len - 1] == 0); }
+
+        /* a rejected request is refused */
+        { Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; set_reply(&sc, S4REJ, 8);
+          SOCKET c = start(&sv, &sc); int r = socks4_connect(c, ip4("1.2.3.4"), 443, &none); finish(&sv, c);
+          CHECK(r == -1); }
+
+        /* no reply at all is refused */
+        { Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; sc.close_at = 3; set_reply(&sc, S4OK, 8);
+          SOCKET c = start(&sv, &sc); int r = socks4_connect(c, ip4("1.2.3.4"), 443, &none); finish(&sv, c);
+          CHECK(r == -1); }
+
+        /* an empty name is refused before anything is sent */
+        { Srv sv; memset(&sc, 0, sizeof sc); sc.socks4 = TRUE; set_reply(&sc, S4OK, 8);
+          SOCKET c = start(&sv, &sc); int r = socks4_connect_name(c, "", 443, &none); finish(&sv, c);
+          CHECK(r == -1); }
+    }
 
     WSACleanup();
     return pbtest_done("test_proxy_protocols");

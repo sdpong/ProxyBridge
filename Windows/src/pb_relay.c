@@ -688,6 +688,28 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
             return 0;
         }
     }
+    else if (proxy->type == PROXY_TYPE_SOCKS4)
+    {
+        // SOCKS4 has no IPv6 and no way to ask for a name unless it is SOCKS4a,
+        // so a name is sent when the config opts in and the local address otherwise
+        int rc;
+        char cached_domain[256];
+        if (!is_ipv6 && proxy->send_domain_to_proxy && dns_cache_lookup(dest_ip, cached_domain, sizeof(cached_domain)))
+            rc = socks4_connect_name(socks_sock, cached_domain, dest_port, proxy);
+        else if (!is_ipv6)
+            rc = socks4_connect(socks_sock, dest_ip, dest_port, proxy);
+        else
+        {
+            log_message("[RELAY] SOCKS4 cannot carry an IPv6 destination (%s)", proxy->host);
+            rc = -1;
+        }
+        if (rc != 0)
+        {
+            reset_close(client_sock);
+            closesocket(socks_sock);
+            return 0;
+        }
+    }
     else if (proxy->type == PROXY_TYPE_HTTP)
     {
         int rc = is_ipv6

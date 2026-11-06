@@ -9,7 +9,37 @@
 #include <windows.h>
 
 // enums (must match ProxyBridge.h)
-typedef enum { PB_PROXY_HTTP = 0, PB_PROXY_SOCKS5 = 1 } PBProxyType;
+typedef enum { PB_PROXY_HTTP = 0, PB_PROXY_SOCKS5 = 1, PB_PROXY_SOCKS4 = 2 } PBProxyType;
+
+// The proxy type is stored in the profile as a name and in the engine as a
+// number. These keep the two in step, so a new type is added in one place.
+static __inline int pb_proxy_type_index(const wchar_t *name)
+{
+    if (name == NULL) return 0;
+    if (_wcsicmp(name, L"HTTP") == 0) return 2;
+    if (_wcsicmp(name, L"SOCKS4") == 0) return 1;
+    return 0;
+}
+
+static __inline const wchar_t *pb_proxy_type_name(int index)
+{
+    switch (index)
+    {
+        case 1: return L"SOCKS4";
+        case 2: return L"HTTP";
+        default: return L"SOCKS5";
+    }
+}
+
+static __inline PBProxyType pb_proxy_type_enum(const wchar_t *name)
+{
+    switch (pb_proxy_type_index(name))
+    {
+        case 1: return PB_PROXY_SOCKS4;
+        case 2: return PB_PROXY_HTTP;
+        default: return PB_PROXY_SOCKS5;
+    }
+}
 typedef enum { PB_ACTION_PROXY = 0, PB_ACTION_DIRECT = 1, PB_ACTION_BLOCK = 2 } PBRuleAction;
 typedef enum { PB_PROTO_TCP = 0, PB_PROTO_UDP = 1, PB_PROTO_BOTH = 2 } PBRuleProtocol;
 

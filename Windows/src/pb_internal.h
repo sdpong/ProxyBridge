@@ -344,6 +344,27 @@ int socks5_read_connect_reply(SOCKET s, int *reply);
 int socks5_connect_domain(SOCKET s, const char *hostname, UINT16 dest_port, const PROXY_CONFIG *cfg);
 int socks5_connect(SOCKET s, UINT32 dest_ip, UINT16 dest_port, const PROXY_CONFIG *cfg);
 int socks5_connect_v6(SOCKET s, const UINT8 dest_ip6[16], UINT16 dest_port, const PROXY_CONFIG *cfg);
+int socks4_connect(SOCKET s, UINT32 dest_ip, UINT16 dest_port, const PROXY_CONFIG *cfg);
+int socks4_connect_name(SOCKET s, const char *dest, UINT16 dest_port, const PROXY_CONFIG *cfg);
+
+// the name of a proxy type, for the log and the connection list
+static __inline const char *proxy_type_name(int type)
+{
+    switch (type)
+    {
+        case PROXY_TYPE_HTTP:   return "HTTP";
+        case PROXY_TYPE_SOCKS4: return "SOCKS4";
+        case PROXY_TYPE_SOCKS5: return "SOCKS5";
+        default: return "SOCKS5";
+    }
+}
+
+// a type as it comes from outside: anything unknown is a socks5
+static __inline int proxy_type_normalize(int type)
+{
+    if (type == PROXY_TYPE_HTTP || type == PROXY_TYPE_SOCKS4) return type;
+    return PROXY_TYPE_SOCKS5;
+}
 int socks5_udp_associate_with_config(SOCKET s, struct sockaddr_in *relay_addr, const PROXY_CONFIG *cfg);
 BOOL establish_udp_associate_for_config(PROXY_CONFIG *cfg);
 

@@ -146,8 +146,9 @@ INT_PTR CALLBACK ServerEditDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         SetDlgItemTextW(dlg, IDCANCEL,        T(S_BTN_CANCEL));
         HWND pr = GetDlgItem(dlg, IDC_SE_PROTO);
         SendMessageW(pr, CB_ADDSTRING, 0, (LPARAM)L"SOCKS5");
+        SendMessageW(pr, CB_ADDSTRING, 0, (LPARAM)L"SOCKS4");
         SendMessageW(pr, CB_ADDSTRING, 0, (LPARAM)L"HTTP");
-        SendMessageW(pr, CB_SETCURSEL, (_wcsicmp(c->type, L"HTTP") == 0) ? 1 : 0, 0);
+        SendMessageW(pr, CB_SETCURSEL, (INT_PTR)pb_proxy_type_index(c->type), 0);
         SetDlgItemTextW(dlg, IDC_SE_NAME, c->name);
         SetDlgItemTextW(dlg, IDC_SE_ADDR, c->host);
         if (c->port[0]) SetDlgItemTextW(dlg, IDC_SE_PORT, c->port); else SetDlgItemInt(dlg, IDC_SE_PORT, 1080, FALSE);
@@ -175,8 +176,8 @@ INT_PTR CALLBACK ServerEditDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         case IDOK:
         {
             PBConfig* c = (PBConfig*)GetWindowLongPtrW(dlg, GWLP_USERDATA);
-            int isHttp = (int)SendMessageW(GetDlgItem(dlg, IDC_SE_PROTO), CB_GETCURSEL, 0, 0) == 1;
-            lstrcpynW(c->type, isHttp ? L"HTTP" : L"SOCKS5", 16);
+            int sel = (int)SendMessageW(GetDlgItem(dlg, IDC_SE_PROTO), CB_GETCURSEL, 0, 0);
+            lstrcpynW(c->type, pb_proxy_type_name(sel), 16);
             GetDlgItemTextW(dlg, IDC_SE_NAME, c->name, 128);
             GetDlgItemTextW(dlg, IDC_SE_ADDR, c->host, 128);
             c->sendDomain = (IsDlgButtonChecked(dlg, IDC_SE_SENDDOMAIN) == BST_CHECKED) ? 1 : 0;
@@ -328,7 +329,7 @@ INT_PTR CALLBACK ServersDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             if (DialogBoxParamW(g_hInst, MAKEINTRESOURCEW(IDD_SERVER), dlg, ServerEditDlgProc, (LPARAM)&c) == 1)
             {
                 char h[256], u[256], p[256]; W2Ux(c.host, h, sizeof(h)); W2Ux(c.user, u, sizeof(u)); W2Ux(c.pass, p, sizeof(p));
-                UINT32 id = g_api.AddProxyConfig((_wcsicmp(c.type, L"HTTP") == 0) ? PB_PROXY_HTTP : PB_PROXY_SOCKS5,
+                UINT32 id = g_api.AddProxyConfig(pb_proxy_type_enum(c.type),
                                                  h, (unsigned short)_wtoi(c.port), u, p, c.sendDomain ? TRUE : FALSE);
                 if (id > 0) { c.nativeId = id; c.storedId = PB_AllocConfigId(&g_profile); g_profile.cfg[g_profile.cfgCount++] = c; SaveActive(); RefreshServerList(lv); }
                 else MessageBoxW(dlg, T(S_ERR_ADDCFG), APP_TITLE, MB_OK | MB_ICONERROR);
@@ -344,7 +345,7 @@ INT_PTR CALLBACK ServersDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             {
                 g_profile.cfg[sel] = c;
                 char h[256], u[256], p[256]; W2Ux(c.host, h, sizeof(h)); W2Ux(c.user, u, sizeof(u)); W2Ux(c.pass, p, sizeof(p));
-                g_api.EditProxyConfig(c.nativeId, (_wcsicmp(c.type, L"HTTP") == 0) ? PB_PROXY_HTTP : PB_PROXY_SOCKS5,
+                g_api.EditProxyConfig(c.nativeId, pb_proxy_type_enum(c.type),
                                       h, (unsigned short)_wtoi(c.port), u, p, c.sendDomain ? TRUE : FALSE);
                 SaveActive(); RefreshServerList(lv);
                 ListView_SetItemState(lv, sel, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
