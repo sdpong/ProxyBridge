@@ -1010,9 +1010,15 @@ class AppProxyProvider: NETransparentProxyProvider {
                     ? ChainPlan.proxyIds(forAction: rule.action, chains: storedChains)
                     : []
                 let hops = chainIds.compactMap { storedProxyConfigs[$0] }
-                let chainTypes = Dictionary(uniqueKeysWithValues: chainIds.compactMap { id in
-                    storedProxyConfigs[id].map { (id, $0.type.lowercased()) }
-                })
+                // the type of every proxy the chain names. a chain may name the
+                // same proxy twice, so the map is built by hand: the initializer
+                // that demands unique keys would trap on that
+                var chainTypes: [String: String] = [:]
+                for id in chainIds {
+                    if let type = storedProxyConfigs[id]?.type.lowercased() {
+                        chainTypes[id] = type
+                    }
+                }
                 proxyLock.unlock()
 
                 if ChainAction.isChain(rule.action) {
