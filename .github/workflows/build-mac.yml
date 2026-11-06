@@ -37,13 +37,15 @@ jobs:
         # both targets build the same swift module and the build fails.
         if [ -n "${{ secrets.MACOS_APP_XCCONFIG }}" ]; then
           echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-app.xcconfig
-        else
-          cp MacOS/ProxyBridge/proxybridge-app.xcconfig MacOS/ProxyBridge/Signing-Config-app.xcconfig
-        fi
-        if [ -n "${{ secrets.MACOS_EXT_XCCONFIG }}" ]; then
           echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-ext.xcconfig
         else
-          cp MacOS/ProxyBridge/proxybridge-ext.xcconfig MacOS/ProxyBridge/Signing-Config-ext.xcconfig
+          # the committed templates plus the overrides an unsigned build needs: no team and no
+          # provisioning profile, because without a certificate there is no profile to find and
+          # xcode refuses to build when it is named
+          for part in app ext; do
+            cp "MacOS/ProxyBridge/proxybridge-$part.xcconfig" "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
+            printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
+          done
         fi
 
     - name: Install Provisioning Profiles
@@ -116,6 +118,7 @@ jobs:
             OTHER_CODE_SIGN_FLAGS="--keychain build.keychain --timestamp" \
             clean build
         else
+          # the xcconfig files already say that nothing is signed
           xcodebuild \
             -project ProxyBridge.xcodeproj \
             -scheme ProxyBridge \
@@ -123,10 +126,6 @@ jobs:
             -derivedDataPath build/DerivedData \
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
             clean build
         fi
 
