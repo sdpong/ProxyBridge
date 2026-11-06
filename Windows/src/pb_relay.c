@@ -283,7 +283,7 @@ DWORD WINAPI udp_relay_server(LPVOID arg)
                     for (CONNECTION_INFO *conn = connection_rev_table[rev_hash_v4(src_ip, src_port)];
                          conn != NULL; conn = conn->rev_next)
                     {
-                        if (conn->is_udp && !conn->is_ipv6 && conn->orig_dest_ip == src_ip && conn->orig_dest_port == src_port)
+                        if (conn->is_udp && !conn->is_ipv6 && !conn->killed && conn->orig_dest_ip == src_ip && conn->orig_dest_port == src_port)
                         {
                             if (!found || conn->last_activity > best_activity)
                             {
@@ -1098,6 +1098,32 @@ BOOL relay_start(SOCKET client, SOCKET proxy, const FLOW_META *meta)
     if (!relay_post_wait(&rc->dir[0])) relay_dir_end(&rc->dir[0]);
     if (!relay_post_wait(&rc->dir[1])) relay_dir_end(&rc->dir[1]);
     return TRUE;
+}
+
+// Terminates one live proxied TCP connection. The relay sockets are shut down and the pending
+// overlapped IO is cancelled, so both relay directions stop and the application sees its
+// connection die instead of hanging on a proxy that never answers again.
+//
+// The record is not freed here: the worker that owns it releases it when it unwinds, exactly
+// like a connection that ends on its own. Only the abort is requested from another thread.
+//
+// A connection that is already closing is not live any more, so it is reported as "no such
+// flow": the second click on the same row must not claim a second termination.
+BOOL relay_kill_flow(UINT64 id)
+{
+    if (!g_relay_lock_ready) return FALSE;
+    BOOL killed = FALSE;
+    EnterCriticalSection(&g_relay_lock);
+    for (RELAY_CONN *rc = g_relay_head; rc != NULL; rc = rc->next)
+    {
+        if (rc->id == id)
+        {
+            if (rc->closing == 0) { relay_abort(rc); killed = TRUE; }
+            break;
+        }
+    }
+    LeaveCriticalSection(&g_relay_lock);
+    return killed;
 }
 
 // Live proxied TCP connections for the live connections view: raw fields copied under the relay list lock (a few

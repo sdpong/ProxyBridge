@@ -195,6 +195,12 @@ static BOOL Dispatch(const BYTE *req, DWORD reqLen, PbW *resp)
         }
         return resp->ok;
     }
+    case PBOP_KILL_FLOW: {
+        UINT32 idLo = PbR_U32(&r), idHi = PbR_U32(&r);
+        if (!r.ok) return FALSE;
+        UINT64 id = ((UINT64)idHi << 32) | idLo;
+        ret = (g_api.KillFlow != NULL) ? g_api.KillFlow(id) : 0;
+        break; }
     case PBOP_START: ret = g_api.Start(); break;
     case PBOP_STOP:  ret = g_api.Stop();  break;
     default: return FALSE;

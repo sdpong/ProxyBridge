@@ -26,6 +26,11 @@ typedef struct {
     UINT8     udp, v6;
     char      name[40];           // UTF-8
     char      host[64];           // UTF-8
+    // Idle tracking: the engine reports the byte counters but not when they last moved, so the
+    // change is detected here by comparing them with the previous poll. A flow whose counters do
+    // not move is exactly the hanging channel the user wants to find, so it gets its own column.
+    ULONGLONG lastBytes;          // sent + received at the previous poll
+    ULONGLONG idleSince;          // tick of the last counter change (0 = not known yet)
 } FlowRow;
 
 static FlowRow* g_fl = NULL;      // rows, in the order they appeared
@@ -53,8 +58,9 @@ static int FlowCmp(const void* a, const void* b)
     case 1:  c = _stricmp(x->host, y->host); if (!c) c = (x->port > y->port) - (x->port < y->port); break;
     case 2:  c = (x->udp > y->udp) - (x->udp < y->udp); break;
     case 3:  c = (x->firstSeen > y->firstSeen) - (x->firstSeen < y->firstSeen); break;   // ascending = longest running first
-    case 4:  c = (x->ruleId > y->ruleId) - (x->ruleId < y->ruleId); if (!c) c = (x->proxyId > y->proxyId) - (x->proxyId < y->proxyId); break;
-    case 5:  c = (x->sent > y->sent) - (x->sent < y->sent); break;
+    case 4:  c = (x->idleSince > y->idleSince) - (x->idleSince < y->idleSince); break;   // ascending = longest idle first
+    case 5:  c = (x->ruleId > y->ruleId) - (x->ruleId < y->ruleId); if (!c) c = (x->proxyId > y->proxyId) - (x->proxyId < y->proxyId); break;
+    case 6:  c = (x->sent > y->sent) - (x->sent < y->sent); break;
     default: c = (x->received > y->received) - (x->received < y->received); break;
     }
     if (c == 0) c = (x->id > y->id) - (x->id < y->id);                 // stable
@@ -93,7 +99,9 @@ static void FlowsApply(const PBFlow* snap, int n, BOOL truncated, ULONGLONG now)
         {
             seen[j] = 1;
             FlowRow* r = &g_fl[j];
-            if (r->closedAt) { r->closedAt = 0; r->firstSeen = start; } // an idle UDP flow that woke up again
+            ULONGLONG bytes = s->sent + s->received;
+            if (r->closedAt) { r->closedAt = 0; r->firstSeen = start; r->idleSince = start; r->lastBytes = bytes; } // an idle UDP flow that woke up again
+            else if (bytes != r->lastBytes) { r->idleSince = now; r->lastBytes = bytes; }   // traffic moved: the flow is not idle
             FlowSet(r, s);
         }
         else if (g_flN < FLOW_ROWS_MAX)
@@ -108,6 +116,9 @@ static void FlowsApply(const PBFlow* snap, int n, BOOL truncated, ULONGLONG now)
             FlowRow* r = &g_fl[g_flN++];
             ZeroMemory(r, sizeof(*r));
             r->id = s->id; r->firstSeen = start;
+            // A flow seen for the first time is idle since it started - the next poll decides
+            // whether it moved since then.
+            r->idleSince = start; r->lastBytes = s->sent + s->received;
             FlowSet(r, s);
         }
         else                                                           // full: the oldest finished row makes room
@@ -121,6 +132,7 @@ static void FlowsApply(const PBFlow* snap, int n, BOOL truncated, ULONGLONG now)
                 FlowRow* r = &g_fl[e];
                 ZeroMemory(r, sizeof(*r));
                 r->id = s->id; r->firstSeen = start;
+                r->idleSince = start; r->lastBytes = s->sent + s->received;
                 FlowSet(r, s);
             }
         }
@@ -195,20 +207,27 @@ static void FlowText(const FlowRow* r, int col, ULONGLONG now, wchar_t* out, int
         if (r->closedAt) { FlowDuration(r->closedAt - r->firstSeen, b, 64); _snwprintf_s(out, cch, _TRUNCATE, L"%s %s", T(S_FL_CLOSED), b); }
         else             FlowDuration(now > r->firstSeen ? now - r->firstSeen : 0, out, cch);
         break;
-    case 4: FlowRuleProxy(r->ruleId, r->proxyId, out, cch); break;
-    case 5: FlowBytes(r->sent, out, cch); break;
+    case 4:
+        // How long the flow carried no traffic. A growing number is a channel that is stuck.
+        if (r->closedAt || r->idleSince == 0) { out[0] = 0; break; }
+        FlowDuration(now > r->idleSince ? now - r->idleSince : 0, out, cch);
+        break;
+    case 5: FlowRuleProxy(r->ruleId, r->proxyId, out, cch); break;
+    case 6: FlowBytes(r->sent, out, cch); break;
     default: FlowBytes(r->received, out, cch); break;
     }
 }
 
 // ---- the window ----
 static void DarkListView(HWND lv, DWORD extraExStyle);        // dialogs.h
+// defined further down, next to the "terminate a connection" actions
+static LRESULT CALLBACK FlowsListSubProc(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref);
 
-static const int g_flColStr[7] = { S_FL_COL_APP, S_FL_COL_TARGET, S_FL_COL_PROTO, S_FL_COL_STATUS, S_FL_COL_PROXY, S_FL_COL_SENT, S_FL_COL_RECV };
+static const int g_flColStr[8] = { S_FL_COL_APP, S_FL_COL_TARGET, S_FL_COL_PROTO, S_FL_COL_STATUS, S_FL_COL_IDLE, S_FL_COL_PROXY, S_FL_COL_SENT, S_FL_COL_RECV };
 
 static void FlowsSetColumns(void)
 {
-    for (int i = 0; i < 7; i++)
+    for (int i = 0; i < 8; i++)
     {
         LVCOLUMNW c; c.mask = LVCF_TEXT; c.pszText = (LPWSTR)T(g_flColStr[i]);
         ListView_SetColumn(g_hFlows, i, &c);
@@ -222,9 +241,10 @@ static HWND FlowsCreate(HWND parent)
                                0, 0, 0, 0, parent, (HMENU)(UINT_PTR)IDC_FLOWS, g_hInst, NULL);
     if (!g_hFlows) return NULL;
     DarkListView(g_hFlows, LVS_EX_LABELTIP);
-    static const int w[7] = { 190, 250, 70, 120, 330, 90, 90 };
+    SetWindowSubclass(g_hFlows, FlowsListSubProc, 4, 0);
+    static const int w[8] = { 190, 250, 70, 120, 90, 330, 90, 90 };
     LVCOLUMNW c; c.mask = LVCF_TEXT | LVCF_WIDTH;
-    for (int i = 0; i < 7; i++) { c.pszText = (LPWSTR)T(g_flColStr[i]); c.cx = Sc(w[i]); ListView_InsertColumn(g_hFlows, i, &c); }
+    for (int i = 0; i < 8; i++) { c.pszText = (LPWSTR)T(g_flColStr[i]); c.cx = Sc(w[i]); ListView_InsertColumn(g_hFlows, i, &c); }
     g_hFlowsClear = CreateWindowExW(0, L"BUTTON", T(S_FL_CLEAR), WS_CHILD | BS_PUSHBUTTON | WS_TABSTOP,
                                     0, 0, 0, 0, parent, (HMENU)(UINT_PTR)IDC_FLOWS_CLEAR, g_hInst, NULL);
     return g_hFlows;
@@ -324,7 +344,7 @@ static LRESULT FlowsNotify(LPARAM lp)
         if ((di->item.mask & LVIF_TEXT) && di->item.pszText && di->item.cchTextMax > 0)
         {
             di->item.pszText[0] = 0;
-            if (di->item.iItem >= 0 && di->item.iItem < g_flN && di->item.iSubItem >= 0 && di->item.iSubItem < 7)
+            if (di->item.iItem >= 0 && di->item.iItem < g_flN && di->item.iSubItem >= 0 && di->item.iSubItem < 8)
                 FlowText(&g_fl[g_flView[di->item.iItem]], di->item.iSubItem, g_flNow, di->item.pszText, di->item.cchTextMax);
         }
         return 0;
@@ -332,7 +352,10 @@ static LRESULT FlowsNotify(LPARAM lp)
     case LVN_COLUMNCLICK:
     {
         int c = ((NMLISTVIEW*)lp)->iSubItem;
-        if (c == g_flSortCol) g_flSortAsc = !g_flSortAsc; else { g_flSortCol = c; g_flSortAsc = (c <= 2); }
+        // Text columns start ascending, the traffic columns start with the biggest first. The
+        // idle column starts ascending too: the flow that has been quiet the longest comes
+        // first, which is the one a user looking for a stuck channel wants to see.
+        if (c == g_flSortCol) g_flSortAsc = !g_flSortAsc; else { g_flSortCol = c; g_flSortAsc = (c <= 2 || c == 4); }
         if (g_flN > 0) { FlowsSortView(); InvalidateRect(g_hFlows, NULL, FALSE); }
         return 0;
     }
@@ -350,4 +373,100 @@ static LRESULT FlowsNotify(LPARAM lp)
     }
     }
     return 0;
+}
+
+// ---- terminating a connection ----
+//
+// The whole point of the Live Connections list is that a channel that hangs - a proxy that
+// accepted the connection and then went quiet, or an application that stopped reading - is
+// visible and can be closed by hand instead of being waited out.
+
+static int FlowSelectedRow(void)
+{
+    if (!g_hFlows || g_flN <= 0) return -1;
+    int i = ListView_GetNextItem(g_hFlows, -1, LVNI_SELECTED);
+    if (i < 0 || i >= g_flN) return -1;
+    return g_flView[i];         // display index -> row index
+}
+
+// Terminates one flow (or every live flow of the same process) by row index.
+// Returns how many flows were terminated. The UI layer adds the message box around it.
+static int FlowsKillRow(int idx, BOOL wholeProcess)
+{
+    if (idx < 0 || idx >= g_flN) return 0;
+    if (!g_api.KillFlow) return 0;
+    FlowRow* r = &g_fl[idx];
+    if (r->closedAt) return 0;                 // already finished: nothing to close
+    int killed = 0;
+    if (wholeProcess)
+    {
+        DWORD pid = r->pid;
+        for (int i = 0; i < g_flN; i++)
+            if (g_fl[i].pid == pid && !g_fl[i].closedAt && g_api.KillFlow(g_fl[i].id)) killed++;
+    }
+    else if (g_api.KillFlow(r->id)) killed = 1;
+    return killed;
+}
+
+// Closes the selected connection, or every live connection that belongs to the same process.
+static void FlowsKillSelected(BOOL wholeProcess)
+{
+    int idx = FlowSelectedRow();
+    if (idx < 0 || FlowsKillRow(idx, wholeProcess) == 0)
+    {
+        MessageBoxW(g_flMain, T(S_FL_NOKILL), T(S_TAB_FLOWS), MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    FlowsPollAsync();           // the flow disappears on the next snapshot, so pull one right away
+}
+
+// Right-click menu on the list: close one connection, or every connection of the same process.
+// `screen` is the point the menu opens at, in screen coordinates.
+static void FlowsShowMenu(HWND list, POINT screen)
+{
+    int idx = FlowSelectedRow();
+    BOOL live = (idx >= 0) && !g_fl[idx].closedAt && g_api.KillFlow != NULL;
+
+    HMENU pm = CreatePopupMenu();
+    if (!pm) return;
+    AppendMenuW(pm, MF_STRING | (live ? 0 : MF_GRAYED), IDM_FLOW_KILL, T(S_FL_KILL));
+    AppendMenuW(pm, MF_STRING | (live ? 0 : MF_GRAYED), IDM_FLOW_KILLPROC, T(S_FL_KILLPROC));
+    SetForegroundWindow(list);
+    // TPM_RETURNCMD: the command comes back directly instead of as a WM_COMMAND to the window.
+    UINT cmd = (UINT)TrackPopupMenu(pm, TPM_RIGHTBUTTON | TPM_RETURNCMD, screen.x, screen.y, 0, list, NULL);
+    DestroyMenu(pm);
+    if (cmd == IDM_FLOW_KILL)          FlowsKillSelected(FALSE);
+    else if (cmd == IDM_FLOW_KILLPROC) FlowsKillSelected(TRUE);
+}
+
+// The list view is subclassed so the right click is ours: a list view does not move the selection
+// on a right click, and its own context menu ("Select all", "Export") is not what is wanted here.
+static LRESULT CALLBACK FlowsListSubProc(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR id, DWORD_PTR ref)
+{
+    (void)id; (void)ref;
+    if (msg == WM_RBUTTONUP)
+    {
+        POINT pt = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };
+        LVHITTESTINFO hit;
+        ZeroMemory(&hit, sizeof(hit));
+        hit.pt = pt;
+        int i = ListView_HitTest(h, &hit);
+        if (i >= 0)
+            ListView_SetItemState(h, i, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        else
+            ListView_SetItemState(h, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);   // empty space: nothing is selected any more
+        POINT screen = pt;
+        ClientToScreen(h, &screen);
+        FlowsShowMenu(h, screen);
+        return TRUE;                       // the list's own menu is not wanted
+    }
+    if (msg == WM_CONTEXTMENU)
+    {
+        // keyboard (menu key / shift+F10): the caret item stays selected
+        POINT screen;
+        GetCursorPos(&screen);
+        FlowsShowMenu(h, screen);
+        return TRUE;
+    }
+    return DefSubclassProc(h, msg, w, l);
 }

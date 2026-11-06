@@ -36,6 +36,9 @@ static void   SClear(void)     { g_cleared++; }
 static BOOL   SStart(void)     { g_started++; return TRUE; }
 static BOOL   SStop(void)      { g_stopped++; return FALSE; }
 static UINT32 g_flowsAsked = 0, g_flowsHave = 0;
+static UINT64 g_killId = 0;
+static int    g_killCalls = 0;
+static BOOL SKillFlow(UINT64 id) { g_killId = id; g_killCalls++; return TRUE; }
 static UINT32 SGetFlows(PBFlow* out, UINT32 max)
 {
     g_flowsAsked = max;
@@ -65,6 +68,7 @@ int main(void)
     g_api.MoveRuleToPosition = SMove; g_api.GetRulePosition = SGetPos;
     g_api.SetTrafficLoggingEnabled = STraffic; g_api.SetEnabled = SEnabled; g_api.SetLogEveryConnection = SLogAll; g_api.ClearConnectionLogs = SClear;
     g_api.Start = SStart; g_api.Stop = SStop; g_api.TestProxyConfigEx = NULL; g_api.GetFlows = SGetFlows;
+    g_api.KillFlow = SKillFlow;
     UINT32 ret;
 
     /* ================= request handler ================= */
@@ -134,6 +138,13 @@ int main(void)
     { PbW resp; PbW_Init(&resp, rs, sizeof rs); CHECK(Dispatch(rq, W.len, &resp) && resp.ok && resp.len <= PB_MSG_MAX); PbR r; PbR_Init(&r, rs, resp.len); CHECK(PbR_U32(&r) == 400); }
     begin(PBOP_GET_FLOWS); CHECK(!run(&ret));                                                 /* missing argument */
     g_flowsHave = 0;
+
+    /* terminating a live connection: the id travels as two u32, low half first */
+    g_killCalls = 0;
+    begin(PBOP_KILL_FLOW); PbW_U32(&W, 0x22222222u); PbW_U32(&W, 0x11111111u);
+    CHECK(run(&ret) && ret == 1 && g_killCalls == 1 && g_killId == 0x1111111122222222ull);
+    begin(PBOP_KILL_FLOW); PbW_U32(&W, 7); CHECK(!run(&ret));                                  /* the high half is missing */
+    begin(PBOP_KILL_FLOW); CHECK(!run(&ret));                                                  /* nothing at all */
 
     /* unknown operations and garbage are rejected without touching the engine */
     begin(0);        CHECK(!run(&ret));

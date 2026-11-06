@@ -56,6 +56,7 @@ typedef void   (*PFN_SetEnabled)(BOOL);
 typedef void   (*PFN_SetLogEveryConnection)(BOOL);
 typedef void   (*PFN_ClearConnectionLogs)(void);
 typedef UINT32 (*PFN_GetFlows)(PBFlow*, UINT32);
+typedef BOOL   (*PFN_KillFlow)(UINT64);
 typedef BOOL   (*PFN_Start)(void);
 typedef BOOL   (*PFN_Stop)(void);
 
@@ -81,6 +82,7 @@ typedef struct {
     PFN_SetLogEveryConnection     SetLogEveryConnection;
     PFN_ClearConnectionLogs       ClearConnectionLogs;
     PFN_GetFlows                  GetFlows;
+    PFN_KillFlow                  KillFlow;
     PFN_Start                     Start;
     PFN_Stop                      Stop;
 } PBApi;
@@ -128,6 +130,9 @@ static BOOL PB_LoadDirect(PBApi* api)
     PB_BIND(SetLogEveryConnection,    "SetLogEveryConnection");
     PB_BIND(ClearConnectionLogs,      "ClearConnectionLogs");
     PB_BIND(GetFlows,                 "GetFlows");
+    // Optional: an older core DLL without the kill entry still loads, the GUI just disables the
+    // "kill connection" action when the pointer is NULL.
+    api->KillFlow = (PFN_KillFlow)(void*)GetProcAddress(api->dll, "ProxyBridge_KillFlow");
     PB_BIND(Start,                    "Start");
     PB_BIND(Stop,                     "Stop");
     #undef PB_BIND

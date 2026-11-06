@@ -1091,6 +1091,27 @@ PROXYBRIDGE_API UINT32 ProxyBridge_GetFlows(PB_FLOW *out, UINT32 max)
     return n;
 }
 
+// Terminates one live proxied flow, addressed by the id ProxyBridge_GetFlows reports.
+//
+// A TCP flow is aborted: the relay sockets are shut down and the pending IO cancelled, so the
+// application sees its connection die instead of hanging on a proxy that stopped answering.
+//
+// A UDP flow has no connection to close, so it is marked killed instead: the capture thread drops
+// its packets and the relay stops forwarding for it. The flow is never silently rerouted, so a
+// killed channel cannot leak traffic straight to the network.
+PROXYBRIDGE_API BOOL ProxyBridge_KillFlow(UINT64 flow_id)
+{
+    if (flow_id == 0) return FALSE;
+    if (flow_id & ((UINT64)1 << 63))
+    {
+        // UDP: the id encodes the source port and the address family (see udp_flows_snapshot)
+        UINT16 src_port = (UINT16)((flow_id >> 1) & 0xFFFF);
+        BOOL is_ipv6 = (flow_id & 1) != 0;
+        return conntrack_kill_udp_flow(src_port, is_ipv6);
+    }
+    return relay_kill_flow(flow_id);
+}
+
 PROXYBRIDGE_API void ProxyBridge_SetLogEveryConnection(BOOL enable)
 {
     g_log_every_connection = enable ? TRUE : FALSE;

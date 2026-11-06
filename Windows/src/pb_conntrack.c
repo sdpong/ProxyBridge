@@ -57,6 +57,7 @@ void add_connection(UINT16 src_port, BOOL is_udp, UINT32 src_ip, UINT32 dest_ip,
             existing->proxy_config_id = proxy_config_id;
             existing->is_tracked = TRUE;
             existing->fin_flags = 0;
+            existing->killed = FALSE;      // a re-keyed entry is a new flow: a previous kill does not apply to it
             existing->last_activity = GetTickCount64();
             rev_insert(existing);
             ReleaseSRWLockExclusive(&lock);
@@ -108,6 +109,7 @@ void add_connection_v6(UINT16 src_port, BOOL is_udp, const UINT8 src_ip6[16], co
             existing->proxy_config_id = proxy_config_id;
             existing->is_tracked = TRUE;
             existing->fin_flags = 0;
+            existing->killed = FALSE;      // a re-keyed entry is a new flow: a previous kill does not apply to it
             existing->last_activity = GetTickCount64();
             rev_insert(existing);
             ReleaseSRWLockExclusive(&lock);
@@ -154,6 +156,7 @@ BOOL get_connection_full_v6_x(UINT16 src_port, BOOL is_udp, UINT8 dest_ip6[16], 
     CONNECTION_INFO *conn = connection_hash_table[hash];
     while (conn != NULL) {
         if (conn->src_port == src_port && conn->is_udp == is_udp && conn->is_ipv6) {
+            if (conn->killed) break;          // killed flow: the relay must not forward it
             memcpy(dest_ip6, conn->orig_dest_ip6, 16);
             *dest_port = conn->orig_dest_port;
             if (proxy_config_id != NULL) *proxy_config_id = conn->proxy_config_id;
@@ -180,7 +183,7 @@ BOOL find_v6_udp_sender(const UINT8 orig_dest_ip6[16], UINT16 orig_dest_port, UI
     // O(1): only the reverse bucket for this (dest ip6, dest port).
     for (CONNECTION_INFO *conn = connection_rev_table[rev_hash_v6(orig_dest_ip6, orig_dest_port)];
          conn != NULL; conn = conn->rev_next) {
-        if (conn->is_udp && conn->is_ipv6 && conn->orig_dest_port == orig_dest_port &&
+        if (conn->is_udp && conn->is_ipv6 && !conn->killed && conn->orig_dest_port == orig_dest_port &&
             memcmp(conn->orig_dest_ip6, orig_dest_ip6, 16) == 0) {
             if (!found || conn->last_activity > best) {
                 memcpy(src_ip6, conn->src_ip6, 16);
@@ -197,6 +200,31 @@ BOOL find_v6_udp_sender(const UINT8 orig_dest_ip6[16], UINT16 orig_dest_port, UI
 }
 
 // ---- UDP flow validation + direct-decision cache (see pb_internal.h) ----
+
+// Marks the UDP flow that starts at src_port as killed. The capture thread keeps redirecting its
+// packets to the relay (so they are never sent direct) and the relay drops them, because
+// get_connection_full_x refuses a killed flow. The flow is not resurrected: last_activity is not
+// refreshed for it, so it ages out through the normal idle cleanup and the application can start
+// a new flow afterwards.
+//
+// Killing an already killed flow reports "no such flow", so the same row cannot be terminated twice.
+BOOL conntrack_kill_udp_flow(UINT16 src_port, BOOL is_ipv6)
+{
+    BOOL killed = FALSE;
+    AcquireSRWLockExclusive(&lock);
+    int hash = src_port % CONNECTION_HASH_SIZE;
+    for (CONNECTION_INFO *c = connection_hash_table[hash]; c != NULL; c = c->next)
+    {
+        if (c->src_port == src_port && c->is_udp && c->is_ipv6 == is_ipv6)
+        {
+            if (!c->killed) { c->killed = TRUE; killed = TRUE; }
+            break;
+        }
+    }
+    ReleaseSRWLockExclusive(&lock);
+    return killed;
+}
+
 BOOL udp_flow_validate(UINT16 src_port, BOOL is_ipv6, UINT32 dest_ip, const UINT8 dest_ip6[16], UINT16 dest_port)
 {
     ULONGLONG now = GetTickCount64();
@@ -207,6 +235,14 @@ BOOL udp_flow_validate(UINT16 src_port, BOOL is_ipv6, UINT32 dest_ip, const UINT
     CONNECTION_INFO *c = connection_hash_table[hash];
     while (c != NULL && !(c->src_port == src_port && c->is_udp && c->is_ipv6 == is_ipv6)) c = c->next;
     if (c == NULL) { ReleaseSRWLockShared(&lock); return FALSE; }
+    if (c->killed)
+    {
+        // Killed: still "valid" so the capture thread keeps the packets inside the proxy path
+        // (the relay drops them) instead of falling through to the rules and leaking them direct.
+        // last_activity is deliberately not refreshed, so the entry ages out on its own.
+        ReleaseSRWLockShared(&lock);
+        return TRUE;
+    }
     BOOL same = (c->orig_dest_port == dest_port) &&
                 (is_ipv6 ? memcmp(c->orig_dest_ip6, dest_ip6, 16) == 0 : c->orig_dest_ip == dest_ip);
     if (c->last_activity < now && now - c->last_activity > UDP_REEVAL_IDLE_MS) need_write = TRUE;   // evict (guard: another thread may have stamped a later tick)
@@ -307,6 +343,7 @@ BOOL get_connection(UINT16 src_port, BOOL is_udp, UINT32 *dest_ip, UINT16 *dest_
     {
         if (conn->src_port == src_port && conn->is_udp == is_udp && !conn->is_ipv6)
         {
+            if (conn->killed) break;          // killed flow: never report it as live
             *dest_ip = conn->orig_dest_ip;
             *dest_port = conn->orig_dest_port;
             InterlockedExchange64((LONGLONG volatile*)&conn->last_activity, (LONGLONG)GetTickCount64());
@@ -338,6 +375,7 @@ BOOL get_connection_full_x(UINT16 src_port, BOOL is_udp, UINT32 *dest_ip, UINT16
     {
         if (conn->src_port == src_port && conn->is_udp == is_udp && !conn->is_ipv6)
         {
+            if (conn->killed) break;          // killed flow: the relay must not forward it
             *dest_ip = conn->orig_dest_ip;
             *dest_port = conn->orig_dest_port;
             if (proxy_config_id != NULL) *proxy_config_id = conn->proxy_config_id;
@@ -433,6 +471,7 @@ UINT32 udp_flows_snapshot(PB_FLOW *out, UINT32 max)
         for (CONNECTION_INFO *c = connection_hash_table[i]; c != NULL && n < max; c = c->next)
         {
             if (!c->is_udp || !c->is_tracked) continue;
+            if (c->killed) continue;       // terminated by the user: it is no longer a live flow
             ULONGLONG last = c->last_activity;
             if (last <= now && now - last > UDP_FLOW_LIVE_MS) continue;
             PB_FLOW *f = &out[n++];

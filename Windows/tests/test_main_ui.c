@@ -19,6 +19,9 @@ static PBProfile g_probe;
 
 static PBFlow g_stubFlows[8]; static UINT32 g_stubN = 0; static int g_stubCalls = 0;
 static UINT32 StubGetFlows(PBFlow* out, UINT32 max) { g_stubCalls++; UINT32 n = g_stubN < max ? g_stubN : max; memcpy(out, g_stubFlows, n * sizeof(PBFlow)); return n; }
+/* the engine is asked to close one flow by the id the live-connections list shows */
+static UINT64 g_killIds[32]; static int g_killCalls = 0;
+static BOOL StubKillFlow(UINT64 id) { if (g_killCalls < 32) g_killIds[g_killCalls] = id; g_killCalls++; return TRUE; }
 /* lets the worker thread of an asynchronous poll finish and its result be applied, then stops the poll timer so the
    test controls every further poll itself */
 static void PumpFlows(void)
@@ -140,16 +143,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int show)
       FlowText(&g_fl[r], 1, now, t, 128); CHECK(!wcscmp(t, L"example.com:443"));
       FlowText(&g_fl[r], 2, now, t, 128); CHECK(!wcscmp(t, L"TCP"));
       FlowText(&g_fl[r], 3, now, t, 128); CHECK(!wcscmp(t, L"1:05"));
-      FlowText(&g_fl[r], 4, now, t, 128); CHECK(!wcscmp(t, L"Browsers : Burp (SOCKS5 127.0.0.1:1080)"));
+      FlowText(&g_fl[r], 4, now, t, 128); CHECK(!wcscmp(t, L"1:05"));                                      /* idle: nothing moved since we started watching */
+      FlowText(&g_fl[r], 5, now, t, 128); CHECK(!wcscmp(t, L"Browsers : Burp (SOCKS5 127.0.0.1:1080)"));
       FlowRuleProxy(0, 5, t, 128);  CHECK(!wcscmp(t, L"Burp (SOCKS5 127.0.0.1:1080)"));                      /* the engine did not say which rule */
       FlowRuleProxy(55, 5, t, 128); CHECK(!wcscmp(t, L"Burp (SOCKS5 127.0.0.1:1080)"));                     /* a rule that is gone from the profile */
       FlowRuleProxy(21, 0, t, 128); CHECK(!wcscmp(t, L"Browsers : Burp (SOCKS5 127.0.0.1:1080)"));          /* proxy id 0 = the first proxy */
-      FlowText(&g_fl[r], 5, now, t, 128); CHECK(!wcscmp(t, L"2.0 KB"));
-      FlowText(&g_fl[r], 6, now, t, 128); CHECK(!wcscmp(t, L"5.0 MB"));
+      FlowText(&g_fl[r], 6, now, t, 128); CHECK(!wcscmp(t, L"2.0 KB"));
+      FlowText(&g_fl[r], 7, now, t, 128); CHECK(!wcscmp(t, L"5.0 MB"));
       for (int i = 0; i < g_flN; i++)
       {
-          if (g_fl[i].id == 12) { FlowText(&g_fl[i], 2, now, t, 128); CHECK(!wcscmp(t, L"UDP")); FlowText(&g_fl[i], 3, now, t, 128); CHECK(!wcscmp(t, L"0:00")); FlowText(&g_fl[i], 6, now, t, 128); CHECK(!wcscmp(t, L"900 B")); }
-          if (g_fl[i].id == 13) { FlowText(&g_fl[i], 0, now, t, 128); CHECK(!wcscmp(t, L"PID 9")); FlowText(&g_fl[i], 1, now, t, 128); CHECK(!wcscmp(t, L"[2606:4700::1111]:443")); FlowText(&g_fl[i], 4, now, t, 128); CHECK(!wcscmp(t, L"#99")); }
+          if (g_fl[i].id == 12) { FlowText(&g_fl[i], 2, now, t, 128); CHECK(!wcscmp(t, L"UDP")); FlowText(&g_fl[i], 3, now, t, 128); CHECK(!wcscmp(t, L"0:00")); FlowText(&g_fl[i], 7, now, t, 128); CHECK(!wcscmp(t, L"900 B")); }
+          if (g_fl[i].id == 13) { FlowText(&g_fl[i], 0, now, t, 128); CHECK(!wcscmp(t, L"PID 9")); FlowText(&g_fl[i], 1, now, t, 128); CHECK(!wcscmp(t, L"[2606:4700::1111]:443")); FlowText(&g_fl[i], 5, now, t, 128); CHECK(!wcscmp(t, L"#99")); }
       }
 
       /* the list control asks for text on demand (virtual list: it keeps no text itself) */
@@ -168,8 +172,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int show)
         CHECK(_stricmp(g_fl[g_flView[0]].host, g_fl[g_flView[1]].host) <= 0 && _stricmp(g_fl[g_flView[1]].host, g_fl[g_flView[2]].host) <= 0);
         SendMessageW(g_hMain, WM_NOTIFY, IDC_FLOWS, (LPARAM)&nm);                                       /* reversed */
         CHECK(_stricmp(g_fl[g_flView[0]].host, g_fl[g_flView[1]].host) >= 0 && _stricmp(g_fl[g_flView[1]].host, g_fl[g_flView[2]].host) >= 0);
-        nm.iSubItem = 6; SendMessageW(g_hMain, WM_NOTIFY, IDC_FLOWS, (LPARAM)&nm);                      /* by received: biggest first */
-        CHECK(g_fl[g_flView[0]].received >= g_fl[g_flView[1]].received && g_fl[g_flView[1]].received >= g_fl[g_flView[2]].received); }
+        nm.iSubItem = 7; SendMessageW(g_hMain, WM_NOTIFY, IDC_FLOWS, (LPARAM)&nm);                      /* by received: biggest first */
+        CHECK(g_fl[g_flView[0]].received >= g_fl[g_flView[1]].received && g_fl[g_flView[1]].received >= g_fl[g_flView[2]].received);
+        nm.iSubItem = 4; SendMessageW(g_hMain, WM_NOTIFY, IDC_FLOWS, (LPARAM)&nm);                      /* by idle: the longest idle first */
+        CHECK(g_fl[g_flView[0]].idleSince <= g_fl[g_flView[1]].idleSince && g_fl[g_flView[1]].idleSince <= g_fl[g_flView[2]].idleSince); }
 
       /* a flow that disappears turns grey and stays listed until "Clear closed" */
       PBFlow keep[2]; keep[0] = s[1]; keep[1] = s[2];
@@ -210,6 +216,34 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int show)
       /* the engine/pipe going away (nothing returned) greys everything instead of crashing */
       g_stubN = 0; FlowsPoll();
       for (int i = 0; i < g_flN; i++) CHECK(g_fl[i].closedAt != 0);
+    }
+
+    /* terminating a connection: the engine is asked to close exactly the chosen flow */
+    {   PBFlow k[3];
+        MkFlow(&k[0], 71, 4312, "chrome.exe", "a.example", 443, 0, 0, 1000, 10, 10, 5);
+        MkFlow(&k[1], 72, 4312, "chrome.exe", "b.example", 443, 0, 0, 2000, 20, 20, 5);
+        MkFlow(&k[2], 73, 77,   "game.exe",   "c.example", 27015, 1, 0, 3000, 30, 30, 5);
+        FlowsApply(k, 3, FALSE, GetTickCount64());
+        int r71 = -1, r72 = -1, r73 = -1, rdead = -1;
+        for (int i = 0; i < g_flN; i++)
+        {
+            if      (g_fl[i].id == 71) r71 = i;
+            else if (g_fl[i].id == 72) r72 = i;
+            else if (g_fl[i].id == 73) r73 = i;
+            else if (g_fl[i].id == 12) rdead = i;    /* a row that finished earlier */
+        }
+        CHECK(r71 >= 0 && r72 >= 0 && r73 >= 0 && rdead >= 0);
+        g_api.KillFlow = StubKillFlow; g_killCalls = 0;
+
+        CHECK(FlowsKillRow(-1, FALSE) == 0 && FlowsKillRow(g_flN, FALSE) == 0 && g_killCalls == 0);   /* out of range */
+        CHECK(FlowsKillRow(r71, FALSE) == 1 && g_killCalls == 1 && g_killIds[0] == 71);                /* only the chosen flow */
+        CHECK(FlowsKillRow(r73, TRUE) == 1 && g_killCalls == 2 && g_killIds[1] == 73);                 /* the whole process: one live flow */
+        CHECK(FlowsKillRow(r71, TRUE) == 2 && g_killCalls == 4 && g_killIds[2] == 71 && g_killIds[3] == 72);  /* both live flows of that process */
+        CHECK(FlowsKillRow(rdead, FALSE) == 0 && g_killCalls == 4);                                  /* a finished row: nothing to close */
+
+        g_api.KillFlow = NULL;                       /* an older core DLL without the kill entry */
+        CHECK(FlowsKillRow(r71, FALSE) == 0);
+        g_api.KillFlow = StubKillFlow;
     }
 
     /* memory stays bounded however many flows come and go */

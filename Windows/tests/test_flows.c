@@ -104,6 +104,34 @@ int main(void)
     CHECK(g_active_relays == 0);                                                            /* nothing leaked */
     closesocket(px2);
 
+    /* terminating a connection: it leaves the list and the application sees the close */
+    SOCKET app3, rc3, rp3, px3;
+    CHECK(make_pair(&app3, &rc3) && make_pair(&rp3, &px3));
+    FLOW_META m3; ZeroMemory(&m3, sizeof m3); m3.pid = GetCurrentProcessId(); m3.proxy_id = 4; m3.port = 8080; m3.v6 = FALSE;
+    m3.dest[0] = 1; m3.dest[1] = 1; m3.dest[2] = 1; m3.dest[3] = 1;                          /* 1.1.1.1 */
+    CHECK(relay_start(rc3, rp3, &m3));
+    CHECK(wait_flows(1, 0, 0));
+    UINT64 kill_id = g_f[0].id;
+    CHECK(ProxyBridge_KillFlow(kill_id));                                                     /* the flow is terminated */
+    CHECK(wait_flows(0, 0, 0));                                                               /* and leaves the list */
+    {   /* the application side must see the close - bounded, so a broken abort cannot hang the test */
+        DWORD tv = 200; setsockopt(app3, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv));
+        BOOL saw_close = FALSE;
+        for (int i = 0; i < 40 && !saw_close; i++)
+        {
+            char k; int r = recv(app3, &k, 1, 0);
+            if (r == 0) saw_close = TRUE;                                                     /* the peer closed */
+            else if (r < 0 && WSAGetLastError() != WSAETIMEDOUT) saw_close = TRUE;           /* or it was reset */
+            else Sleep(10);
+        }
+        CHECK(saw_close);
+    }
+    CHECK(!ProxyBridge_KillFlow(kill_id));                                                    /* it is gone: a second kill fails */
+    closesocket(app3);
+    closesocket(px3);
+    for (int i = 0; i < 300 && g_active_relays > 0; i++) Sleep(10);
+    CHECK(g_active_relays == 0);                                                            /* nothing leaked */
+
     relay_pool_stop();
     CHECK(relay_flows_snapshot(g_f, PB_FLOWS_MAX) == 0);
     running = FALSE;

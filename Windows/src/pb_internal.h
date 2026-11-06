@@ -123,6 +123,7 @@ typedef struct CONNECTION_INFO {
     UINT32 rule_id;                    // rule that matched (live connections view)
     volatile LONG64 up_bytes;          // UDP: payload bytes app -> proxy
     volatile LONG64 down_bytes;        // UDP: payload bytes proxy -> app
+    BOOL   killed;                     // UDP: the user killed this flow. Its packets are dropped, never proxied and never sent direct.
 } CONNECTION_INFO;
 
 typedef struct {
@@ -368,6 +369,9 @@ BOOL find_v6_udp_sender(const UINT8 orig_dest_ip6[16], UINT16 orig_dest_port, UI
 // Returns TRUE if a valid entry exists (and was refreshed), FALSE if not tracked / evicted.
 #define UDP_REEVAL_IDLE_MS 20000
 BOOL udp_flow_validate(UINT16 src_port, BOOL is_ipv6, UINT32 dest_ip, const UINT8 dest_ip6[16], UINT16 dest_port);
+// Marks a UDP flow as killed. Its packets stay inside the proxy path but the relay drops them, so
+// a killed channel never falls back to a direct route. Returns FALSE when there is no such flow.
+BOOL conntrack_kill_udp_flow(UINT16 src_port, BOOL is_ipv6);
 
 // Short-lived cache of DIRECT decisions for UDP, keyed by (src port, destination). UDP has no
 // SYN to decide once per connection, so every datagram of a direct flow used to repeat the
@@ -416,6 +420,10 @@ void relay_pool_stop(void);
 typedef struct { DWORD pid; UINT32 proxy_id; UINT32 rule_id; UINT16 port; BOOL v6; UINT8 dest[16]; } FLOW_META;
 BOOL relay_start(SOCKET client, SOCKET proxy, const FLOW_META *meta);
 UINT32 relay_flows_snapshot(PB_FLOW *out, UINT32 max);   // live proxied TCP connections, newest first; raw fields only
+// Terminates one live proxied TCP connection by its flow id (the same id relay_flows_snapshot
+// reports). The relay sockets are shut down and the pending IO is cancelled, so the application
+// sees the connection die. Returns FALSE when no live connection carries that id.
+BOOL relay_kill_flow(UINT64 id);
 extern volatile LONG g_active_relays;
 extern volatile LONG g_handler_threads;   // per-connection handshake threads still running (Stop waits for them)
 

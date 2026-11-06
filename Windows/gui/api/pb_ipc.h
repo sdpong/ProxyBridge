@@ -168,6 +168,14 @@ static UINT32 IpcGetFlows(PBFlow *out, UINT32 max)
     return i == n ? n : 0;
 }
 static void IpcSetEnabled(BOOL v)     { PBIPC_BEGIN(PBOP_SET_ENABLED);     PbW_U32(&_w, v != 0); PbIpcCall(_b, _w.len); }
+// Terminates one live connection, addressed by the id PBOP_GET_FLOWS reports.
+// The id travels as two u32 (low half first) because the wire format has no 64-bit integer.
+static BOOL IpcKillFlow(UINT64 id)
+{
+    PBIPC_BEGIN(PBOP_KILL_FLOW);
+    PbW_U32(&_w, (UINT32)id); PbW_U32(&_w, (UINT32)(id >> 32));
+    PBIPC_END();
+}
 static void IpcSetLogCallback(PBLogCallback cb)               { g_ipcLogCb = cb; }
 static void IpcSetConnectionCallback(PBConnectionCallback cb) { g_ipcConnCb = cb; }
 static BOOL IpcStart(void) { PBIPC_BEGIN(PBOP_START); PBIPC_END(); }
@@ -287,6 +295,7 @@ static int PB_LoadService(PBApi* api)
     api->SetTrafficLoggingEnabled = IpcSetTrafficLog;   api->SetEnabled = IpcSetEnabled;   api->SetLogEveryConnection = IpcSetLogAll;
     api->ClearConnectionLogs = IpcClearConnLogs;   api->Start = IpcStart; api->Stop = IpcStop;
     api->GetFlows = IpcGetFlows;
+    api->KillFlow = IpcKillFlow;
     return PB_IPC_OK;
 }
 

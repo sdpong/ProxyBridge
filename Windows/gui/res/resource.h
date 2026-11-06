@@ -57,6 +57,8 @@
 #define IDM_HELP_UPDATE             222
 #define IDM_TRAY_SHOW               230
 #define IDM_TRAY_EXIT               231
+#define IDM_FLOW_KILL               232   // Live Connections: terminate the selected connection
+#define IDM_FLOW_KILLPROC           233   // Live Connections: terminate every connection of the selected process
 #define IDM_PROFILE_NEW             240
 #define IDM_PROFILE_DELETE          241
 #define IDM_PROFILE_IMPORT          242

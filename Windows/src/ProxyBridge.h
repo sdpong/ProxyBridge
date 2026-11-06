@@ -81,6 +81,11 @@ typedef struct {
 } PB_FLOW;
 // Fills `out` with up to `max` (at most PB_FLOWS_MAX) live flows, newest first. Cheap enough to poll about once a second.
 PROXYBRIDGE_API UINT32 ProxyBridge_GetFlows(PB_FLOW* out, UINT32 max);
+// Terminates one live flow, addressed by the id ProxyBridge_GetFlows reports.
+// A TCP flow is aborted (the relay sockets are shut down, the application sees the connection die);
+// a UDP flow is marked killed (its packets are dropped, never proxied and never sent direct).
+// Returns FALSE when no live flow carries that id.
+PROXYBRIDGE_API BOOL ProxyBridge_KillFlow(UINT64 flow_id);
 PROXYBRIDGE_API void ProxyBridge_SetLogEveryConnection(BOOL enable);   // FALSE (default): Connections log skips repeats; TRUE: every new connection
 PROXYBRIDGE_API void ProxyBridge_SetEnabled(BOOL enable);   // main switch: FALSE pauses all rules for new connections (default TRUE)
 PROXYBRIDGE_API void ProxyBridge_SetLogCallback(LogCallback callback);
