@@ -24,10 +24,12 @@
 #include <uxtheme.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "res/resource.h"
 #include "api/pb_api.h"
 #include "api/pb_ipc.h"
 #include "profile/profile.h"
+#include "profile/ppx.h"
 #include "loc/loc.h"
 
 #pragma comment(lib, "comctl32.lib")
@@ -447,6 +449,7 @@ static void BuildMainMenu(HWND hwnd)
     AppendMenuW(profile, MF_STRING, IDM_PROFILE_DELETE, T(S_M_DELPROFILE));
     AppendMenuW(profile, MF_SEPARATOR, 0, NULL);
     AppendMenuW(profile, MF_STRING, IDM_PROFILE_IMPORT, T(S_M_IMPORT));
+    AppendMenuW(profile, MF_STRING, IDM_PROFILE_IMPORT_PPX, T(S_M_IMPORT_PPX));
     AppendMenuW(profile, MF_STRING, IDM_PROFILE_EXPORT, T(S_M_EXPORT));
     AppendMenuW(profile, MF_SEPARATOR, 0, NULL);
     g_switchMenu = CreatePopupMenu();
@@ -667,18 +670,32 @@ static void SyncMenuChecks(HWND hwnd)
 }
 
 // file dialogs
-static BOOL PickFile(HWND owner, BOOL save, wchar_t* path, int cch)
+static BOOL PickFileEx(HWND owner, BOOL save, wchar_t* path, int cch,
+                       const wchar_t* filter, const wchar_t* defExt)
 {
     OPENFILENAMEW ofn; ZeroMemory(&ofn, sizeof(ofn));
     path[0] = 0;
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"ProxyBridge Profile (*.pbprofile)\0*.pbprofile\0All Files\0*.*\0";
+    ofn.lpstrFilter = filter;
     ofn.lpstrFile = path; ofn.nMaxFile = cch;
-    ofn.lpstrDefExt = L"pbprofile";
+    ofn.lpstrDefExt = defExt;
     ofn.Flags = save ? (OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST)
                      : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST);
     return save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
+}
+
+static BOOL PickFile(HWND owner, BOOL save, wchar_t* path, int cch)
+{
+    return PickFileEx(owner, save, path, cch,
+                      L"ProxyBridge Profile (*.pbprofile)\0*.pbprofile\0All Files\0*.*\0", L"pbprofile");
+}
+
+// a Proxifier profile is xml, so it gets its own dialog
+static BOOL PickPpxFile(HWND owner, wchar_t* path, int cch)
+{
+    return PickFileEx(owner, FALSE, path, cch,
+                      L"Proxifier Profile (*.ppx)\0*.ppx\0All Files\0*.*\0", L"ppx");
 }
 
 // dark theme helpers (split out)
@@ -1089,6 +1106,52 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 wchar_t assigned[PB_NAME_MAX];
                 if (PB_ProfileImport(src, assigned, PB_NAME_MAX)) SwitchToProfile(assigned);
                 else MessageBoxW(hwnd, T(S_ERR_IMPORT), APP_TITLE, MB_OK | MB_ICONERROR);
+            }
+            return 0;
+        }
+        case IDM_PROFILE_IMPORT_PPX:
+        {
+            wchar_t src[MAX_PATH];
+            if (!PickPpxFile(hwnd, src, MAX_PATH)) return 0;
+            // a profile is a few megabytes, so it does not go on the stack
+            PBProfile* pp = (PBProfile*)malloc(sizeof(PBProfile));
+            if (!pp) { MessageBoxW(hwnd, T(S_ERR_IMPORT_PPX), APP_TITLE, MB_OK | MB_ICONERROR); return 0; }
+            wchar_t notes[4096];
+            if (!PB_ImportPPX(src, pp, notes, (int)(sizeof(notes) / sizeof(wchar_t))))
+            {
+                free(pp);
+                MessageBoxW(hwnd, T(S_ERR_IMPORT_PPX), APP_TITLE, MB_OK | MB_ICONERROR);
+                return 0;
+            }
+            // the name comes from the file, the way the .pbprofile import does it
+            const wchar_t* fn = wcsrchr(src, L'\\'); fn = fn ? fn + 1 : src;
+            wchar_t base[PB_NAME_MAX]; lstrcpynW(base, fn, PB_NAME_MAX);
+            size_t bl = wcslen(base);
+            if (bl > 4 && _wcsicmp(base + bl - 4, L".ppx") == 0) base[bl - 4] = 0;
+            if (!base[0]) lstrcpynW(base, L"Proxifier", PB_NAME_MAX);
+
+            // the import lands in a profile of its own; the ones that are there stay
+            wchar_t assigned[PB_NAME_MAX];
+            if (!PB_ProfileSaveAsNew(pp, base, assigned, PB_NAME_MAX))
+            {
+                free(pp);
+                MessageBoxW(hwnd, T(S_ERR_IMPORT_PPX), APP_TITLE, MB_OK | MB_ICONERROR);
+                return 0;
+            }
+            free(pp);
+            SwitchToProfile(assigned);   // this rebuilds the profile menu as well
+            // what could not be carried over is said out loud, not dropped silently
+            if (notes[0])
+            {
+                wchar_t body[8192];
+                _snwprintf_s(body, 8192, _TRUNCATE, T(S_INFO_PPX_NOTES), assigned, notes);
+                MessageBoxW(hwnd, body, APP_TITLE, MB_OK | MB_ICONINFORMATION);
+            }
+            else
+            {
+                wchar_t body[256];
+                _snwprintf_s(body, 256, _TRUNCATE, T(S_INFO_PPX_OK), assigned);
+                MessageBoxW(hwnd, body, APP_TITLE, MB_OK | MB_ICONINFORMATION);
             }
             return 0;
         }

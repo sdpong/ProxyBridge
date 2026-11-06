@@ -702,6 +702,26 @@ BOOL PB_ProfileExport(const wchar_t* name, const wchar_t* destPath)
     return CopyFileW(pp, destPath, FALSE);
 }
 
+BOOL PB_ProfileSaveAsNew(const PBProfile* p, const wchar_t* baseName, wchar_t* assignedName, int cch)
+{
+    if (!p || !baseName || !assignedName || cch <= 0) return FALSE;
+    wchar_t base[PB_NAME_MAX]; lstrcpynW(base, baseName, PB_NAME_MAX);
+    if (!base[0]) lstrcpynW(base, L"Imported", PB_NAME_MAX);
+    for (wchar_t* q = base; *q; q++) if (wcschr(L"<>:\"/\\|?*", *q)) *q = L'_';
+
+    wchar_t name[PB_NAME_MAX]; lstrcpynW(name, base, PB_NAME_MAX);
+    for (int i = 2; i <= 99; i++)
+    {
+        wchar_t pp[MAX_PATH]; profile_path(name, pp, MAX_PATH);
+        if (GetFileAttributesW(pp) == INVALID_FILE_ATTRIBUTES) break;
+        _snwprintf_s(name, PB_NAME_MAX, _TRUNCATE, L"%s (%d)", base, i);
+    }
+    ensure_dirs();
+    if (!PB_ProfileSave(name, p)) return FALSE;
+    lstrcpynW(assignedName, name, cch);
+    return TRUE;
+}
+
 BOOL PB_ProfileImport(const wchar_t* srcPath, wchar_t* assignedName, int cch)
 {
     const wchar_t* fn = wcsrchr(srcPath, L'\\'); fn = fn ? fn + 1 : srcPath;

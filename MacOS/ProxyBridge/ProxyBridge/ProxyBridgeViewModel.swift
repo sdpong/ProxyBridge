@@ -29,6 +29,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     @Published private(set) var proxyConfigs: [ProxyConfig] = []
     @Published private(set) var profiles: [String] = []
     @Published private(set) var activeProfile: String = "Default"
+    // what the last import had to leave out, shown to the user once
+    @Published var lastImportNotes: [String] = []
     
     private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
@@ -458,10 +460,20 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         return try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
     }
 
-    // create a new profile from a .pbprofile json and switch to it
+    // create a new profile from a .pbprofile json (or a Proxifier .ppx) and switch to it
     @discardableResult
-    func importProfile(from data: Data) -> Bool {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+    func importProfile(from data: Data, name: String? = nil) -> Bool {
+        // a Proxifier profile is xml, not json: it is converted first
+        var payload = data
+        if PPXImporter.looksLikePPX(data) {
+            guard let imported = PPXImporter.parse(data, name: name ?? "Proxifier") else { return false }
+            lastImportNotes = imported.warnings
+            guard let converted = try? JSONSerialization.data(withJSONObject: imported.profile) else { return false }
+            payload = converted
+        } else {
+            lastImportNotes = []
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
         var base = (obj["name"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "Imported"
         if base.isEmpty { base = "Imported" }
         let name = uniqueProfileName(base)

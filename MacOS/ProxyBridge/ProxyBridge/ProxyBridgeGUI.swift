@@ -218,9 +218,22 @@ struct ProxyBridgeGUIApp: App {
         panel.canChooseDirectories = false
         var types: [UTType] = [.json]
         if let pb = UTType(filenameExtension: "pbprofile") { types.insert(pb, at: 0) }
+        // a Proxifier profile (.ppx) is read too
+        if let ppx = UTType(filenameExtension: "ppx") { types.insert(ppx, at: 0) }
         panel.allowedContentTypes = types
         if panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) {
-            viewModel.importProfile(from: data)
+            let name = url.deletingPathExtension().lastPathComponent
+            if viewModel.importProfile(from: data, name: name) {
+                // what could not be carried over is said out loud, not dropped silently
+                let notes = viewModel.lastImportNotes
+                if !notes.isEmpty {
+                    let alert = NSAlert()
+                    alert.messageText = "Imported '\(name)'"
+                    alert.informativeText = notes.joined(separator: "\n")
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
         }
     }
 

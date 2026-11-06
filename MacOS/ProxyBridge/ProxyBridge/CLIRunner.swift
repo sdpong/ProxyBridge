@@ -70,6 +70,7 @@ enum CLI {
         if guiIsRunning() { fail("The ProxyBridge app is running. Quit it first, only one of them can control the extension at a time.") }
         guard takeLock() else { fail("Another ProxyBridge CLI is already running.") }
 
+        for note in profile.notes { CLI.warn(CLIText.safe(note)) }
         for w in CLIProfileLoader.warnings(for: profile) { warn(CLIText.safe(w)) }
         let r = CLIRunner(profile: profile, verbose: options.verbose)
         runner = r
@@ -101,7 +102,7 @@ enum CLI {
 
     private static func loadProfile(_ spec: String) throws -> CLIProfile {
         if spec == "-" { return try CLIProfileLoader.parse(json: readStandardInput()) }
-        if spec.contains("/") || spec.hasSuffix(".pbprofile") {
+        if spec.contains("/") || spec.hasSuffix(".pbprofile") || spec.hasSuffix(".ppx") {
             // the app is sandboxed, so it can only read files that are in its own container
             let path = (spec as NSString).expandingTildeInPath
             guard let data = FileManager.default.contents(atPath: path), data.count <= maxProfileBytes else {

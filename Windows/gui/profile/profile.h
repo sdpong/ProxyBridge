@@ -147,4 +147,9 @@ BOOL PB_ProfileRename(const wchar_t* oldName, const wchar_t* newName);
 BOOL PB_ProfileImport(const wchar_t* srcPath, wchar_t* assignedName, int cch);
 BOOL PB_ProfileExport(const wchar_t* name, const wchar_t* destPath);
 
+// Saves a profile that did not come from a file (an imported one) under a name that is
+// not taken yet: the base name first, then the base name with " (2)", " (3)" ...
+// The profiles that are already there are not touched.
+BOOL PB_ProfileSaveAsNew(const PBProfile* p, const wchar_t* baseName, wchar_t* assignedName, int cch);
+
 #endif // PB_PROFILE_H

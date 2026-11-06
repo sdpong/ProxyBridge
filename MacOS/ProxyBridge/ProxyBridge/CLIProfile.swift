@@ -41,6 +41,8 @@ struct CLIProfile {
     // the profile's proxy chains, as the wire form the extension understands:
     // a list of {id, name, proxies: [proxy id]}
     var chains: [[String: Any]] = []
+    // what the import had to leave out, shown to the user
+    var notes: [String] = []
 }
 
 enum CLIProfileError: Error, Equatable {
@@ -49,6 +51,10 @@ enum CLIProfileError: Error, Equatable {
 }
 
 enum CLIProfileLoader {
+    // what an import had to leave out. it is collected while the profile is read
+    // and moved into the profile afterwards
+    static var notes: [String] = []
+
     // reads a preferences value, injected so tests don't need the real app's preferences
     typealias Reader = (String) -> Any?
 
@@ -58,8 +64,23 @@ enum CLIProfileLoader {
         CFPreferencesCopyAppValue(key as CFString, "com.interceptsuite.ProxyBridge" as CFString)
     }
 
-    // an exported .pbprofile (json)
+    // an exported .pbprofile (json), or a Proxifier profile (.ppx, xml)
     static func parse(json data: Data) throws -> CLIProfile {
+        // a Proxifier profile is xml, not json: it is converted first, so that one
+        // code path reads both
+        if PPXImporter.looksLikePPX(data) {
+            guard let imported = PPXImporter.parse(data) else {
+                throw CLIProfileError.invalid("The Proxifier profile could not be read.")
+            }
+            guard let converted = try? JSONSerialization.data(withJSONObject: imported.profile) else {
+                throw CLIProfileError.invalid("The Proxifier profile could not be converted.")
+            }
+            for warning in imported.warnings { CLIProfileLoader.notes.append(warning) }
+            var profile = try CLIProfileLoader.parse(json: converted)
+            profile.notes = CLIProfileLoader.notes
+            CLIProfileLoader.notes = []
+            return profile
+        }
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw CLIProfileError.invalid("The profile is not valid JSON.")
         }

@@ -10,6 +10,7 @@
 
     test_hosts          Target Hosts list helpers (clean-up, IP/domain split and merge)
     test_profile        profile files: old-format migration, save format, long lists, hostile input
+    test_ppx            the Proxifier profile reader (.ppx): the same cases as the macOS side
     test_json           the JSON parser/writer: escapes, malformed input, nesting limit, round trips
     test_proto          the app <-> service wire protocol reader/writer
     test_service        the service's request handler and the named-pipe permission list
@@ -88,6 +89,7 @@ $res     = "$Out\app.res"
 $tests = @(
     @{ n='test_hosts';           src=@('tests\test_hosts.c', $prof);                        cl=$clUni;   link=$lnProf; ui=$false },
     @{ n='test_profile';         src=@('tests\test_profile.c', $prof);                      cl=$clUni;   link=$lnProf; ui=$false },
+    @{ n='test_ppx';             src=@('tests\test_ppx.c', $prof, 'gui\profile\ppx.c');     cl=$clUni;   link=$lnProf; ui=$false },
     @{ n='test_json';            src=@('tests\test_json.c');                                cl=$clPlain; link='';      ui=$false },
     @{ n='test_proto';           src=@('tests\test_proto.c');                               cl=$clPlain; link='';      ui=$false },
     @{ n='test_service';         src=@('tests\test_service.c');                             cl="$clPlain /DUNICODE /D_UNICODE"; link='user32.lib advapi32.lib'; ui=$false },

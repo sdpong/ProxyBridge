@@ -80,7 +80,8 @@ enum CLIArguments {
 
     OPTIONS:
       --profile <name>   Run a profile saved in the ProxyBridge app (see --list-profiles)
-      --profile -        Read a profile (.pbprofile, exported from the app) from standard input
+      --profile -        Read a profile (.pbprofile, exported from the app, or a Proxifier
+                         .ppx) from standard input
       --list-profiles    List the saved profiles and exit
       --verbose <0-3>    Logging: 0 silent (default), 1 log messages, 2 connections, 3 both
       --update           Check for updates
