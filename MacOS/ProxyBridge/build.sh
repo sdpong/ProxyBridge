@@ -43,8 +43,10 @@ if [ -f "$EXT_BIN" ]; then
     verify_universal "$EXT_BIN"
 fi
 
+# start from a clean staging directory: the script wipes it at the end, and a payload
+# left over from an earlier run would be copied into itself
+rm -rf "$SCRIPT_DIR/build"
 mkdir -p "$SCRIPT_DIR/build/component"
-
 cp -R "$APP_PATH" "$SCRIPT_DIR/build/component/"
 
 # strip AppleDouble junk so it never lands in the payload
@@ -56,8 +58,11 @@ echo "Creating installer package..."
 # force BundleIsRelocatable=false so the app always installs to /Applications.
 # otherwise macOS relocates the install onto any existing copy of the app it
 # finds on disk (bundle relocation), leaving /Applications empty.
+# pkgbuild only writes the key when the bundle is relocatable, so add it when
+# it is missing instead of failing the whole build on Set.
 pkgbuild --analyze --root build/component build/component.plist
-/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :0:BundleIsRelocatable bool false" build/component.plist
 
 # scripts/postinstall installs the `proxybridge` command (a launcher for the app's own executable).
 # an installer script that is not executable is skipped silently, so check it here
