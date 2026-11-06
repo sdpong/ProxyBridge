@@ -15,6 +15,11 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      # A secret cannot be referenced in a step-level if, so the answer travels in an env var.
+      # A fork has no certificate: the steps that need one are skipped and the build ships an
+      # unsigned app and package.
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
 
     steps:
     - name: Checkout code
@@ -42,7 +47,7 @@ jobs:
         fi
 
     - name: Install Provisioning Profiles
-      if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      if: env.HAS_SIGNING_CERT == 'true'
       run: |
         mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
 
@@ -59,7 +64,7 @@ jobs:
         echo "Installed ext profile: ${EXT_UUID}"
 
     - name: Import Certificate
-      if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      if: env.HAS_SIGNING_CERT == 'true'
       run: |
         # Decode certificate
         echo "${{ secrets.MACOS_CERTIFICATE }}" | base64 --decode > /tmp/certificate.p12
@@ -100,7 +105,7 @@ jobs:
         cd MacOS/ProxyBridge
         # without a certificate the app is built unsigned: a fork has no Developer ID, and an
         # unsigned build is still a working build
-        if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+        if [ -n "$HAS_SIGNING_CERT" ]; then
           xcodebuild \
             -project ProxyBridge.xcodeproj \
             -scheme ProxyBridge \
@@ -135,7 +140,7 @@ jobs:
         codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxyBridge.app || true
 
     - name: Notarize App
-      if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+      if: env.HAS_SIGNING_CERT == 'true'
       run: |
         APP_PATH="MacOS/ProxyBridge/build/DerivedData/Build/Products/Release/ProxyBridge.app"
 
@@ -199,7 +204,7 @@ jobs:
         PKG_SIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer-signed.pkg"
 
         # Sign pkg with explicit keychain - no prompting
-        if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+        if [ -n "$HAS_SIGNING_CERT" ]; then
           echo "Signing installer..."
           KEYCHAIN_PATH=$(security list-keychains -d user | grep build | tr -d ' "')
           echo "Using keychain: $KEYCHAIN_PATH"
@@ -214,7 +219,7 @@ jobs:
         fi
 
         # Notarize pkg
-        if [ -z "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+        if [ -z "$HAS_SIGNING_CERT" ]; then
           echo "No certificate in this repository - the package stays unsigned"
           exit 0
         fi
