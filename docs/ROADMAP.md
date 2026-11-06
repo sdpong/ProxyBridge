@@ -25,8 +25,8 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started.
 | Windows IPC | `[x]` | `PBOP_KILL_FLOW`（id 拆两个 u32，低位在前），`PB_PROTO_VERSION` 6 → 7 |
 | Windows GUI | `[x]` | Live Connections 右键菜单（终止此连接 / 终止该进程的所有连接）+ 新增「空闲」列 |
 | Windows 测试 | `[x]` | `test_flows`（真连真断）、`test_service`（协议编解码）、`test_main_ui`（GUI 核函数） |
-| macOS 扩展 | `[ ]` | TCP 流注册表 + `getFlows` / `killFlow` 扩展消息指令 |
-| macOS GUI | `[ ]` | `ConnectionsView` 从文本日志改造成活动连接表 + 右键终止 |
+| macOS 扩展 | `[x]` | `LiveFlowRegistry` 流注册表 + `getFlows` / `killFlow` 扩展消息指令 |
+| macOS GUI | `[x]` | 新增「Live Connections」标签页：活动连接表 + 右键终止（终止此连接 / 终止该进程的所有连接） |
 | macOS DNS | `[ ]` | 系统级 DNS 透明代理（拦截层已存在：`NEDNSProxyProvider` + `DNSMapStore`，缺的是策略层） |
 | Android | `[ ]` | 并入主线，见下方「Android 并入主线」 |
 
@@ -44,6 +44,11 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started.
 5. **DLL 侧对 `KillFlow` 做可选绑定**：旧版 core DLL 仍能加载，GUI 检测到指针为 NULL 就禁用该操作。
 6. **协议版本必须递增**：GUI 与服务握手时比对 `PB_PROTO_VERSION`，不匹配直接拒绝连接，
    避免旧 GUI 误发新指令。
+7. **macOS 的流注册表单独成文件**（`extension/LiveFlowRegistry.swift`）：它不认识
+   NetworkExtension 的类型，拆除动作由调用方以闭包传入，所以这份逻辑可以脱离 AppKit/NE
+   单独编译成逻辑测试（`MacOS/tests/logic/liveflow_tests.swift`）。
+8. **macOS 的流描述符必须显式清理**：握手的每一条失败路径都统一走 `closeRelay()`，
+   否则 `ObjectIdentifier(connection)` 被复用时，新连接会继承上一条流的应用名和目标地址。
 
 ---
 
