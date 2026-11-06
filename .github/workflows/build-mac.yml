@@ -107,7 +107,7 @@ jobs:
         cd MacOS/ProxyBridge
         # without a certificate the app is built unsigned: a fork has no Developer ID, and an
         # unsigned build is still a working build
-        if [ -n "$HAS_SIGNING_CERT" ]; then
+        if [ "$HAS_SIGNING_CERT" = "true" ]; then
           xcodebuild \
             -project ProxyBridge.xcodeproj \
             -scheme ProxyBridge \
@@ -203,7 +203,7 @@ jobs:
         PKG_SIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer-signed.pkg"
 
         # Sign pkg with explicit keychain - no prompting
-        if [ -n "$HAS_SIGNING_CERT" ]; then
+        if [ "$HAS_SIGNING_CERT" = "true" ]; then
           echo "Signing installer..."
           KEYCHAIN_PATH=$(security list-keychains -d user | grep build | tr -d ' "')
           echo "Using keychain: $KEYCHAIN_PATH"
@@ -218,7 +218,7 @@ jobs:
         fi
 
         # Notarize pkg
-        if [ -z "$HAS_SIGNING_CERT" ]; then
+        if [ "$HAS_SIGNING_CERT" != "true" ]; then
           echo "No certificate in this repository - the package stays unsigned"
           exit 0
         fi
