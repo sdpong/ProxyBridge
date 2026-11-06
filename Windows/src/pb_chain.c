@@ -75,7 +75,7 @@ UINT32 chain_problems(const UINT32 *hop_ids, UINT32 hop_count, char *out_message
 
     for (UINT32 i = 0; i < hop_count; i++)
     {
-        PROXY_CONFIG *hop = find_proxy_config(hop_ids[i]);
+        PROXY_CONFIG *hop = find_proxy_config_exact(hop_ids[i]);
         if (hop == NULL)
         {
             CHAIN_SAY("proxy %u of the chain does not exist", (unsigned)(i + 1));
@@ -215,7 +215,7 @@ BOOL chain_usable(UINT32 chain_id)
     int n = chain_hops_of(chain_id, hops, MAX_CHAIN_HOPS);
     if (n <= 0) return FALSE;
     for (int i = 0; i < n; i++)
-        if (find_proxy_config(hops[i]) == NULL) return FALSE;
+        if (find_proxy_config_exact(hops[i]) == NULL) return FALSE;
     return TRUE;
 }
 
@@ -230,7 +230,7 @@ void chain_label(UINT32 chain_id, char *out, size_t cap)
     size_t used = 0;
     for (int i = 0; i < n; i++)
     {
-        PROXY_CONFIG *hop = find_proxy_config(hops[i]);
+        PROXY_CONFIG *hop = find_proxy_config_exact(hops[i]);
         char one[96];
         if (hop != NULL)
             snprintf(one, sizeof(one), "%s://%s:%d", proxy_type_name(hop->type), hop->host, hop->port);

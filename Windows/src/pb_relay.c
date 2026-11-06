@@ -649,7 +649,9 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
         }
         for (int i = 0; i < chain_hop_count; i++)
         {
-            chain_hops[i] = find_proxy_config(chain_hop_ids[i]);
+            // the exact proxy, not the fallback: a hop that names a proxy that is
+            // not there must not turn into some other proxy
+            chain_hops[i] = find_proxy_config_exact(chain_hop_ids[i]);
             if (chain_hops[i] == NULL)
             {
                 log_message("[RELAY] Chain %u has no proxy %u - dropping connection",

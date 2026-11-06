@@ -47,7 +47,7 @@ enum {
                               //            proxyId, ruleId, ageMs (0xFFFFFFFF = unknown), sentLo, sentHi, recvLo, recvHi, str name, str host
     PBOP_KILL_FLOW,           // u32 idLo, u32 idHi -> bool (terminate one live connection, the id from PBOP_GET_FLOWS)
     PBOP_SET_DNS_POLICY,      // mode, leakProtection, autoDetectUpstream, excludedCount, names..., resolverCount, resolvers... -> bool
-    PBOP_GET_DNS_POLICY       // () -> mode, leakProtection, autoDetectUpstream, excludedCount, names..., resolverCount, resolvers...
+    PBOP_GET_DNS_POLICY,      // () -> mode, leakProtection, autoDetectUpstream, excludedCount, names..., resolverCount, resolvers...
     PBOP_ADD_CHAIN,           // name, hopCount, hops... -> id
     PBOP_EDIT_CHAIN,          // id, name, hopCount, hops... -> bool
     PBOP_DELETE_CHAIN,        // id -> bool

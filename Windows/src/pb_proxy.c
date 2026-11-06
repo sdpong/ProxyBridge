@@ -16,6 +16,19 @@ PROXY_CONFIG* find_proxy_config(UINT32 config_id)
     return NULL;
 }
 
+// The proxy with this id, or NULL. Unlike find_proxy_config() this does not fall back
+// to the first proxy: a chain hop that names a proxy that is not there has to be
+// noticed, not quietly replaced by another one.
+PROXY_CONFIG* find_proxy_config_exact(UINT32 config_id)
+{
+    for (int i = 0; i < g_proxy_config_count; i++)
+    {
+        if (g_proxy_configs[i].config_id == config_id)
+            return &g_proxy_configs[i];
+    }
+    return NULL;
+}
+
 // Helper: check if any proxy config is SOCKS5 (needed to decide whether to start UDP relay)
 BOOL any_socks5_config(void)
 {

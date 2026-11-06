@@ -148,6 +148,16 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
   下一跳的握手会把它当成自己的应答读走。App 与扩展各有一份校验，
   `MacOS/tests/logic/chain_tests.swift` 比对两边的判定，防止说法漂移。
 - **链不能带 UDP**：SOCKS5 的 UDP ASSOCIATE 是独立会话，串不起来。
+- **Windows 侧同样的规则**：`Windows/src/pb_chain.c` 的 `chain_problems()` 与 macOS 的
+  `ChainPlan.problems()` 一一对应，`Windows/tests/test_chain.c` 跑同一批用例。
+- **链的表示按平台各自的规则模型**：macOS 把链 id 写在 action 的 `chain:` 前缀里，
+  Windows 把链 id 放在规则原有的代理字段里，链 id 走自己的号段（`PB_CHAIN_ID_BASE = 1000` 起）。
+  两者达到同一个目的：链和代理永远不会互相认错，而且**规则模型、规则 API、规则 IPC、
+  连接跟踪热路径都不用改**。
+- **profile 的键名与形状两端一致**：`proxyChains`，里面是 `{id, name, proxies}`。
+  macOS 的 proxy id 是 UUID 字符串，Windows 是数字——这是平台差异，不是语义差异。
+- **Windows 的链表要按锁取**：链可以在连接走它的同时被改或被删，
+  所以中继侧用 `chain_hops_of()` 在锁内把跳复制出来再用，不持指针出锁。
 
 ### 代理类型
 

@@ -32,7 +32,7 @@ int main(void)
     // a chain needs at least one proxy
     CHECK(chain_problems(NULL, 0, msg, sizeof(msg)) == 1);
     CHECK(strstr(msg, "no proxy") != NULL);
-    CHECK(chain_problems(socks5 ? &socks5 : NULL, 0, msg, sizeof(msg)) == 1);
+    CHECK(chain_problems(&socks5, 0, msg, sizeof(msg)) == 1);
 
     // one proxy is a chain
     CHECK(chain_problems(&socks5, 1, msg, sizeof(msg)) == 0);
@@ -59,6 +59,12 @@ int main(void)
 
     // a proxy that is not there
     { UINT32 hops[2] = { socks5, 987654 };
+      CHECK(chain_problems(hops, 2, msg, sizeof(msg)) == 1);
+      CHECK(strstr(msg, "does not exist") != NULL); }
+
+    // a hop that is not there is reported even though other proxies are: the lookup
+    // must not quietly fall back to the first proxy
+    { UINT32 hops[2] = { 987654, socks5 };
       CHECK(chain_problems(hops, 2, msg, sizeof(msg)) == 1);
       CHECK(strstr(msg, "does not exist") != NULL); }
 

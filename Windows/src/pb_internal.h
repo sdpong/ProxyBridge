@@ -328,6 +328,8 @@ void update_has_active_rules(void);
 
 // ---- pb_proxy.c ----
 PROXY_CONFIG* find_proxy_config(UINT32 config_id);
+// the proxy with this id, or NULL - no fallback to the first proxy
+PROXY_CONFIG* find_proxy_config_exact(UINT32 config_id);
 BOOL any_socks5_config(void);
 BOOL is_proxy_config_referenced(UINT32 config_id);
 

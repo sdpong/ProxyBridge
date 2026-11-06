@@ -355,7 +355,6 @@ UINT32 PB_AllocChainId(PBProfile* p)
         if (p->cfg[i].storedId >= hi) hi = p->cfg[i].storedId + 1;
     return hi;
 }
-}
 
 void PB_ProfileLoad(const wchar_t* name, PBProfile* p)
 {
