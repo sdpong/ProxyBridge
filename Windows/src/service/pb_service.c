@@ -203,6 +203,46 @@ static BOOL Dispatch(const BYTE *req, DWORD reqLen, PbW *resp)
         break; }
     case PBOP_START: ret = g_api.Start(); break;
     case PBOP_STOP:  ret = g_api.Stop();  break;
+
+    case PBOP_SET_DNS_POLICY: {
+        UINT32 mode = PbR_U32(&r);
+        UINT32 leak = PbR_U32(&r);
+        UINT32 autodetect = PbR_U32(&r);
+        UINT32 excludedCount = PbR_U32(&r);
+        if (!r.ok || mode > 2 || excludedCount > PB_DNS_MAX_EXCLUDED) return FALSE;
+        static char excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+        for (UINT32 i = 0; i < excludedCount; i++)
+            PbR_Str(&r, excluded[i], sizeof(excluded[i]), NULL);
+        UINT32 resolverCount = PbR_U32(&r);
+        if (!r.ok || resolverCount > PB_DNS_MAX_RESOLVERS) return FALSE;
+        static char resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+        for (UINT32 i = 0; i < resolverCount; i++)
+            PbR_Str(&r, resolvers[i], sizeof(resolvers[i]), NULL);
+        if (!r.ok) return FALSE;
+        PBDnsPolicy policy; ZeroMemory(&policy, sizeof(policy));
+        policy.mode = mode;
+        policy.leakProtection = leak;
+        policy.autoDetectUpstream = autodetect;
+        policy.excludedCount = excludedCount;
+        policy.resolverCount = resolverCount;
+        for (UINT32 i = 0; i < excludedCount; i++) strncpy_s(policy.excluded[i], sizeof(policy.excluded[i]), excluded[i], _TRUNCATE);
+        for (UINT32 i = 0; i < resolverCount; i++) strncpy_s(policy.resolvers[i], sizeof(policy.resolvers[i]), resolvers[i], _TRUNCATE);
+        ret = (g_api.SetDNSPolicy != NULL) ? g_api.SetDNSPolicy(&policy) : 0;
+        break; }
+    case PBOP_GET_DNS_POLICY: {
+        PBDnsPolicy policy; ZeroMemory(&policy, sizeof(policy));
+        if (g_api.GetDNSPolicy == NULL || !g_api.GetDNSPolicy(&policy)) return FALSE;
+        // the counts on the wire must be the counts that are actually written
+        UINT32 nEx = policy.excludedCount < PB_DNS_MAX_EXCLUDED ? policy.excludedCount : PB_DNS_MAX_EXCLUDED;
+        UINT32 nRs = policy.resolverCount < PB_DNS_MAX_RESOLVERS ? policy.resolverCount : PB_DNS_MAX_RESOLVERS;
+        PbW_U32(resp, policy.mode);
+        PbW_U32(resp, policy.leakProtection);
+        PbW_U32(resp, policy.autoDetectUpstream);
+        PbW_U32(resp, nEx);
+        for (UINT32 i = 0; i < nEx; i++) PbW_Str(resp, policy.excluded[i]);
+        PbW_U32(resp, nRs);
+        for (UINT32 i = 0; i < nRs; i++) PbW_Str(resp, policy.resolvers[i]);
+        return resp->ok; }
     default: return FALSE;
     }
     PbW_U32(resp, ret);

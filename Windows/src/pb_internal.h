@@ -229,6 +229,11 @@ extern UINT16 g_local_relay_port;
 // produced the last verdict (FALSE when nothing matched). Read right after check_process_rule*().
 extern __declspec(thread) BOOL g_tl_rule_localhost;
 extern __declspec(thread) UINT32 g_tl_rule_id;   // same for the id of the rule that produced the verdict (0 = none)
+// Set by the relay before the handshake: what the proxy server is told about the
+// destination. The HTTP handshake reads it from here, because it looks the name up
+// itself and the DNS policy may overrule what the per-proxy setting says.
+extern __declspec(thread) int g_tl_dns_mode;       // PB_DNS_ADDR_*
+extern __declspec(thread) const char *g_tl_dns_name;
 extern LogCallback g_log_callback;
 extern ConnectionCallback g_connection_callback;
 extern char  *g_pidtbl_buf;
@@ -338,6 +343,37 @@ BOOL dns_parse_name(const UINT8 *msg, int msg_len, int *offset, char *dst, int d
 void snoop_dns_response(const UINT8 *payload, int payload_len);
 void cleanup_stale_dns_cache(void);
 void flush_dns_resolver_cache(void);
+
+// ---- pb_dnspolicy.c ----
+// what the transparent proxy hands to the proxy server
+#define PB_DNS_ADDR_DEFAULT 0  // the per-proxy setting decides
+#define PB_DNS_ADDR_ADDRESS 1  // send the address
+#define PB_DNS_ADDR_HOSTNAME 2 // send the name
+
+// the engine's own copy of the policy. The exported one (PBDnsPolicy) uses
+// UINT32 for the flags because it crosses the DLL boundary, this one uses BOOL
+// because it lives inside the engine.
+typedef struct PB_DNS_POLICY {
+    UINT32 mode;
+    BOOL   leak_protection;
+    BOOL   auto_detect_upstream;
+    int    excluded_count;
+    char   excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+    int    resolver_count;
+    char   resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+} PB_DNS_POLICY;
+
+void dns_policy_init(void);
+BOOL dns_policy_set(const PB_DNS_POLICY *policy);
+void dns_policy_get(PB_DNS_POLICY *out);
+BOOL dns_policy_is_excluded(const char *domain);
+int  dns_policy_addressing(const char *domain);
+BOOL dns_policy_matches(const char *pattern, const char *name);
+BOOL dns_policy_normalize_resolver(const char *raw, char *host, size_t host_cap, UINT16 *port);
+BOOL dns_policy_preferred_resolver(char *host, size_t host_cap, UINT16 *port);
+int  dns_policy_build_query(const char *name, UINT8 *out, int cap);
+BOOL dns_policy_parse_answer(const UINT8 *msg, int msg_len, UINT32 *out_ip);
+BOOL dns_policy_resolve_for_proxy(const char *name, UINT32 *out_ip);
 
 // ---- pb_socks5.c ----
 int socks5_read_connect_reply(SOCKET s, int *reply);

@@ -245,6 +245,31 @@ BEGIN
     PUSHBUTTON      "Cancel",        IDCANCEL,  158, 54, 50, 14
 END
 
+// DNS settings dialog
+IDD_DNS DIALOGEX 0, 0, 460, 268
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "DNS Settings"
+FONT 11, "Segoe UI", 400, 0, 0x0
+BEGIN
+    LTEXT           "Resolve names:", IDC_DNS_L_MODE, 8, 10, 80, 10
+    COMBOBOX        IDC_DNS_MODE, 92, 8, 200, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_DNS_HINT, 8, 26, 444, 26
+
+    LTEXT           "Excluded names:", IDC_DNS_L_EXCL, 8, 58, 80, 10
+    EDITTEXT        IDC_DNS_EXCL, 92, 56, 360, 56, ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_DNS_EXCLHINT, 92, 114, 360, 20
+
+    LTEXT           "Resolvers:", IDC_DNS_L_RES, 8, 140, 80, 10
+    EDITTEXT        IDC_DNS_RES, 92, 138, 360, 42, ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_DNS_RESHINT, 92, 182, 360, 10
+
+    AUTOCHECKBOX    "Use the resolver the system uses when the list above is empty", IDC_DNS_AUTODETECT, 8, 198, 444, 10
+    AUTOCHECKBOX    "Never let the local resolver answer (the proxy server resolves the name)", IDC_DNS_LEAK, 8, 214, 444, 10
+
+    DEFPUSHBUTTON   "OK",     IDOK,     296, 242, 60, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 360, 242, 60, 16
+END
+
 // About dialog
 IDD_ABOUT DIALOGEX 0, 0, 250, 170
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU

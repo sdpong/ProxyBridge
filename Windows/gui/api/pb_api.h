@@ -43,6 +43,28 @@ static __inline PBProxyType pb_proxy_type_enum(const wchar_t *name)
 typedef enum { PB_ACTION_PROXY = 0, PB_ACTION_DIRECT = 1, PB_ACTION_BLOCK = 2 } PBRuleAction;
 typedef enum { PB_PROTO_TCP = 0, PB_PROTO_UDP = 1, PB_PROTO_BOTH = 2 } PBRuleProtocol;
 
+// The DNS policy (must match PBDnsPolicy in ../../src/ProxyBridge.h). It decides what
+// happens to a name before it may reach a proxy server.
+// profile\profile.h carries the same numbers for the profile file, so they are only
+// defined once (here).
+#ifndef PB_DNS_MODE_SYSTEM
+#define PB_DNS_MODE_SYSTEM 0   // the system's resolver answers
+#define PB_DNS_MODE_LOCAL  1   // a resolver on this machine answers, the proxy gets the address
+#define PB_DNS_MODE_REMOTE 2   // the proxy server resolves the name, the local answer is only a bootstrap
+#define PB_DNS_MAX_EXCLUDED 64
+#define PB_DNS_MAX_RESOLVERS 16
+#define PB_DNS_NAME_MAX 256
+#endif
+typedef struct {
+    UINT32 mode;
+    UINT32 leakProtection;
+    UINT32 autoDetectUpstream;
+    UINT32 excludedCount;
+    UINT32 resolverCount;
+    char   excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+    char   resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+} PBDnsPolicy;
+
 // one live connection (must match PB_FLOW in ../../src/ProxyBridge.h)
 typedef struct {
     UINT64 id;
@@ -87,6 +109,8 @@ typedef void   (*PFN_SetLogEveryConnection)(BOOL);
 typedef void   (*PFN_ClearConnectionLogs)(void);
 typedef UINT32 (*PFN_GetFlows)(PBFlow*, UINT32);
 typedef BOOL   (*PFN_KillFlow)(UINT64);
+typedef BOOL   (*PFN_SetDNSPolicy)(const PBDnsPolicy*);
+typedef BOOL   (*PFN_GetDNSPolicy)(PBDnsPolicy*);
 typedef BOOL   (*PFN_Start)(void);
 typedef BOOL   (*PFN_Stop)(void);
 
@@ -113,6 +137,8 @@ typedef struct {
     PFN_ClearConnectionLogs       ClearConnectionLogs;
     PFN_GetFlows                  GetFlows;
     PFN_KillFlow                  KillFlow;
+    PFN_SetDNSPolicy              SetDNSPolicy;
+    PFN_GetDNSPolicy              GetDNSPolicy;
     PFN_Start                     Start;
     PFN_Stop                      Stop;
 } PBApi;
@@ -163,6 +189,10 @@ static BOOL PB_LoadDirect(PBApi* api)
     // Optional: an older core DLL without the kill entry still loads, the GUI just disables the
     // "kill connection" action when the pointer is NULL.
     api->KillFlow = (PFN_KillFlow)(void*)GetProcAddress(api->dll, "ProxyBridge_KillFlow");
+    // The DNS policy arrived later than the rest, so it is optional too: a GUI that talks to an
+    // older core simply cannot show the DNS settings.
+    api->SetDNSPolicy = (PFN_SetDNSPolicy)(void*)GetProcAddress(api->dll, "ProxyBridge_SetDNSPolicy");
+    api->GetDNSPolicy = (PFN_GetDNSPolicy)(void*)GetProcAddress(api->dll, "ProxyBridge_GetDNSPolicy");
     PB_BIND(Start,                    "Start");
     PB_BIND(Stop,                     "Stop");
     #undef PB_BIND

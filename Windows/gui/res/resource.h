@@ -28,6 +28,7 @@
 #define IDM_ZOOM_RESET              225
 #define IDM_PROXY_ENABLE            226   // main on/off switch
 #define IDM_SET_LOGALL              227   // log every connection (no de-duplication)
+#define IDM_DNS_SETTINGS            228   // the DNS policy dialog
 #define IDM_PROFILE_RENAME          244
 
 // Log Filters (list) dialog
@@ -175,5 +176,19 @@
 #define IDC_AB_WEB                 705
 #define IDC_AB_GITHUB              706
 #define IDC_AB_LICENSE             707
+
+// DNS settings dialog
+#define IDD_DNS                    900
+#define IDC_DNS_MODE               901
+#define IDC_DNS_EXCL               902
+#define IDC_DNS_RES                903
+#define IDC_DNS_AUTODETECT         904
+#define IDC_DNS_LEAK               905
+#define IDC_DNS_HINT               906
+#define IDC_DNS_L_MODE             907
+#define IDC_DNS_L_EXCL             908
+#define IDC_DNS_L_RES              909
+#define IDC_DNS_EXCLHINT           910
+#define IDC_DNS_RESHINT            911
 
 #endif // RESOURCE_H

@@ -284,6 +284,11 @@ void PB_ProfileDefaults(PBProfile* p, const wchar_t* name)
     p->closeToTray       = 1;
     p->fontZoom          = 100;
     lstrcpynW(p->language, L"en", 8);
+    p->dns.mode             = PB_DNS_MODE_SYSTEM;
+    p->dns.leakProtection   = 0;
+    p->dns.autoDetectUpstream = 1;
+    p->dns.excludedCount    = 0;
+    p->dns.resolverCount    = 0;
 }
 
 // Makes proxy-config ids unique and non-zero and positions the allocator past every id in use.
@@ -393,6 +398,37 @@ void PB_ProfileLoad(const wchar_t* name, PBProfile* p)
                 u2w(json_str(f, "Protocol", "All"), fi->proto, 8);
                 u2w(json_str(f, "Action", "All"), fi->action, 16);
             }
+
+        // The DNS policy. The keys are the ones the macOS app writes, so one profile
+        // file means the same thing on both platforms.
+        JVal* dns = json_get(root, "dnsPolicy");
+        if (dns && dns->type == J_OBJ)
+        {
+            const char* mode = json_str(dns, "mode", "system");
+            if (_stricmp(mode, "local") == 0)       p->dns.mode = PB_DNS_MODE_LOCAL;
+            else if (_stricmp(mode, "remote") == 0) p->dns.mode = PB_DNS_MODE_REMOTE;
+            else                                    p->dns.mode = PB_DNS_MODE_SYSTEM;
+            p->dns.leakProtection   = json_bool(dns, "leakProtection", 0);
+            p->dns.autoDetectUpstream = json_bool(dns, "autoDetectUpstream", 1);
+
+            JVal* ex = json_get(dns, "excludedDomains");
+            if (ex && ex->type == J_ARR)
+                for (JVal* c = ex->child; c && p->dns.excludedCount < PB_DNS_MAX_EXCLUDED; c = c->next)
+                {
+                    if (c->type != J_STR || !c->sval || !c->sval[0]) continue;
+                    u2w(c->sval, p->dns.excluded[p->dns.excludedCount], PB_DNS_NAME_MAX);
+                    p->dns.excludedCount++;
+                }
+
+            JVal* rs = json_get(dns, "upstreamResolvers");
+            if (rs && rs->type == J_ARR)
+                for (JVal* c = rs->child; c && p->dns.resolverCount < PB_DNS_MAX_RESOLVERS; c = c->next)
+                {
+                    if (c->type != J_STR || !c->sval || !c->sval[0]) continue;
+                    u2w(c->sval, p->dns.resolvers[p->dns.resolverCount], PB_DNS_NAME_MAX);
+                    p->dns.resolverCount++;
+                }
+        }
     }
     if (root) json_free(root);
     free(txt);
@@ -406,6 +442,16 @@ static void put_kv_str(StrBuf* b, const char* indent, const char* key, const wch
     if (tmp) w2u(wval, tmp, (int)cap);
     sb_put(b, indent); sb_put(b, "\""); sb_put(b, key); sb_put(b, "\": ");
     sb_json_str(b, tmp ? tmp : ""); sb_put(b, trail);
+    free(tmp);
+}
+
+// writes one wide string as a JSON string literal (no key, no colon)
+static void put_json_wstr(StrBuf* b, const wchar_t* wval)
+{
+    size_t cap = (wval ? wcslen(wval) : 0) * 3 + 4;
+    char* tmp = (char*)malloc(cap);
+    if (tmp) w2u(wval, tmp, (int)cap);
+    sb_json_str(b, tmp ? tmp : "");
     free(tmp);
 }
 
@@ -485,7 +531,31 @@ BOOL PB_ProfileSave(const wchar_t* name, const PBProfile* p)
         put_kv_str(&b, "      ", "Action", f->action, "\n");
         sb_put(&b, "    }");
     }
-    sb_put(&b, p->filterCount ? "\n  ]\n" : "]\n");
+    sb_put(&b, p->filterCount ? "\n  ],\n" : "],\n");
+
+    // The DNS policy. The keys are the ones the macOS app writes, so one profile file
+    // means the same thing on both platforms.
+    sb_put(&b, "  \"dnsPolicy\": {\n");
+    sb_put(&b, "    \"mode\": \"");
+    sb_put(&b, p->dns.mode == PB_DNS_MODE_LOCAL ? "local" : (p->dns.mode == PB_DNS_MODE_REMOTE ? "remote" : "system"));
+    sb_put(&b, "\",\n");
+    sb_put(&b, "    \"leakProtection\": ");    sb_put(&b, p->dns.leakProtection ? "true" : "false");     sb_put(&b, ",\n");
+    sb_put(&b, "    \"autoDetectUpstream\": "); sb_put(&b, p->dns.autoDetectUpstream ? "true" : "false"); sb_put(&b, ",\n");
+    sb_put(&b, "    \"excludedDomains\": [");
+    for (int i = 0; i < p->dns.excludedCount; i++)
+    {
+        sb_put(&b, i ? ", " : "");
+        put_json_wstr(&b, p->dns.excluded[i]);
+    }
+    sb_put(&b, "],\n");
+    sb_put(&b, "    \"upstreamResolvers\": [");
+    for (int i = 0; i < p->dns.resolverCount; i++)
+    {
+        sb_put(&b, i ? ", " : "");
+        put_json_wstr(&b, p->dns.resolvers[i]);
+    }
+    sb_put(&b, "]\n");
+    sb_put(&b, "  }\n");
     sb_put(&b, "}\n");
 
     wchar_t pp[MAX_PATH]; profile_path(name, pp, MAX_PATH);

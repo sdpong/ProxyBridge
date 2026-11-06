@@ -192,6 +192,11 @@ void snoop_dns_response(const UINT8 *payload, int payload_len)
     if (!dns_parse_name(payload, payload_len, &offset, qname, sizeof(qname))) return;
     offset += 4;  // QTYPE + QCLASS
 
+    // A name the policy excludes is not recorded at all. The cache is the only
+    // place the engine learns a name, so a name that never reaches the cache can
+    // never reach a proxy server either.
+    if (dns_policy_is_excluded(qname)) return;
+
     // Skip any remaining questions
     for (int q = 1; q < qdcount && offset < payload_len; q++)
     {

@@ -21,6 +21,35 @@
 #define MAX_PROXY_CONFIGS 32
 #define MAX_RULES         256
 
+// The DNS policy, as the profile carries it. The keys are the ones the macOS app
+// writes, so one profile file means the same thing on both platforms.
+#define PB_DNS_MODE_SYSTEM 0
+#define PB_DNS_MODE_LOCAL  1
+#define PB_DNS_MODE_REMOTE 2
+#define PB_DNS_MAX_EXCLUDED 64
+#define PB_DNS_MAX_RESOLVERS 16
+#define PB_DNS_NAME_MAX 256
+typedef struct {
+    int  mode;                                       // PB_DNS_MODE_*
+    int  leak_protection;                             // 1 = the proxy server resolves the name
+    int  auto_detect_upstream;                        // 1 = fall back to the resolver the system uses
+    char excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+    int  excluded_count;
+    char resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+    int  resolver_count;
+} PBDnsPolicyCfg;
+
+// The shape the engine expects (must match PBDnsPolicy in ../src/ProxyBridge.h).
+typedef struct {
+    uint32_t mode;
+    uint32_t leakProtection;
+    uint32_t autoDetectUpstream;
+    uint32_t excludedCount;
+    uint32_t resolverCount;
+    char     excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+    char     resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+} PBDnsPolicy;
+
 
 typedef uint32_t (*pfnAddProxyConfig)(int type, const char* ip, uint16_t port,
                                       const char* user, const char* pass,
@@ -34,6 +63,7 @@ typedef void (*pfnSetLogCallback)(void (*cb)(const char*));
 typedef void (*pfnSetConnectionCallback)(void (*cb)(const char*, DWORD,
                                           const char*, uint16_t, const char*));
 typedef void (*pfnSetTrafficLogging)(int enable);
+typedef int  (*pfnSetDNSPolicy)(const PBDnsPolicy* policy);
 typedef int  (*pfnStart)(void);
 typedef int  (*pfnStop)(void);
 
@@ -43,6 +73,7 @@ static pfnDisableRule           g_DisableRule    = NULL;
 static pfnSetLogCallback        g_SetLog         = NULL;
 static pfnSetConnectionCallback g_SetConn        = NULL;
 static pfnSetTrafficLogging     g_SetTraffic     = NULL;
+static pfnSetDNSPolicy          g_SetDNSPolicy   = NULL;
 static pfnStart                 g_Start          = NULL;
 static pfnStop                  g_Stop           = NULL;
 static HMODULE                  g_hDll           = NULL;
@@ -77,6 +108,7 @@ typedef struct {
     int         num_configs;
     PBRule      rules[MAX_RULES];
     int         num_rules;
+    PBDnsPolicyCfg dns;
 } PBProfile;
 
 // Globals
@@ -423,6 +455,32 @@ static const char* jarray(const char* json, const char* key)
     return (*p == '[') ? p + 1 : NULL;
 }
 
+// Reads an array of strings into out[max], one element per entry. Returns the count.
+static int jstring_array(const char* json, const char* key, char (*out)[PB_DNS_NAME_MAX], int max)
+{
+    const char* arr = jarray(json, key);
+    if (!arr) return 0;
+    int n = 0;
+    const char* p = arr;
+    while (*p && n < max)
+    {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (*p != '"') break;
+        p++;
+        size_t o = 0;
+        while (*p && *p != '"')
+        {
+            char c = *p++;
+            if (c == '\\' && *p) c = *p++;      // the escapes we write are plain, this keeps a stray one harmless
+            if (o + 1 < PB_DNS_NAME_MAX) out[n][o++] = c;
+        }
+        if (*p == '"') p++;
+        out[n][o] = '\0';
+        if (out[n][0]) n++;
+    }
+    return n;
+}
+
 // Advances to the next {...} object within an array.
 // Returns pointer to '{', updates *next to char after matching '}'.
 // Returns NULL when no more objects.
@@ -461,6 +519,22 @@ static const char* jnext_obj(const char* pos, const char** next)
     }
     *next = pos;
     return NULL;
+}
+
+// Copies the {...} object that follows a key into buf, so its members can be read
+// without the rest of the document interfering.
+static bool jobject(const char* json, const char* key, char* buf, size_t cap)
+{
+    const char* p = jfind(json, key);
+    if (!p || *p != '{') return false;
+    const char* next = NULL;
+    const char* start = jnext_obj(p, &next);
+    if (!start || !next) return false;
+    size_t len = (size_t)(next - start);
+    if (len >= cap) len = cap - 1;
+    memcpy(buf, start, len);
+    buf[len] = '\0';
+    return true;
 }
 
 // ── Profile loader ────────────────────────────────────────────────────────────
@@ -592,6 +666,25 @@ static bool load_profile(const char* path, PBProfile* prof)
         }
     }
 
+    // ── dnsPolicy ──────────────────────────────────────────────────────────────
+    // The keys are the ones the macOS app writes, so one profile file means the same
+    // thing on both platforms.
+    prof->dns.mode = PB_DNS_MODE_SYSTEM;
+    prof->dns.auto_detect_upstream = 1;
+    static char dnsbuf[64 * 1024];
+    if (jobject(json, "dnsPolicy", dnsbuf, sizeof(dnsbuf)))
+    {
+        char mode_s[32] = {0};
+        jstr(dnsbuf, "mode", mode_s, sizeof(mode_s));
+        if      (_stricmp(mode_s, "local")  == 0) prof->dns.mode = PB_DNS_MODE_LOCAL;
+        else if (_stricmp(mode_s, "remote") == 0) prof->dns.mode = PB_DNS_MODE_REMOTE;
+        else                                         prof->dns.mode = PB_DNS_MODE_SYSTEM;
+        prof->dns.leak_protection     = jbool(dnsbuf, "leakProtection",     false) ? 1 : 0;
+        prof->dns.auto_detect_upstream = jbool(dnsbuf, "autoDetectUpstream", true)  ? 1 : 0;
+        prof->dns.excluded_count = jstring_array(dnsbuf, "excludedDomains",  prof->dns.excluded, PB_DNS_MAX_EXCLUDED);
+        prof->dns.resolver_count = jstring_array(dnsbuf, "upstreamResolvers", prof->dns.resolvers, PB_DNS_MAX_RESOLVERS);
+    }
+
     free(json);
     return true;
 }
@@ -639,6 +732,10 @@ static bool load_dll(void)
     LOAD_FN(pfnSetTrafficLogging,     g_SetTraffic,     "ProxyBridge_SetTrafficLoggingEnabled");
     LOAD_FN(pfnStart,                 g_Start,          "ProxyBridge_Start");
     LOAD_FN(pfnStop,                  g_Stop,           "ProxyBridge_Stop");
+
+    // The DNS policy arrived later than the rest, so it is optional: an older core
+    // DLL simply runs without a policy instead of refusing to start.
+    g_SetDNSPolicy = (pfnSetDNSPolicy)GetProcAddress(g_hDll, "ProxyBridge_SetDNSPolicy");
 
     return true;
 }
@@ -1070,6 +1167,24 @@ int main(int argc, char* argv[])
     if (g_verbose == 1 || g_verbose == 3) g_SetLog(log_cb);
     if (g_verbose == 2 || g_verbose == 3) g_SetConn(conn_cb);
     g_SetTraffic(prof.traffic_logging);
+
+    // ── DNS policy ──────────────────────────────────────────────────────────────
+    if (g_SetDNSPolicy)
+    {
+        static PBDnsPolicy dp;   // large: keep it off the stack
+        memset(&dp, 0, sizeof(dp));
+        dp.mode = (uint32_t)prof.dns.mode;
+        dp.leakProtection = prof.dns.leak_protection ? 1 : 0;
+        dp.autoDetectUpstream = prof.dns.auto_detect_upstream ? 1 : 0;
+        dp.excludedCount = (uint32_t)prof.dns.excluded_count;
+        dp.resolverCount = (uint32_t)prof.dns.resolver_count;
+        for (int i = 0; i < prof.dns.excluded_count; i++) strncpy_s(dp.excluded[i], PB_DNS_NAME_MAX, prof.dns.excluded[i], _TRUNCATE);
+        for (int i = 0; i < prof.dns.resolver_count; i++) strncpy_s(dp.resolvers[i], PB_DNS_NAME_MAX, prof.dns.resolvers[i], _TRUNCATE);
+        g_SetDNSPolicy(&dp);
+        printf("  DNS policy    : %s, %d excluded name(s), %d resolver(s)\n",
+               prof.dns.mode == PB_DNS_MODE_LOCAL ? "local" : (prof.dns.mode == PB_DNS_MODE_REMOTE ? "remote" : "system"),
+               prof.dns.excluded_count, prof.dns.resolver_count);
+    }
 
     // ── Add proxy configs, map profile IDs to DLL-assigned IDs ───────────────
     typedef struct { uint32_t profile_id; uint32_t dll_id; } IdMap;

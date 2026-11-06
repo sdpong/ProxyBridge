@@ -661,28 +661,54 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
         return 0;
     }
 
+    // What the proxy server is told about the destination. The DNS policy wins over
+    // the per-proxy setting: a name the policy excludes never reaches a proxy server,
+    // and in remote mode the proxy server resolves the name itself.
+    char dns_name[256];
+    BOOL have_name = is_ipv6
+        ? (dns_cache_lookup_v6(dest_ip6, dns_name, sizeof(dns_name)) && dns_name[0] != '\0')
+        : (dns_cache_lookup(dest_ip, dns_name, sizeof(dns_name)) && dns_name[0] != '\0');
+    int policy_mode = have_name ? dns_policy_addressing(dns_name) : PB_DNS_ADDR_ADDRESS;
+    BOOL send_name = have_name &&
+        (policy_mode == PB_DNS_ADDR_HOSTNAME ||
+         (policy_mode == PB_DNS_ADDR_DEFAULT && proxy->send_domain_to_proxy));
+
+    UINT32 target_ip = dest_ip;
+    if (!is_ipv6 && have_name && policy_mode == PB_DNS_ADDR_ADDRESS && !dns_policy_is_excluded(dns_name))
+    {
+        // Local mode: the engine asks the resolver the policy chose which address
+        // the proxy server should connect to, so the proxy lands on the address
+        // that resolver believes in and not on the one the application's own
+        // resolver produced.
+        UINT32 resolved = 0;
+        if (dns_policy_resolve_for_proxy(dns_name, &resolved)) target_ip = resolved;
+    }
+
+    // The HTTP handshake reads the decision from here, because it looks the name
+    // up itself and the policy may overrule what the per-proxy setting says.
+    g_tl_dns_mode = policy_mode;
+    g_tl_dns_name = send_name ? dns_name : NULL;
+
     if (proxy->type == PROXY_TYPE_SOCKS5)
     {
         int rc;
-        char cached_domain[256];
-        // Per-config: only hand the hostname to the proxy (socks5h) when this config
-        // opts in; otherwise send the locally-resolved IP (socks5).
         if (is_ipv6)
         {
-            if (proxy->send_domain_to_proxy && dns_cache_lookup_v6(dest_ip6, cached_domain, sizeof(cached_domain)))
-                rc = socks5_connect_domain(socks_sock, cached_domain, dest_port, proxy);
+            if (send_name)
+                rc = socks5_connect_domain(socks_sock, dns_name, dest_port, proxy);
             else
                 rc = socks5_connect_v6(socks_sock, dest_ip6, dest_port, proxy);
         }
         else
         {
-            if (proxy->send_domain_to_proxy && dns_cache_lookup(dest_ip, cached_domain, sizeof(cached_domain)))
-                rc = socks5_connect_domain(socks_sock, cached_domain, dest_port, proxy);
+            if (send_name)
+                rc = socks5_connect_domain(socks_sock, dns_name, dest_port, proxy);
             else
-                rc = socks5_connect(socks_sock, dest_ip, dest_port, proxy);
+                rc = socks5_connect(socks_sock, target_ip, dest_port, proxy);
         }
         if (rc != 0)
         {
+            g_tl_dns_mode = PB_DNS_ADDR_DEFAULT; g_tl_dns_name = NULL;
             reset_close(client_sock);
             closesocket(socks_sock);
             return 0;
@@ -691,13 +717,13 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
     else if (proxy->type == PROXY_TYPE_SOCKS4)
     {
         // SOCKS4 has no IPv6 and no way to ask for a name unless it is SOCKS4a,
-        // so a name is sent when the config opts in and the local address otherwise
+        // so a name is sent when the policy or the config asks for it and the
+        // local address otherwise
         int rc;
-        char cached_domain[256];
-        if (!is_ipv6 && proxy->send_domain_to_proxy && dns_cache_lookup(dest_ip, cached_domain, sizeof(cached_domain)))
-            rc = socks4_connect_name(socks_sock, cached_domain, dest_port, proxy);
+        if (send_name)
+            rc = socks4_connect_name(socks_sock, dns_name, dest_port, proxy);
         else if (!is_ipv6)
-            rc = socks4_connect(socks_sock, dest_ip, dest_port, proxy);
+            rc = socks4_connect(socks_sock, target_ip, dest_port, proxy);
         else
         {
             log_message("[RELAY] SOCKS4 cannot carry an IPv6 destination (%s)", proxy->host);
@@ -705,6 +731,7 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
         }
         if (rc != 0)
         {
+            g_tl_dns_mode = PB_DNS_ADDR_DEFAULT; g_tl_dns_name = NULL;
             reset_close(client_sock);
             closesocket(socks_sock);
             return 0;
@@ -714,14 +741,17 @@ static DWORD WINAPI connection_handler_impl(LPVOID arg)
     {
         int rc = is_ipv6
             ? http_connect_v6(socks_sock, dest_ip6, dest_port, proxy)
-            : http_connect(socks_sock, dest_ip, dest_port, proxy);
+            : http_connect(socks_sock, target_ip, dest_port, proxy);
         if (rc != 0)
         {
+            g_tl_dns_mode = PB_DNS_ADDR_DEFAULT; g_tl_dns_name = NULL;
             reset_close(client_sock);
             closesocket(socks_sock);
             return 0;
         }
     }
+    g_tl_dns_mode = PB_DNS_ADDR_DEFAULT;
+    g_tl_dns_name = NULL;
 
     // Disable timeout for data transfer phase
     DWORD zero_timeout = 0;

@@ -13,11 +13,22 @@ int http_connect_v6(SOCKET s, const UINT8 dest_ip6[16], UINT16 dest_port, const 
     char addr_str[64];
     inet_ntop(AF_INET6, dest_ip6, addr_str, sizeof(addr_str));
 
-    // Use the cached hostname only if this config opts to let the proxy resolve DNS.
+    // What the proxy server is told about the destination. The DNS policy wins
+    // over the per-proxy setting, so a name it excludes never leaves the machine
+    // and in remote mode the proxy server resolves the name itself.
     char cached_domain[256];
     const char *host_part;
     char host_buf[270];  // big enough for [ipv6]:port or domain
-    if (cfg->send_domain_to_proxy && dns_cache_lookup_v6(dest_ip6, cached_domain, sizeof(cached_domain)))
+    if (g_tl_dns_mode == PB_DNS_ADDR_HOSTNAME && g_tl_dns_name && g_tl_dns_name[0])
+    {
+        host_part = g_tl_dns_name;
+    }
+    else if (g_tl_dns_mode == PB_DNS_ADDR_ADDRESS)
+    {
+        snprintf(host_buf, sizeof(host_buf), "[%s]", addr_str);
+        host_part = host_buf;
+    }
+    else if (cfg->send_domain_to_proxy && dns_cache_lookup_v6(dest_ip6, cached_domain, sizeof(cached_domain)))
     {
         host_part = cached_domain;
         strncpy_s(host_buf, sizeof(host_buf), cached_domain, _TRUNCATE);
@@ -66,11 +77,22 @@ int http_connect(SOCKET s, UINT32 dest_ip, UINT16 dest_port, const PROXY_CONFIG 
     int status_code;
     BOOL use_auth = (cfg != NULL && cfg->username[0] != '\0');
 
-    // Use the cached hostname only if this config opts to let the proxy resolve DNS.
+    // What the proxy server is told about the destination. The DNS policy wins
+    // over the per-proxy setting, so a name it excludes never leaves the machine
+    // and in remote mode the proxy server resolves the name itself.
     char cached_domain[256];
     char ip_str[32];
     const char *host_part;
-    if (cfg->send_domain_to_proxy && dns_cache_lookup(dest_ip, cached_domain, sizeof(cached_domain)))
+    if (g_tl_dns_mode == PB_DNS_ADDR_HOSTNAME && g_tl_dns_name && g_tl_dns_name[0])
+    {
+        host_part = g_tl_dns_name;
+    }
+    else if (g_tl_dns_mode == PB_DNS_ADDR_ADDRESS)
+    {
+        format_ip_address(dest_ip, ip_str, sizeof(ip_str));
+        host_part = ip_str;
+    }
+    else if (cfg->send_domain_to_proxy && dns_cache_lookup(dest_ip, cached_domain, sizeof(cached_domain)))
     {
         host_part = cached_domain;
     }

@@ -42,6 +42,10 @@ enum {
     S_UPD_DONTASK, S_UPD_LATEST, S_UPD_ERR, S_UPD_DLING, S_UPD_DLFAIL,
     S_L_NAME, S_COL_NAME, S_CHK_SENDDOMAIN,
     S_M_ZOOM_IN, S_M_ZOOM_OUT, S_M_ZOOM_RESET,
+    S_M_DNS, S_DLG_DNS, S_L_DNSMODE, S_DNS_SYS, S_DNS_LOCAL, S_DNS_REMOTE,
+    S_DNS_HINT_SYS, S_DNS_HINT_LOCAL, S_DNS_HINT_REMOTE,
+    S_L_DNSEXCL, S_DNS_EXCLHINT, S_L_DNSRES, S_DNS_RESHINT,
+    S_DNS_AUTODETECT, S_DNS_LEAK, S_DNS_SAVED,
     S_COUNT
 };
 
@@ -231,6 +235,27 @@ static const wchar_t* const g_strings[S_COUNT][2] = {
     /* S_M_ZOOM_IN         */ { L"Increase Text Size	Ctrl++", L"放大文字	Ctrl++" },
     /* S_M_ZOOM_OUT        */ { L"Decrease Text Size	Ctrl+-", L"缩小文字	Ctrl+-" },
     /* S_M_ZOOM_RESET      */ { L"Reset Text Size	Ctrl+0", L"重置文字大小	Ctrl+0" },
+    /* S_M_DNS             */ { L"D&NS Settings...", L"DNS 设置(&N)..." },
+    /* S_DLG_DNS           */ { L"DNS Settings", L"DNS 设置" },
+    /* S_L_DNSMODE         */ { L"Resolve names:", L"解析方式:" },
+    /* S_DNS_SYS           */ { L"System resolver", L"系统解析器" },
+    /* S_DNS_LOCAL         */ { L"Local resolver", L"本地解析器" },
+    /* S_DNS_REMOTE        */ { L"Proxy resolves the name", L"由代理解析名称" },
+    /* S_DNS_HINT_SYS      */ { L"The system's resolver answers. The proxy server gets the address, unless that proxy is set to resolve names itself.",
+                                 L"由系统解析器应答。代理服务器收到地址，除非该代理被设置为自行解析名称。" },
+    /* S_DNS_HINT_LOCAL    */ { L"A resolver on this machine answers and the proxy server gets the address. The list below decides which resolver is asked.",
+                                 L"由本机的解析器应答，代理服务器收到地址。下面列表决定询问哪个解析器。" },
+    /* S_DNS_HINT_REMOTE   */ { L"The proxy server resolves the name. The local resolver's answer is only a bootstrap, so the proxy server sees the real name.",
+                                 L"由代理服务器解析名称。本地解析器的应答仅作引导，因此代理服务器看到的是真实名称。" },
+    /* S_L_DNSEXCL         */ { L"Excluded names:", L"排除的名称:" },
+    /* S_DNS_EXCLHINT      */ { L"One name per line. 'example.com' matches that name, '*.example.com' matches everything below it, '*' matches everything. An excluded name never reaches a proxy server.",
+                                 L"每行一个名称。'example.com' 只匹配该名称，'*.example.com' 匹配其下全部，'*' 匹配全部。被排除的名称永远不会到达代理服务器。" },
+    /* S_L_DNSRES          */ { L"Resolvers:", L"解析器:" },
+    /* S_DNS_RESHINT       */ { L"One resolver per line, with an optional port: 1.1.1.1 or 1.1.1.1:5353.",
+                                 L"每行一个解析器，可带端口：1.1.1.1 或 1.1.1.1:5353。" },
+    /* S_DNS_AUTODETECT    */ { L"Use the resolver the system uses when the list above is empty", L"上面的列表为空时，使用系统所用的解析器" },
+    /* S_DNS_LEAK          */ { L"Never let the local resolver answer (the proxy server resolves the name)", L"绝不让本地解析器应答（由代理服务器解析名称）" },
+    /* S_DNS_SAVED         */ { L"The DNS policy was saved.", L"DNS 策略已保存。" },
 };
 
 static const wchar_t* T(int id) { return g_strings[id][g_lang ? 1 : 0]; }

@@ -1444,4 +1444,134 @@ INT_PTR CALLBACK AboutDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
     return FALSE;
 }
 
+// ---- the DNS policy ----------------------------------------------------
+
+// Writes a list of names into a multi-line edit, one per line.
+static void DnsFillList(HWND ed, const wchar_t (*items)[PB_DNS_NAME_MAX], int count)
+{
+    size_t cap = (size_t)(count + 1) * (PB_DNS_NAME_MAX + 2);
+    wchar_t* buf = (wchar_t*)malloc(cap * sizeof(wchar_t));
+    if (!buf) return;
+    size_t o = 0;
+    for (int i = 0; i < count; i++)
+    {
+        size_t l = wcslen(items[i]);
+        if (l) { memcpy(buf + o, items[i], l * sizeof(wchar_t)); o += l; }
+        buf[o++] = L'\r'; buf[o++] = L'\n';
+    }
+    buf[o] = 0;
+    SetWindowTextW(ed, buf);
+    free(buf);
+}
+
+// Reads a multi-line edit into a list of names, one per line. Blank lines and
+// the blanks around an entry are dropped.
+static int DnsReadList(HWND ed, wchar_t (*out)[PB_DNS_NAME_MAX], int max)
+{
+    int len = GetWindowTextLengthW(ed);
+    if (len <= 0) return 0;
+    wchar_t* buf = (wchar_t*)malloc(((size_t)len + 1) * sizeof(wchar_t));
+    if (!buf) return 0;
+    GetWindowTextW(ed, buf, len + 1);
+
+    int n = 0;
+    wchar_t* p = buf;
+    while (*p && n < max)
+    {
+        wchar_t* e = p;
+        while (*e && *e != L'\r' && *e != L'\n') e++;
+        wchar_t* next = e;
+        if (*next == L'\r') next++;
+        if (*next == L'\n') next++;
+
+        wchar_t* end = e;
+        while (end > p && (end[-1] == L' ' || end[-1] == L'\t')) end--;
+        *end = 0;
+        wchar_t* s = p;
+        while (*s == L' ' || *s == L'\t') s++;
+        if (*s && wcslen(s) < PB_DNS_NAME_MAX)
+        {
+            lstrcpynW(out[n], s, PB_DNS_NAME_MAX);
+            n++;
+        }
+        p = next;
+    }
+    free(buf);
+    return n;
+}
+
+// The hint under the mode box explains what the chosen mode means.
+static void DnsUpdateHint(HWND dlg)
+{
+    int sel = (int)SendDlgItemMessageW(dlg, IDC_DNS_MODE, CB_GETCURSEL, 0, 0);
+    const wchar_t* hint = T(S_DNS_HINT_SYS);
+    if (sel == 1)      hint = T(S_DNS_HINT_LOCAL);
+    else if (sel == 2) hint = T(S_DNS_HINT_REMOTE);
+    SetDlgItemTextW(dlg, IDC_DNS_HINT, hint);
+}
+
+INT_PTR CALLBACK DnsSettingsDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    (void)lp;
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+    {
+        SetWindowTextW(dlg, T(S_DLG_DNS));
+        SetDlgItemTextW(dlg, IDC_DNS_L_MODE,     T(S_L_DNSMODE));
+        SetDlgItemTextW(dlg, IDC_DNS_L_EXCL,     T(S_L_DNSEXCL));
+        SetDlgItemTextW(dlg, IDC_DNS_L_RES,      T(S_L_DNSRES));
+        SetDlgItemTextW(dlg, IDC_DNS_EXCLHINT,   T(S_DNS_EXCLHINT));
+        SetDlgItemTextW(dlg, IDC_DNS_RESHINT,    T(S_DNS_RESHINT));
+        SetDlgItemTextW(dlg, IDC_DNS_AUTODETECT, T(S_DNS_AUTODETECT));
+        SetDlgItemTextW(dlg, IDC_DNS_LEAK,       T(S_DNS_LEAK));
+        SetDlgItemTextW(dlg, IDOK,               T(S_BTN_OK));
+        SetDlgItemTextW(dlg, IDCANCEL,           T(S_BTN_CANCEL));
+
+        SendDlgItemMessageW(dlg, IDC_DNS_MODE, CB_ADDSTRING, 0, (LPARAM)T(S_DNS_SYS));
+        SendDlgItemMessageW(dlg, IDC_DNS_MODE, CB_ADDSTRING, 0, (LPARAM)T(S_DNS_LOCAL));
+        SendDlgItemMessageW(dlg, IDC_DNS_MODE, CB_ADDSTRING, 0, (LPARAM)T(S_DNS_REMOTE));
+        int sel = g_profile.dns.mode;
+        if (sel < 0 || sel > 2) sel = 0;
+        SendDlgItemMessageW(dlg, IDC_DNS_MODE, CB_SETCURSEL, (WPARAM)sel, 0);
+        DnsFillList(GetDlgItem(dlg, IDC_DNS_EXCL), g_profile.dns.excluded, g_profile.dns.excludedCount);
+        DnsFillList(GetDlgItem(dlg, IDC_DNS_RES),  g_profile.dns.resolvers, g_profile.dns.resolverCount);
+        CheckDlgButton(dlg, IDC_DNS_AUTODETECT, g_profile.dns.autoDetectUpstream ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(dlg, IDC_DNS_LEAK,       g_profile.dns.leakProtection ? BST_CHECKED : BST_UNCHECKED);
+
+        InitDarkMode(dlg);
+        DnsUpdateHint(dlg);
+        return TRUE;
+    }
+    PB_DARK_CTLCOLORS;
+    case WM_COMMAND:
+    {
+        switch (LOWORD(wp))
+        {
+        case IDC_DNS_MODE:
+            if (HIWORD(wp) == CBN_SELCHANGE) { DnsUpdateHint(dlg); return TRUE; }
+            break;
+        case IDOK:
+        {
+            int sel = (int)SendDlgItemMessageW(dlg, IDC_DNS_MODE, CB_GETCURSEL, 0, 0);
+            g_profile.dns.mode = (sel >= 0 && sel <= 2) ? sel : PB_DNS_MODE_SYSTEM;
+            g_profile.dns.excludedCount = DnsReadList(GetDlgItem(dlg, IDC_DNS_EXCL), g_profile.dns.excluded, PB_DNS_MAX_EXCLUDED);
+            g_profile.dns.resolverCount = DnsReadList(GetDlgItem(dlg, IDC_DNS_RES),  g_profile.dns.resolvers, PB_DNS_MAX_RESOLVERS);
+            g_profile.dns.autoDetectUpstream = IsDlgButtonChecked(dlg, IDC_DNS_AUTODETECT) == BST_CHECKED ? 1 : 0;
+            g_profile.dns.leakProtection     = IsDlgButtonChecked(dlg, IDC_DNS_LEAK) == BST_CHECKED ? 1 : 0;
+            ApplyDnsPolicy();
+            SaveActive();
+            EndDialog(dlg, 1);
+            return TRUE;
+        }
+        case IDCANCEL:
+            EndDialog(dlg, 0);
+            return TRUE;
+        }
+        return FALSE;
+    }
+    }
+    return FALSE;
+}
+
 #endif // PB_UI_DIALOGS_H

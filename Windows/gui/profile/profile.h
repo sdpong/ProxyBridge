@@ -47,6 +47,30 @@ typedef struct {
     wchar_t mode[16], proc[256], ip[64], port[16], proto[8], action[16];
 } PBFilter;
 
+// The DNS policy, as the profile keeps it. It decides what happens to a name before it
+// may reach a proxy server: which names are excluded, which resolver answers, and whether
+// the proxy server or the local resolver resolves the name.
+// The numbers are the ones the engine uses; api\pb_api.h carries the same ones for the
+// GUI, so they are only defined once (here).
+#ifndef PB_DNS_MODE_SYSTEM
+#define PB_DNS_MODE_SYSTEM 0
+#define PB_DNS_MODE_LOCAL  1
+#define PB_DNS_MODE_REMOTE 2
+#define PB_DNS_MAX_EXCLUDED 64
+#define PB_DNS_MAX_RESOLVERS 16
+#define PB_DNS_NAME_MAX 256
+#endif
+
+typedef struct {
+    int     mode;                                       // PB_DNS_MODE_*
+    int     leakProtection;                             // 1 = the proxy server resolves the name
+    int     autoDetectUpstream;                         // 1 = fall back to the resolver the system uses
+    wchar_t excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+    int     excludedCount;
+    wchar_t resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+    int     resolverCount;
+} PBDnsPolicyProfile;
+
 // Stable ids for proxy configs. These are owned by the profile and are NOT the id the engine returns
 // from AddProxyConfig (that one is only valid for the current engine session and is remapped on load).
 // Never reused, so a rule can never silently start pointing at a proxy added after its own was deleted.
@@ -64,6 +88,7 @@ typedef struct PBProfile {
     PBConfig cfg[PB_MAX_CFG];   int cfgCount;
     PBRule   rule[PB_MAX_RULE]; int ruleCount;
     PBFilter filter[PB_MAX_FILTER]; int filterCount;
+    PBDnsPolicyProfile dns;    // the DNS policy
 } PBProfile;
 
 // Target Hosts list helpers. Line breaks only exist in the editor for readability:

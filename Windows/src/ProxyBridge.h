@@ -93,6 +93,27 @@ PROXYBRIDGE_API void ProxyBridge_SetLogCallback(LogCallback callback);
 PROXYBRIDGE_API void ProxyBridge_SetConnectionCallback(ConnectionCallback callback);
 PROXYBRIDGE_API void ProxyBridge_SetTrafficLoggingEnabled(BOOL enable);
 PROXYBRIDGE_API void ProxyBridge_ClearConnectionLogs(void);  // Clear connection history from memory
+
+// The DNS policy decides what happens to a name before it may reach a proxy server.
+// The same settings mean the same thing in the macOS app.
+#define PB_DNS_MODE_SYSTEM 0   // the system's resolver answers
+#define PB_DNS_MODE_LOCAL  1   // a resolver on this machine answers, the proxy gets the address
+#define PB_DNS_MODE_REMOTE 2   // the proxy server resolves the name, the local answer is only a bootstrap
+#define PB_DNS_MAX_EXCLUDED 64
+#define PB_DNS_MAX_RESOLVERS 16
+#define PB_DNS_NAME_MAX 256
+typedef struct {
+    UINT32 mode;                            // PB_DNS_MODE_*
+    UINT32 leakProtection;                  // 1 = the proxy server resolves the name, the local answer is only a bootstrap
+    UINT32 autoDetectUpstream;              // 1 = fall back to the resolver the system uses
+    UINT32 excludedCount;                   // names that must never become a proxy destination
+    UINT32 resolverCount;                   // the resolvers to ask, in order
+    char   excluded[PB_DNS_MAX_EXCLUDED][PB_DNS_NAME_MAX];
+    char   resolvers[PB_DNS_MAX_RESOLVERS][PB_DNS_NAME_MAX];
+} PBDnsPolicy;
+PROXYBRIDGE_API BOOL ProxyBridge_SetDNSPolicy(const PBDnsPolicy* policy);
+PROXYBRIDGE_API BOOL ProxyBridge_GetDNSPolicy(PBDnsPolicy* policy);
+
 PROXYBRIDGE_API BOOL ProxyBridge_Start(void);
 PROXYBRIDGE_API BOOL ProxyBridge_Stop(void);
 #ifdef __cplusplus

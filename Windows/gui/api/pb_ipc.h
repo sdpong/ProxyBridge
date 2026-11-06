@@ -168,6 +168,47 @@ static UINT32 IpcGetFlows(PBFlow *out, UINT32 max)
     return i == n ? n : 0;
 }
 static void IpcSetEnabled(BOOL v)     { PBIPC_BEGIN(PBOP_SET_ENABLED);     PbW_U32(&_w, v != 0); PbIpcCall(_b, _w.len); }
+
+// The DNS policy. The lists travel as strings, so the message stays small no matter
+// how many names and resolvers the user configured.
+static BOOL IpcSetDNSPolicy(const PBDnsPolicy* p)
+{
+    if (p == NULL) return FALSE;
+    PBIPC_BEGIN(PBOP_SET_DNS_POLICY);
+    PbW_U32(&_w, p->mode);
+    PbW_U32(&_w, p->leakProtection);
+    PbW_U32(&_w, p->autoDetectUpstream);
+    UINT32 nEx = p->excludedCount < PB_DNS_MAX_EXCLUDED ? p->excludedCount : PB_DNS_MAX_EXCLUDED;
+    PbW_U32(&_w, nEx);
+    for (UINT32 i = 0; i < nEx; i++) PbW_Str(&_w, p->excluded[i]);
+    UINT32 nRs = p->resolverCount < PB_DNS_MAX_RESOLVERS ? p->resolverCount : PB_DNS_MAX_RESOLVERS;
+    PbW_U32(&_w, nRs);
+    for (UINT32 i = 0; i < nRs; i++) PbW_Str(&_w, p->resolvers[i]);
+    PBIPC_END();
+}
+static BOOL IpcGetDNSPolicy(PBDnsPolicy* p)
+{
+    if (p == NULL) return FALSE;
+    ZeroMemory(p, sizeof(*p));
+    BYTE req[16]; PbW w; PbW_Init(&w, req, sizeof(req)); PbW_U32(&w, PBOP_GET_DNS_POLICY);
+    static BYTE rsp[PB_MSG_MAX];                     // one poller at a time (g_ipcLock is taken inside the exchange)
+    DWORD got = 0;
+    if (!PbIpcExchange(req, w.len, rsp, sizeof(rsp), &got)) return FALSE;
+    PbR r; PbR_Init(&r, rsp, got);
+    p->mode = PbR_U32(&r);
+    p->leakProtection = PbR_U32(&r);
+    p->autoDetectUpstream = PbR_U32(&r);
+    UINT32 nEx = PbR_U32(&r);
+    if (!r.ok || nEx > PB_DNS_MAX_EXCLUDED) return FALSE;
+    for (UINT32 i = 0; i < nEx; i++) PbR_Str(&r, p->excluded[i], sizeof(p->excluded[i]), NULL);
+    UINT32 nRs = PbR_U32(&r);
+    if (!r.ok || nRs > PB_DNS_MAX_RESOLVERS) return FALSE;
+    for (UINT32 i = 0; i < nRs; i++) PbR_Str(&r, p->resolvers[i], sizeof(p->resolvers[i]), NULL);
+    if (!r.ok) return FALSE;
+    p->excludedCount = nEx;
+    p->resolverCount = nRs;
+    return TRUE;
+}
 // Terminates one live connection, addressed by the id PBOP_GET_FLOWS reports.
 // The id travels as two u32 (low half first) because the wire format has no 64-bit integer.
 static BOOL IpcKillFlow(UINT64 id)
@@ -296,6 +337,8 @@ static int PB_LoadService(PBApi* api)
     api->ClearConnectionLogs = IpcClearConnLogs;   api->Start = IpcStart; api->Stop = IpcStop;
     api->GetFlows = IpcGetFlows;
     api->KillFlow = IpcKillFlow;
+    api->SetDNSPolicy = IpcSetDNSPolicy;
+    api->GetDNSPolicy = IpcGetDNSPolicy;
     return PB_IPC_OK;
 }
 

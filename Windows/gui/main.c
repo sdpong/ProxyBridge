@@ -187,6 +187,7 @@ INT_PTR CALLBACK ServersDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK ServerEditDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK RulesDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK RuleEditDlgProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK DnsSettingsDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK FiltersDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK FilterEditDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK NameDlgProc(HWND, UINT, WPARAM, LPARAM);
@@ -287,6 +288,22 @@ static void ApplyRules(void)
     }
 }
 
+// The DNS policy decides what a proxy server is told about a name. It lives in the
+// profile, so switching profiles switches the policy with it.
+static void ApplyDnsPolicy(void)
+{
+    if (g_api.SetDNSPolicy == NULL) return;   // an older core without the policy
+    PBDnsPolicy p; ZeroMemory(&p, sizeof(p));
+    p.mode = (UINT32)g_profile.dns.mode;
+    p.leakProtection = g_profile.dns.leakProtection ? 1 : 0;
+    p.autoDetectUpstream = g_profile.dns.autoDetectUpstream ? 1 : 0;
+    p.excludedCount = (UINT32)g_profile.dns.excludedCount;
+    p.resolverCount = (UINT32)g_profile.dns.resolverCount;
+    for (int i = 0; i < g_profile.dns.excludedCount; i++) W2Ux(g_profile.dns.excluded[i], p.excluded[i], PB_DNS_NAME_MAX);
+    for (int i = 0; i < g_profile.dns.resolverCount; i++) W2Ux(g_profile.dns.resolvers[i], p.resolvers[i], PB_DNS_NAME_MAX);
+    g_api.SetDNSPolicy(&p);
+}
+
 // Add one rule to the engine, returning its (stable) native id. Enable state applied too.
 static UINT32 EngineAddRule(PBRule* r)
 {
@@ -333,6 +350,7 @@ static void SwitchToProfile(const wchar_t* name)
     g_api.SetLogEveryConnection(g_logEvery);
     ApplyConfigs();
     ApplyRules();
+    ApplyDnsPolicy();
     SyncMenuChecks(g_hMain);
     RebuildProfileMenu(g_hMain);
     UpdateTitle();
@@ -369,6 +387,7 @@ static void BuildMainMenu(HWND hwnd)
     AppendMenuW(proxy, MF_SEPARATOR, 0, NULL);
     AppendMenuW(proxy, MF_STRING, IDM_PROXY_SETTINGS, T(S_M_PROXY_SETTINGS));
     AppendMenuW(proxy, MF_STRING, IDM_PROXY_RULES,    T(S_M_PROXY_RULES));
+    AppendMenuW(proxy, MF_STRING, IDM_DNS_SETTINGS,    T(S_M_DNS));
     AppendMenuW(proxy, MF_STRING, IDM_LOG_FILTERS,    T(S_M_LOGFILTERS));
     AppendTopMenu(bar, proxy, T(S_M_PROXY));
 
@@ -934,6 +953,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case IDC_FLOWS_CLEAR:    FlowsClearClosed(); return 0;
         case IDM_PROXY_SETTINGS: DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_SERVERS), hwnd, ServersDlgProc); return 0;
         case IDM_PROXY_RULES:    DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_RULES),   hwnd, RulesDlgProc);   return 0;
+        case IDM_DNS_SETTINGS:  DialogBoxW(g_hInst, MAKEINTRESOURCEW(IDD_DNS),     hwnd, DnsSettingsDlgProc); return 0;
         case IDM_PROXY_ENABLE:
             g_proxyEnabled = !g_proxyEnabled;
             g_api.SetEnabled(g_proxyEnabled);
@@ -1238,6 +1258,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int show)
     g_api.SetLogCallback(PBLogCb);
     g_api.SetConnectionCallback(PBConnCb);
     ApplyConfigs();
+    ApplyDnsPolicy();
     g_started = g_api.Start();
     if (g_started) { ApplyRules(); LogStoreAdd(&g_actStore, T(S_STARTED)); }
     else LogStoreAdd(&g_actStore, T(S_STARTFAIL));
