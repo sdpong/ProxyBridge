@@ -22,6 +22,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     
     var tunnelSession: NETunnelProviderSession?
     private var logTimer: Timer?
+    // the live connections are polled on their own timer: they are not a log, they are what the
+    // user terminates a hanging connection from
+    private var flowTimer: Timer?
+    @Published private(set) var liveFlows: [LiveFlow] = []
     @Published private(set) var proxyConfigs: [ProxyConfig] = []
     @Published private(set) var profiles: [String] = []
     @Published private(set) var activeProfile: String = "Default"
@@ -30,6 +34,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // trim back to this when the cap is hit, so we don't shift on every entry
     private let trimToEntries = 400
     private let logPollingInterval = 1.0
+    private let flowPollingInterval = 1.0
     private let extensionIdentifier = "com.interceptsuite.ProxyBridge.extension"
     private let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -98,7 +103,22 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         let level: String
         let message: String
     }
-    
+
+    // A flow that is proxied right now. The extension reports the ones that are open, so the
+    // app can list them and terminate one that hangs.
+    struct LiveFlow: Identifiable {
+        let id: UInt64
+        let protocolName: String
+        let process: String
+        let destination: String
+        let port: Int
+        let proxy: String
+        let bytesUp: Int64
+        let bytesDown: Int64
+        let age: TimeInterval
+        let idle: TimeInterval
+    }
+
     // when every window is hidden or minimized there's no point polling logs
     private var isWindowVisible = true
 
@@ -133,12 +153,25 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         } else {
             stopLogPollingTimer()
         }
+        // the live connections are not a log, so they are polled whenever the tunnel runs
+        if tunnelSession != nil && isWindowVisible {
+            startFlowPollingTimer()
+        } else {
+            stopFlowPollingTimer()
+        }
     }
 
     private func stopLogPollingTimer() {
         DispatchQueue.main.async { [weak self] in
             self?.logTimer?.invalidate()
             self?.logTimer = nil
+        }
+    }
+
+    private func stopFlowPollingTimer() {
+        DispatchQueue.main.async { [weak self] in
+            self?.flowTimer?.invalidate()
+            self?.flowTimer = nil
         }
     }
     
@@ -708,10 +741,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     
     private func pollLogs() {
         guard let session = tunnelSession else { return }
-        
+
         let message = ["action": "getLogs"]
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
-        
+
         try? session.sendProviderMessage(data) { [weak self] response in
             guard let self = self,
                   let responseData = response,
@@ -735,6 +768,80 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 self.appendConnections(newConnections)
                 self.appendActivity(newActivity)
             }
+        }
+    }
+
+    private func startFlowPollingTimer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // already running, don't reset the cadence
+            guard self.flowTimer == nil else { return }
+            self.flowTimer = Timer.scheduledTimer(
+                withTimeInterval: self.flowPollingInterval,
+                repeats: true
+            ) { [weak self] _ in
+                self?.pollFlows()
+            }
+        }
+    }
+
+    // Asks the extension which flows are proxied right now. The list is replaced, not merged:
+    // a flow that is gone from the extension is gone.
+    private func pollFlows() {
+        guard let session = tunnelSession else { return }
+
+        let message = ["action": "getFlows"]
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+
+        try? session.sendProviderMessage(data) { [weak self] response in
+            guard let self = self,
+                  let responseData = response,
+                  let rows = try? JSONSerialization.jsonObject(with: responseData) as? [[String: Any]] else {
+                return
+            }
+
+            let flows = rows.compactMap { row -> LiveFlow? in
+                guard let id = (row["id"] as? NSNumber)?.uint64Value else { return nil }
+                return LiveFlow(
+                    id: id,
+                    protocolName: row["protocol"] as? String ?? "",
+                    process: row["process"] as? String ?? "",
+                    destination: row["destination"] as? String ?? "",
+                    port: (row["port"] as? NSNumber)?.intValue ?? 0,
+                    proxy: row["proxy"] as? String ?? "",
+                    bytesUp: (row["up"] as? NSNumber)?.int64Value ?? 0,
+                    bytesDown: (row["down"] as? NSNumber)?.int64Value ?? 0,
+                    age: (row["age"] as? NSNumber)?.doubleValue ?? 0,
+                    idle: (row["idle"] as? NSNumber)?.doubleValue ?? 0
+                )
+            }
+
+            DispatchQueue.main.async {
+                self.liveFlows = flows
+            }
+        }
+    }
+
+    // Terminates one live connection: the relay is torn down, so the application sees its
+    // connection die instead of waiting for a proxy that stopped answering.
+    func killFlow(id: UInt64) {
+        guard let session = tunnelSession else { return }
+
+        let message: [String: Any] = ["action": "killFlow", "id": id]
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+
+        try? session.sendProviderMessage(data) { [weak self] _ in
+            // the flow is gone, so pull a fresh list right away
+            DispatchQueue.main.async {
+                self?.pollFlows()
+            }
+        }
+    }
+
+    // Terminates every live connection of one process.
+    func killFlows(process: String) {
+        for flow in liveFlows where flow.process == process {
+            killFlow(id: flow.id)
         }
     }
 

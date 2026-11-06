@@ -559,6 +559,12 @@ class AppProxyProvider: NETransparentProxyProvider {
         for a in all {
             a.release()
         }
+        // nothing is proxied any more, so nothing is a live flow
+        liveFlows.removeAll()
+        liveMapLock.lock()
+        tcpFlowIds.removeAll()
+        flowDescriptors.removeAll()
+        liveMapLock.unlock()
         completionHandler()
     }
     
@@ -571,6 +577,9 @@ class AppProxyProvider: NETransparentProxyProvider {
         let displayName: String
         var loggedDestinations = Set<String>()  // dedupe connection logs, bounded
         var isTornDown = false
+        // the id of this association in the live flow list, so the app can terminate it
+        var liveFlowId: UInt64?
+        var liveDestination: String?
         private var lastActivity = Date()
         private let activityLock = NSLock()
 
@@ -610,6 +619,73 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
     private var udpAssociations: [NEAppProxyUDPFlow: UDPAssociation] = [:]
     private let udpLock = NSLock()
+
+    // ---- live flows ----
+    //
+    // The app lists the flows that are proxied right now and can terminate one of them. A flow is
+    // registered when its relay starts and dropped again when the relay tears down, so the list
+    // always shows the channels that are actually open.
+    private let liveFlows = LiveFlowRegistry()
+
+    // what the app shows for a flow. filled in before the handshake starts, because only then
+    // are the process, the destination and the proxy known.
+    private struct FlowDescriptor {
+        let process: String
+        let destination: String
+        let port: UInt16
+        let proxy: String
+    }
+
+    // proxy connection -> live flow id, so the relay can count its bytes and the teardown can
+    // find the entry again
+    private var tcpFlowIds: [ObjectIdentifier: UInt64] = [:]
+    // proxy connection -> what to show for it
+    private var flowDescriptors: [ObjectIdentifier: FlowDescriptor] = [:]
+    private let liveMapLock = NSLock()
+
+    private func setFlowDescriptor(_ descriptor: FlowDescriptor, for connection: NWTCPConnection) {
+        liveMapLock.lock()
+        flowDescriptors[ObjectIdentifier(connection)] = descriptor
+        liveMapLock.unlock()
+    }
+
+    private func takeFlowDescriptor(for connection: NWTCPConnection) -> FlowDescriptor? {
+        liveMapLock.lock(); defer { liveMapLock.unlock() }
+        return flowDescriptors.removeValue(forKey: ObjectIdentifier(connection))
+    }
+
+    private func setTCPFlowId(_ id: UInt64, for connection: NWTCPConnection) {
+        liveMapLock.lock()
+        tcpFlowIds[ObjectIdentifier(connection)] = id
+        liveMapLock.unlock()
+    }
+
+    private func peekTCPFlowId(for connection: NWTCPConnection) -> UInt64? {
+        liveMapLock.lock(); defer { liveMapLock.unlock() }
+        return tcpFlowIds[ObjectIdentifier(connection)]
+    }
+
+    private func takeTCPFlowId(for connection: NWTCPConnection) -> UInt64? {
+        liveMapLock.lock(); defer { liveMapLock.unlock() }
+        return tcpFlowIds.removeValue(forKey: ObjectIdentifier(connection))
+    }
+
+    // The relay is running, so the flow is a live connection: give it an id the app can address
+    // and remember which proxy connection it belongs to.
+    private func registerLiveTCPFlow(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection) {
+        guard let descriptor = takeFlowDescriptor(for: proxyConnection) else { return }
+        let id = liveFlows.register(proto: "TCP", process: descriptor.process, destination: descriptor.destination,
+                                     port: descriptor.port, proxy: descriptor.proxy) { [weak self] in
+            // the user terminated it: tear the relay down so the application sees the connection die
+            self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.terminated)
+        }
+        setTCPFlowId(id, for: proxyConnection)
+    }
+
+    private func noteFlowBytes(_ connection: NWTCPConnection, up: Int64, down: Int64) {
+        guard let id = peekTCPFlowId(for: connection) else { return }
+        liveFlows.note(id: id, up: up, down: down)
+    }
 
     // udp has no close signal we can rely on (quic flows come and go), so idle
     // associations are reaped here, otherwise each one pins a flow, a tcp
@@ -664,11 +740,14 @@ class AppProxyProvider: NETransparentProxyProvider {
         for key in expired.keys { pendingHandshakes.removeValue(forKey: key) }
         handshakeLock.unlock()
         for (_, entry) in expired {
-            entry.connection.cancel()
             // a tcp flow must fail its connect (see FlowFailure), udp flows keep the clean close
-            let reason: Error? = entry.flow is NEAppProxyTCPFlow ? FlowFailure.timedOut : nil
-            entry.flow.closeReadWithError(reason)
-            entry.flow.closeWriteWithError(reason)
+            if let tcpFlow = entry.flow as? NEAppProxyTCPFlow {
+                closeRelay(tcpFlow, entry.connection, error: FlowFailure.timedOut)
+            } else {
+                entry.connection.cancel()
+                entry.flow.closeReadWithError(nil)
+                entry.flow.closeWriteWithError(nil)
+            }
         }
     }
 
@@ -676,6 +755,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         connection.cancel()
         flow.closeReadWithError(error)
         flow.closeWriteWithError(error)
+        // the relay is gone, so the flow is no longer live
+        if let id = takeTCPFlowId(for: connection) { liveFlows.remove(id: id) }
+        // and whatever was remembered about it goes with it, so a later connection that happens to
+        // reuse the same address does not inherit the wrong process or destination
+        takeFlowDescriptor(for: connection)
     }
     
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -803,6 +887,35 @@ class AppProxyProvider: NETransparentProxyProvider {
             warnedKeys.removeAll()
             proxyLock.unlock()
             completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok"]))
+
+        case "getFlows":
+            // the flows that are proxied right now, so the app can show them and terminate one
+            let now = Date()
+            let flows: [[String: Any]] = liveFlows.snapshot().map { flow in
+                [
+                    "id": flow.id,
+                    "protocol": flow.proto,
+                    "process": flow.process,
+                    "destination": flow.destination,
+                    "port": Int(flow.port),
+                    "proxy": flow.proxy,
+                    "up": flow.bytesUp,
+                    "down": flow.bytesDown,
+                    "age": flow.ageSeconds(now: now),
+                    "idle": flow.idleSeconds(now: now)
+                ]
+            }
+            completionHandler?(try? JSONSerialization.data(withJSONObject: flows))
+
+        case "killFlow":
+            // terminate one live connection: the relay is torn down, so the application sees the
+            // connection die instead of waiting for a proxy that stopped answering
+            var killed = false
+            if let id = (message["id"] as? NSNumber)?.uint64Value {
+                killed = liveFlows.terminate(id: id)
+            }
+            completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok", "killed": killed]))
+
         default:
             completionHandler?(nil)
         }
@@ -882,7 +995,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                     return false
                 }
                 sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: proxyLabel(config))
-                proxyTCPFlow(flow, destination: destination, port: portNum, config: config)
+                proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, config: config)
                 return true
             }
         } else {
@@ -1229,6 +1342,14 @@ class AppProxyProvider: NETransparentProxyProvider {
         // if the app reused a flow, drop the stale association first
         existing?.release()
 
+        // the udp channel is live: register it so the app can list and terminate it. the
+        // destination is only known once the first datagram arrives.
+        let liveId = liveFlows.register(proto: "UDP", process: displayName, destination: "unknown", port: 0,
+                                        proxy: "SOCKS5 \(relayHost):\(relayPort)") { [weak self] in
+            self?.teardownUDP(clientFlow)
+        }
+        association.liveFlowId = liveId
+
         readAndForwardClientUDP(association)
         readAndForwardRelayUDP(association)
         // note: we deliberately don't read the control connection to detect close.
@@ -1249,6 +1370,8 @@ class AppProxyProvider: NETransparentProxyProvider {
         assoc.release()
         flow.closeReadWithError(nil)
         flow.closeWriteWithError(nil)
+        // the channel is gone, so it is no longer a live flow
+        if let liveId = assoc.liveFlowId { liveFlows.remove(id: liveId) }
     }
 
     private func readAndForwardClientUDP(_ association: UDPAssociation) {
@@ -1279,6 +1402,13 @@ class AppProxyProvider: NETransparentProxyProvider {
                 let destHost = nwHost.hostname
                 let destPort = UInt16(nwHost.port) ?? 0
                 guard destPort != 0 else { continue }
+
+                // a udp flow has no destination until its first datagram arrives, and it can
+                // change afterwards, so the live flow list follows the last one seen
+                if let liveId = association.liveFlowId, association.liveDestination != destHost {
+                    association.liveDestination = destHost
+                    self.liveFlows.setDestination(destHost, for: liveId)
+                }
 
                 // log each distinct destination once, cap the set so it can't grow forever
                 if !association.loggedDestinations.contains(destHost) {
@@ -1441,7 +1571,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     // how long a DNS answer stays good enough to name a destination for the proxy
     private static let dnsNameMaxAge: TimeInterval = 300
 
-    private func proxyTCPFlow(_ flow: NEAppProxyTCPFlow, destination originalDestination: String, port: UInt16, config: StoredProxyConfig) {
+    private func proxyTCPFlow(_ flow: NEAppProxyTCPFlow, destination originalDestination: String, displayDestination: String, port: UInt16, process: String, config: StoredProxyConfig) {
         // "let proxy resolve DNS", per proxy like the windows app: when the app
         // resolved this address through our DNS proxy, ask the proxy for the name
         // (socks5 domain address / CONNECT host:port) and fall back to the ip
@@ -1454,6 +1584,8 @@ class AppProxyProvider: NETransparentProxyProvider {
         let proxyEndpoint = NWHostEndpoint(hostname: config.host, port: String(config.port))
         let proxyConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
         armHandshakeTimeout(flow: flow, connection: proxyConnection)
+        // remember what this flow is, so the relay can register it as a live connection later
+        setFlowDescriptor(FlowDescriptor(process: process, destination: displayDestination, port: port, proxy: proxyLabel(config)), for: proxyConnection)
 
         switch config.type.lowercased() {
         case "socks5":
@@ -1479,9 +1611,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         proxyConnection.write(greetingData) { [weak self] error in
             if let error = error {
                 self?.log("SOCKS5 greeting write failed: \(error.localizedDescription)", level: "ERROR")
-                clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                proxyConnection.cancel()
+                self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                 return
             }
             
@@ -1490,17 +1620,13 @@ class AppProxyProvider: NETransparentProxyProvider {
                 
                 if let error = error {
                     self.log("SOCKS5 greeting response failed: \(error.localizedDescription)", level: "ERROR")
-                    clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                    clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                    proxyConnection.cancel()
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
                 
                 guard let data = data, data.count == 2 else {
                     self.log("SOCKS5 invalid greeting response", level: "ERROR")
-                    clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                    clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                    proxyConnection.cancel()
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
                 
@@ -1509,9 +1635,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                 
                 if version != 0x05 {
                     self.log("SOCKS5 invalid version: \(version)", level: "ERROR")
-                    clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                    clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                    proxyConnection.cancel()
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
                 
@@ -1521,9 +1645,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                     self.sendSOCKS5Auth(clientFlow: clientFlow, proxyConnection: proxyConnection, destination: destination, port: port, username: username ?? "", password: password ?? "")
                 } else {
                     self.log("SOCKS5 no acceptable auth method: \(method)", level: "ERROR")
-                    clientFlow.closeReadWithError(FlowFailure.refused)
-                    clientFlow.closeWriteWithError(FlowFailure.refused)
-                    proxyConnection.cancel()
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
                 }
             }
         }
@@ -1546,9 +1668,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         proxyConnection.write(authData) { [weak self] error in
             if let error = error {
                 self?.log("SOCKS5 auth write failed: \(error.localizedDescription)", level: "ERROR")
-                clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                proxyConnection.cancel()
+                self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                 return
             }
             
@@ -1557,17 +1677,13 @@ class AppProxyProvider: NETransparentProxyProvider {
                 
                 if let error = error {
                     self.log("SOCKS5 auth response failed: \(error.localizedDescription)", level: "ERROR")
-                    clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                    clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                    proxyConnection.cancel()
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
                 
                 guard let data = data, data.count == 2, data[1] == 0x00 else {
                     self.log("SOCKS5 auth failed", level: "ERROR")
-                    clientFlow.closeReadWithError(FlowFailure.refused)
-                    clientFlow.closeWriteWithError(FlowFailure.refused)
-                    proxyConnection.cancel()
+                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
                     return
                 }
                 
@@ -1606,9 +1722,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         proxyConnection.write(request) { [weak self] error in
             if let error = error {
                 self?.log("SOCKS5 connect write failed: \(error.localizedDescription)", level: "ERROR")
-                clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                proxyConnection.cancel()
+                self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                 return
             }
             
@@ -1646,18 +1760,14 @@ class AppProxyProvider: NETransparentProxyProvider {
         
         guard let requestData = request.data(using: .utf8) else {
             log("HTTP CONNECT request encoding failed", level: "ERROR")
-            clientFlow.closeReadWithError(FlowFailure.refused)
-            clientFlow.closeWriteWithError(FlowFailure.refused)
-            proxyConnection.cancel()
+            closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
             return
         }
         
         proxyConnection.write(requestData) { [weak self] error in
             if let error = error {
                 self?.log("HTTP CONNECT write failed: \(error.localizedDescription)", level: "ERROR")
-                clientFlow.closeReadWithError(FlowFailure.proxyUnreachable)
-                clientFlow.closeWriteWithError(FlowFailure.proxyUnreachable)
-                proxyConnection.cancel()
+                self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                 return
             }
             
@@ -1677,6 +1787,8 @@ class AppProxyProvider: NETransparentProxyProvider {
     
     private func relayData(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, initialData: Data? = nil) {
         guard completeHandshake(proxyConnection) else { return }
+        // the channel is live now: register it so the app can list it and terminate it
+        registerLiveTCPFlow(clientFlow: clientFlow, proxyConnection: proxyConnection)
         clientFlow.open(withLocalEndpoint: nil) { [weak self] error in
             if let error = error {
                 self?.log("Failed to open client flow: \(error.localizedDescription)", level: "ERROR")
@@ -1733,6 +1845,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                     self?.log("Proxy write error: \(error.localizedDescription)", level: "ERROR")
                     self?.closeRelay(clientFlow, proxyConnection, error: error)
                 } else {
+                    self?.noteFlowBytes(proxyConnection, up: Int64(data.count), down: 0)
                     self?.relayClientToProxy(clientFlow: clientFlow, proxyConnection: proxyConnection)
                 }
             }
@@ -1760,6 +1873,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                     self?.log("Client write error: \(error.localizedDescription)", level: "ERROR")
                     self?.closeRelay(clientFlow, proxyConnection, error: error)
                 } else {
+                    self?.noteFlowBytes(proxyConnection, up: 0, down: Int64(data.count))
                     self?.relayProxyToClient(clientFlow: clientFlow, proxyConnection: proxyConnection)
                 }
             }

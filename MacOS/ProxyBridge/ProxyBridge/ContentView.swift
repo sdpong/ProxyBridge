@@ -6,7 +6,7 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var connectionSearchText = ""
     @State private var activitySearchText = ""
-    
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
@@ -17,7 +17,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 800, minHeight: 600)
     }
-    
+
     private var headerView: some View {
         HStack {
             Text("ProxyBridge")
@@ -28,30 +28,40 @@ struct ContentView: View {
         .frame(height: 44)
         .background(Color(NSColor.windowBackgroundColor))
     }
-    
+
     private var tabSelector: some View {
         HStack(spacing: 0) {
             TabButton(title: "Connections", isSelected: selectedTab == 0) {
                 selectedTab = 0
             }
-            TabButton(title: "Activity Logs", isSelected: selectedTab == 1) {
+            TabButton(title: "Live Connections", isSelected: selectedTab == 1) {
                 selectedTab = 1
+            }
+            TabButton(title: "Activity Logs", isSelected: selectedTab == 2) {
+                selectedTab = 2
             }
             Spacer()
         }
         .frame(height: 40)
         .background(Color(NSColor.controlBackgroundColor))
     }
-    
+
     private var contentView: some View {
         Group {
-            if selectedTab == 0 {
+            switch selectedTab {
+            case 0:
                 ConnectionsView(
                     connections: filteredConnections,
                     searchText: $connectionSearchText,
                     onClear: viewModel.clearConnections
                 )
-            } else {
+            case 1:
+                LiveConnectionsView(
+                    flows: viewModel.liveFlows,
+                    onKill: viewModel.killFlow,
+                    onKillProcess: viewModel.killFlows
+                )
+            default:
                 ActivityLogsView(
                     logs: filteredActivityLogs,
                     searchText: $activitySearchText,
@@ -149,8 +159,113 @@ struct ConnectionsView: View {
     }
 }
 
-struct ActivityLogsView: View {
-    let logs: [ProxyBridgeViewModel.ActivityLog]
+// The connections that are proxied right now. A channel that stops carrying traffic is a
+// channel that hangs, so the list shows how long each one has been quiet and lets the user
+// close it by hand instead of waiting for the proxy to time out.
+struct LiveConnectionsView: View {
+    let flows: [ProxyBridgeViewModel.LiveFlow]
+    let onKill: (UInt64) -> Void
+    let onKillProcess: (String) -> Void
+    @State private var selection: UInt64?
+
+    var body: some View {
+        Group {
+            if flows.isEmpty {
+                emptyState
+            } else {
+                table
+            }
+        }
+    }
+
+    private var table: some View {
+        Table(flows, selection: $selection) {
+            TableColumn("Application") { flow in
+                Text(flow.process.isEmpty ? "unknown" : flow.process)
+            }
+            .width(min: 110, ideal: 150)
+
+            TableColumn("Destination") { flow in
+                Text(flow.port > 0 ? "\(flow.destination):\(flow.port)" : flow.destination)
+            }
+            .width(min: 150, ideal: 220)
+
+            TableColumn("Proto") { flow in
+                Text(flow.protocolName)
+            }
+            .width(48)
+
+            TableColumn("Proxy") { flow in
+                Text(flow.proxy)
+            }
+            .width(min: 130, ideal: 180)
+
+            TableColumn("Sent") { flow in
+                Text(LiveConnectionsView.byteText(flow.bytesUp))
+            }
+            .width(70)
+
+            TableColumn("Received") { flow in
+                Text(LiveConnectionsView.byteText(flow.bytesDown))
+            }
+            .width(70)
+
+            TableColumn("Idle") { flow in
+                Text(LiveConnectionsView.durationText(flow.idle))
+                    .foregroundColor(flow.idle >= 30 ? .orange : .primary)
+            }
+            .width(60)
+        }
+        .contextMenu {
+            Button("Terminate connection") {
+                if let id = selection { onKill(id) }
+            }
+            .disabled(selection == nil)
+
+            Button("Terminate all connections of this process") {
+                if let process = selectedProcess { onKillProcess(process) }
+            }
+            .disabled(selectedProcess == nil)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+                .font(.system(size: 44))
+                .foregroundColor(.gray)
+            Text("No active connections")
+                .font(.title3)
+                .foregroundColor(.gray)
+            Text("Connections that are proxied show up here")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var selectedProcess: String? {
+        guard let id = selection else { return nil }
+        return flows.first(where: { $0.id == id })?.process
+    }
+
+    static func byteText(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f.string(fromByteCount: bytes)
+    }
+
+    // m:ss, or h:mm:ss once it runs past an hour
+    static func durationText(_ seconds: TimeInterval) -> String {
+        let s = Int(max(0, seconds))
+        if s >= 3600 {
+            return String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
+        }
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+struct ActivityLogsView: View {    let logs: [ProxyBridgeViewModel.ActivityLog]
     @Binding var searchText: String
     let onClear: () -> Void
     

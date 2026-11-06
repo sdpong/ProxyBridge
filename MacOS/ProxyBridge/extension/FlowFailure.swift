@@ -20,6 +20,8 @@ enum FlowFailure {
     static var refused: NSError { make(.refused) }
     // nothing finished in time
     static var timedOut: NSError { make(.timedOut) }
+    // the user terminated the connection from the live connections list
+    static var terminated: NSError { make(.aborted) }
 
     // the REP byte of a SOCKS5 reply (RFC 1928)
     static func socks(_ rep: UInt8) -> NSError {
