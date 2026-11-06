@@ -27,10 +27,22 @@ jobs:
     
     - name: Create xcconfig files
       run: |
-        echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-app.xcconfig
-        echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-ext.xcconfig
+        # The Release configuration reads its product name, bundle id and module name from these
+        # files. With no signing secret they must still carry the committed templates, otherwise
+        # both targets build the same swift module and the build fails.
+        if [ -n "${{ secrets.MACOS_APP_XCCONFIG }}" ]; then
+          echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-app.xcconfig
+        else
+          cp MacOS/ProxyBridge/proxybridge-app.xcconfig MacOS/ProxyBridge/Signing-Config-app.xcconfig
+        fi
+        if [ -n "${{ secrets.MACOS_EXT_XCCONFIG }}" ]; then
+          echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-ext.xcconfig
+        else
+          cp MacOS/ProxyBridge/proxybridge-ext.xcconfig MacOS/ProxyBridge/Signing-Config-ext.xcconfig
+        fi
 
     - name: Install Provisioning Profiles
+      if: ${{ secrets.MACOS_CERTIFICATE != '' }}
       run: |
         mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
 
@@ -47,6 +59,7 @@ jobs:
         echo "Installed ext profile: ${EXT_UUID}"
 
     - name: Import Certificate
+      if: ${{ secrets.MACOS_CERTIFICATE != '' }}
       run: |
         # Decode certificate
         echo "${{ secrets.MACOS_CERTIFICATE }}" | base64 --decode > /tmp/certificate.p12
@@ -85,15 +98,32 @@ jobs:
     - name: Build Universal Binary
       run: |
         cd MacOS/ProxyBridge
-        xcodebuild \
-          -project ProxyBridge.xcodeproj \
-          -scheme ProxyBridge \
-          -configuration Release \
-          -derivedDataPath build/DerivedData \
-          ARCHS="arm64 x86_64" \
-          ONLY_ACTIVE_ARCH=NO \
-          OTHER_CODE_SIGN_FLAGS="--keychain build.keychain --timestamp" \
-          clean build
+        # without a certificate the app is built unsigned: a fork has no Developer ID, and an
+        # unsigned build is still a working build
+        if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+          xcodebuild \
+            -project ProxyBridge.xcodeproj \
+            -scheme ProxyBridge \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            OTHER_CODE_SIGN_FLAGS="--keychain build.keychain --timestamp" \
+            clean build
+        else
+          xcodebuild \
+            -project ProxyBridge.xcodeproj \
+            -scheme ProxyBridge \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean build
+        fi
 
     - name: Verify Build
       run: |
@@ -101,10 +131,11 @@ jobs:
         ls -la build/DerivedData/Build/Products/Release/
         file build/DerivedData/Build/Products/Release/ProxyBridge.app/Contents/MacOS/ProxyBridge
         lipo -archs build/DerivedData/Build/Products/Release/ProxyBridge.app/Contents/MacOS/ProxyBridge
-        # Verify code signature
-        codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxyBridge.app
+        # Verify code signature (an unsigned build has none, which is not an error here)
+        codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxyBridge.app || true
 
     - name: Notarize App
+      if: ${{ secrets.MACOS_CERTIFICATE != '' }}
       run: |
         APP_PATH="MacOS/ProxyBridge/build/DerivedData/Build/Products/Release/ProxyBridge.app"
 
@@ -168,17 +199,25 @@ jobs:
         PKG_SIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer-signed.pkg"
 
         # Sign pkg with explicit keychain - no prompting
-        echo "Signing installer..."
-        KEYCHAIN_PATH=$(security list-keychains -d user | grep build | tr -d ' "')
-        echo "Using keychain: $KEYCHAIN_PATH"
-        security unlock-keychain -p "${{ secrets.MACOS_KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
-        productsign \
-          --sign "${{ secrets.MACOS_SIGNING_IDENTITY }}" \
-          --keychain "$KEYCHAIN_PATH" \
-          "$PKG_UNSIGNED" "$PKG_SIGNED"
-        mv "$PKG_SIGNED" "$PKG_UNSIGNED"
+        if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+          echo "Signing installer..."
+          KEYCHAIN_PATH=$(security list-keychains -d user | grep build | tr -d ' "')
+          echo "Using keychain: $KEYCHAIN_PATH"
+          security unlock-keychain -p "${{ secrets.MACOS_KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          productsign \
+            --sign "${{ secrets.MACOS_SIGNING_IDENTITY }}" \
+            --keychain "$KEYCHAIN_PATH" \
+            "$PKG_UNSIGNED" "$PKG_SIGNED"
+          mv "$PKG_SIGNED" "$PKG_UNSIGNED"
+        else
+          echo "No certificate in this repository - shipping the unsigned package"
+        fi
 
         # Notarize pkg
+        if [ -z "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+          echo "No certificate in this repository - the package stays unsigned"
+          exit 0
+        fi
         echo "Notarizing installer..."
         PKG_SUBMIT_OUTPUT=$(xcrun notarytool submit "$PKG_UNSIGNED" \
           --apple-id "${{ secrets.APPLE_ID }}" \
