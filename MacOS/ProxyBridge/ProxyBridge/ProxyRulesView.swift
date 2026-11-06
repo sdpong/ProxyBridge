@@ -399,6 +399,7 @@ struct RuleEditorView: View {
     @State private var targetPorts: String
     @State private var selectedProtocol: String
     @State private var selectedAction: String
+    @State private var showProcessPicker = false
 
     private var isEditMode: Bool { existingRule != nil }
 
@@ -432,12 +433,22 @@ struct RuleEditorView: View {
                         hint: "Shown in the rules list. Leave empty if you don't need one."
                     )
 
-                    formField(
-                        label: "Process / Bundle Identifier",
-                        placeholder: "*",
-                        text: $processNames,
-                        hint: "Matches the bundle id or the process name. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *"
-                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Process / Bundle Identifier").fontWeight(.medium)
+                            Spacer()
+                            Button {
+                                showProcessPicker = true
+                            } label: {
+                                Label("Choose...", systemImage: "app.badge")
+                            }
+                        }
+                        TextField("*", text: $processNames)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Matches the bundle id or the process name. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     
                     formField(
                         label: "Target hosts",
@@ -537,6 +548,11 @@ struct RuleEditorView: View {
             }
             .padding(.horizontal)
         }
+        .sheet(isPresented: $showProcessPicker) {
+            ProcessPickerView { values in
+                addProcesses(values)
+            }
+        }
         .padding()
         .frame(width: 600, height: 620)
     }
@@ -554,6 +570,21 @@ struct RuleEditorView: View {
         }
     }
     
+    // the picked programs are added to the list the matcher reads, which is
+    // separated by ';' or ','. a program that is already in the list is not
+    // added twice.
+    private func addProcesses(_ values: [String]) {
+        guard !values.isEmpty else { return }
+        var existing = processNames
+            .components(separatedBy: CharacterSet(charactersIn: ",;"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        for value in values where !existing.contains(value) {
+            existing.append(value)
+        }
+        processNames = existing.joined(separator: "; ")
+    }
+
     private func saveRule() {
         let rule = ProxyRule(
             localId: existingRule?.localId ?? UUID().uuidString,

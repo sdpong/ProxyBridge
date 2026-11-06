@@ -78,13 +78,34 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started.
 | 端 | 状态 | 内容 |
 |---|---|---|
 | Windows | `[x]` | 已有进程选择器（`S_PP_*`），支持系统进程 |
-| macOS | `[ ]` | libproc 枚举进程（含系统守护进程），按可执行名 / bundle id 匹配 |
+| macOS | `[x]` | 「Choose...」进程选择器：内核进程表枚举（含系统守护进程），可按可执行名 / bundle id / 完整路径加入规则 |
 | Android | `[ ]` | `ConnectivityManager.getConnectionOwnerUid()`（API 29+）/ `NetworkCapabilities.getOwnerUid()`（API 30+，VPN 场景会填充）反查 UID |
 
 > **Android 10+ 已封锁 `/proc/net`**，不能沿用 Linux 的老路子；必须走 `ConnectivityManager` 官方 API。
 
 macOS 侧已确认 `proc_pidpath` 在扩展里可直接使用（`AppProxyProvider.swift:447`），
 **不需要额外 entitlement**。规则匹配同时接受 bundle id 和可执行名（`matchesProcess(bundleId:processName:)`）。
+
+### macOS 进程枚举是怎么做到的（实测结论）
+
+App 沙盒**不允许**枚举进程，实测结论（本机沙盒 App 验证）：
+
+| 手段 | 沙盒内结果 |
+|---|---|
+| `proc_listpids()` | **被封锁**（返回 0） |
+| `posix_spawn("/bin/ps")` | **被封锁**（EPERM） |
+| `sysctl(KERN_PROC_ALL)` | **可用**（约 1400 个进程） |
+| `proc_pidpath(pid)` | **可用**（可读任意进程的完整路径） |
+| `proc_pidinfo(PROC_PIDT_SHORTBSDINFO)` | **可用**（可读进程属主 uid） |
+| `NSWorkspace.runningApplications` | 可用，但只有 GUI 应用，漏掉命令行工具与守护进程 |
+
+因此进程列表走 `sysctl(KERN_PROC_ALL)` 读内核进程表，再用 `proc_pidpath` 取完整路径、
+`proc_pidinfo` 取属主（**注意**：`PROC_PIDT_SHORTBSDINFO` 对应的是 `proc_bsdshortinfo`，
+不是 `proc_bsdinfo`，用错结构体 uid 会读错偏移）、`Bundle(path:)` 取 bundle id。
+1400 个进程枚举一次约 60ms，只在打开选择器时做一次。
+
+取 bundle id 时取**最内层**的 `.app`：一个 App 的 helper 住在它自己内嵌的 bundle 里，
+那才是属于该进程的 bundle。
 
 ---
 
