@@ -27,8 +27,29 @@ Status legend: `[x]` done · `[~]` in progress · `[ ]` not started.
 | Windows 测试 | `[x]` | `test_flows`（真连真断）、`test_service`（协议编解码）、`test_main_ui`（GUI 核函数） |
 | macOS 扩展 | `[x]` | `LiveFlowRegistry` 流注册表 + `getFlows` / `killFlow` 扩展消息指令 |
 | macOS GUI | `[x]` | 新增「Live Connections」标签页：活动连接表 + 右键终止（终止此连接 / 终止该进程的所有连接） |
-| macOS DNS | `[ ]` | 系统级 DNS 透明代理（拦截层已存在：`NEDNSProxyProvider` + `DNSMapStore`，缺的是策略层） |
+| macOS DNS | `[x]` | DNS 策略层：`DNSPolicy`（三选一策略 / 排除名单 / 上游解析器 / 自动检测 / 防泄漏）+ `DNSParser`（可脱离 NetworkExtension 单测）+ App 侧「DNS Settings」窗口 |
 | Android | `[ ]` | 并入主线，见下方「Android 并入主线」 |
+
+### macOS DNS 策略层（本阶段实际交付）
+
+1. **`extension/DNSPolicy.swift`**（纯模型，不含 NetworkExtension 类型，可单独跑逻辑测试）：
+   - **三选一策略**：`system`（系统解析器应答，代理按自己的设置决定收主机名还是地址）/
+     `local`（本机解析器应答，代理**只**拿地址）/ `remote`（**代理服务器自己解析**，
+     本地应答只是引导）。
+   - **排除名单**：`example.com` 只匹配自己，`*.example.com` 匹配其下所有名字，`*` 匹配全部。
+     被排除的名字**根本不记录**进 `DNSMapStore`，所以永远不会成为代理的目标地址。
+   - **上游解析器可指定**：逐个回退，第一个不可用就用下一个；未指定时用系统给的那个。
+   - **自动检测**：关掉且没配解析器时，DNS 代理**不接管**流量，交给 macOS 正常解析。
+   - **防泄漏开关**：无论策略与代理自身设置如何，代理服务器**总是**拿到主机名，
+     本地解析出来的地址不可能成为代理实际连接的目标。
+2. **`extension/DNSParser.swift`**：从 `DNSProxyProvider.swift` 拆出，并新增 `questionName()`
+   （查询名要在应答回来之前就拿到，才能决定用哪个解析器、名字是否被排除）。
+3. **策略怎么送达 DNS provider**：`sendProviderMessage` 只存在于 `NETunnelProviderSession`，
+   DNS provider **没有**可发消息的 session。策略因此经 App Group 共享容器落盘
+   （`dns_policy.json`）：App → 透明代理 provider → 共享容器 → DNS provider 读取
+   （最多 2 秒缓存一次，避免每个 DNS 查询都读盘）。
+4. **透明代理侧**：发主机名还是发地址由策略决定，策略说「地址」就绝不发名字，
+   策略说「主机名」就绝不发地址；`system` 模式维持原有的按代理设置行为。
 
 ### 关键设计决策
 
@@ -73,6 +94,12 @@ macOS 侧已确认 `proc_pidpath` 在扩展里可直接使用（`AppProxyProvide
 
 macOS 的 `NEDNSProxyProvider` 拦截层**已经存在**，缺的是策略层而不是拦截层。
 Windows / Android 走各自的平台机制，但语义要对齐。
+
+| 端 | 状态 | 内容 |
+|---|---|---|
+| macOS | `[x]` | 策略层已落地（见上方「macOS DNS 策略层」）：三选一策略、排除名单、上游解析器、自动检测、防泄漏开关 |
+| Windows | `[ ]` | 引擎已有 DNS snoop 缓存（`pb_dns.c`），缺策略层：把「本地 / 远端 / 系统」与排除名单接到 GUI 与引擎 |
+| Android | `[ ]` | 同上；Android 的 DNS 泄漏问题最突出，应优先落地 |
 
 ---
 
