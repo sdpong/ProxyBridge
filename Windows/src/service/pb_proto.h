@@ -51,7 +51,7 @@ enum {
     PBOP_ADD_CHAIN,           // name, hopCount, hops... -> id
     PBOP_EDIT_CHAIN,          // id, name, hopCount, hops... -> bool
     PBOP_DELETE_CHAIN,        // id -> bool
-    PBOP_GET_CHAINS           // u32 max -> u32 count, then per chain: u32 id, u32 hopCount, hops..., str name
+    PBOP_GET_CHAINS,          // u32 max -> u32 count, then per chain: u32 id, u32 hopCount, hops..., str name
     PBOP_CHAIN_PROBLEMS       // u32 hopCount, hops... -> u32 count, then the problems, one per line
 };
 #define PB_FLOW_ROW_MAX (12u * 4u + (4u + 39u) + (4u + 63u))   // largest encoded flow row, in bytes
