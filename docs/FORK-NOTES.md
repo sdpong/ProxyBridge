@@ -61,6 +61,38 @@ xcodebuild -project ProxyBridge.xcodeproj -scheme ProxyBridge -configuration Rel
 
 `build.sh` 是**打包**脚本（生成 pkg），前提是 Xcode 已经导出 `output/ProxyBridge.app`。
 
+## CI 与发布
+
+fork 的 GitHub Actions（`master` 每次 push 都会跑）：
+
+| 工作流 | 状态 | 说明 |
+|---|---|---|
+| Build Windows | ✅ 绿 | 跑全部测试（含 GUI 测试）、编译并用 NSIS 生成安装包，产物是 workflow artifact |
+| Build macOS | ✅ 绿 | 本 fork 没有签名证书时构建**未签名**的通用二进制 App 与 pkg，产物是 workflow artifact |
+| Build Linux | ❌ 红 | runner 镜像缺 `bpftool`（eBPF 工具链），与本 fork 的改动无关 |
+| SonarQube / CodeQL | ❌ 红 | 需要上游的 Sonar 服务端令牌 / 授权，fork 里没有 |
+
+**注意：secret 不能出现在 step 级的 `if:` 里**（GitHub 会判定工作流非法）。需要按 secret 取分支时，
+先在 job 级 `env:` 里把它变成布尔字符串，再在 step 的 `if:` 里读这个变量：
+
+```yaml
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE != '' }}
+    steps:
+      - if: env.HAS_SIGNING_CERT == 'true'
+```
+
+**注意：未签名构建不能留下 `DEVELOPMENT_TEAM` 和 `PROVISIONING_PROFILE_SPECIFIER`**，
+否则 xcode 会去找那个描述文件并直接失败，即使签名已经关掉。
+
+### 发一个 release
+
+1. Windows 安装包来自 CI 的 `ProxyBridge-Build-<sha>` artifact（`Windows/output/` 里的
+   `ProxyBridge-Setup-<版本>.exe`）；macOS 的 pkg 来自 `ProxyBridge-macOS-Installer` artifact。
+2. `gh release create <tag> <文件...> --notes-file <说明>` 把两个产物挂上去。
+3. 上游的 `release-*.yml` 在本 fork 里**用不了**：它们要求 `github.actor == 'Anof-cyber'`，
+   Windows 那个还要上游的 self-hosted runner 和它上面装好的 WinDivert。
+
 ## 协议版本纪律
 
 `Windows/src/service/pb_proto.h` 里的 `PB_PROTO_VERSION` 是 GUI 与服务之间的握手版本。
