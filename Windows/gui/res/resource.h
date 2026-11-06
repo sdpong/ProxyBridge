@@ -65,7 +65,7 @@
 #define IDM_PROFILE_DELETE          241
 #define IDM_PROFILE_IMPORT          242
 #define IDM_PROFILE_EXPORT          243
-#define IDM_PROFILE_IMPORT_PPX      244   // Profile: import a Proxifier profile (.ppx)
+#define IDM_PROFILE_IMPORT_PPX      245   // Profile: import a Proxifier profile (.ppx)
 #define IDM_LANG_EN                 250
 #define IDM_LANG_ZH                 251
 #define IDM_PROFILE_SWITCH_BASE     2000   // switch items: base + index

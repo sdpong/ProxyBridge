@@ -102,10 +102,10 @@ $tests = @(
     @{ n='test_chain';           src=@('tests\test_chain.c') + $core;                       cl=$clCore;  link=$lnCore; ui=$false },
     @{ n='test_proxy_protocols'; src=@('tests\test_proxy_protocols.c') + $core;             cl=$clCore;  link=$lnCore; ui=$false },
     @{ n='test_cli';             src=@('tests\test_cli.c');                                 cl="$clPlain /D_WINSOCK_DEPRECATED_NO_WARNINGS /D_WIN32_WINNT=0x0601"; link='winhttp.lib shell32.lib advapi32.lib'; ui=$false },
-    @{ n='test_gui_misc';        src=@('tests\test_gui_misc.c', $prof);                     cl=$clUni;   link=$lnGui;  ui=$false },
-    @{ n='test_rules_ui';        src=@('tests\test_rules_ui.c', $prof, $res);               cl=$clUni;   link=$lnGui;  ui=$true },
-    @{ n='test_main_ui';         src=@('tests\test_main_ui.c', $prof, $res);                cl=$clUni;   link=$lnGui;  ui=$true },
-    @{ n='test_dialogs_ui';      src=@('tests\test_dialogs_ui.c', $prof, $res);             cl=$clUni;   link=$lnGui;  ui=$true }
+    @{ n='test_gui_misc';        src=@('tests\test_gui_misc.c', $prof, 'gui\profile\ppx.c');   cl=$clUni;   link=$lnGui;  ui=$false },
+    @{ n='test_rules_ui';        src=@('tests\test_rules_ui.c', $prof, $res, 'gui\profile\ppx.c'); cl=$clUni; link=$lnGui;  ui=$true },
+    @{ n='test_main_ui';         src=@('tests\test_main_ui.c', $prof, $res, 'gui\profile\ppx.c');  cl=$clUni; link=$lnGui;  ui=$true },
+    @{ n='test_dialogs_ui';      src=@('tests\test_dialogs_ui.c', $prof, $res, 'gui\profile\ppx.c'); cl=$clUni; link=$lnGui; ui=$true }
 )
 $runStatic = $true
 if ($Only) { $tests = $tests | Where-Object { $Only -contains $_.n }; $runStatic = ($Only -contains 'static_checks') }
