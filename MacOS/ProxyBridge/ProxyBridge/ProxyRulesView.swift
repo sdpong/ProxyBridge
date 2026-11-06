@@ -508,6 +508,12 @@ struct RuleEditorView: View {
                                     Text(config.displayName).tag(config.id)
                                 }
                             }
+                            if !viewModel.chains.isEmpty {
+                                Divider()
+                                ForEach(viewModel.chains) { chain in
+                                    Text(chain.displayName).tag(chain.action)
+                                }
+                            }
                         }
                         .pickerStyle(.menu)
                         if selectedProtocol == "UDP" || selectedProtocol == "BOTH" {
@@ -524,6 +530,15 @@ struct RuleEditorView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "info.circle").foregroundColor(.secondary)
                                 Text("No proxy servers configured - add one in Proxy Settings.")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        // a chain cannot carry udp, say so instead of letting the
+                        // traffic go direct without an explanation
+                        if let chain = viewModel.chains.first(where: { $0.action == selectedAction }) {
+                            HStack(alignment: .top, spacing: 4) {
+                                Image(systemName: "info.circle").foregroundColor(.secondary)
+                                Text("This rule uses the chain \"\(chain.displayName)\". A chain carries TCP only, UDP traffic of this rule goes direct.")
                                     .font(.caption).foregroundColor(.secondary)
                             }
                         }

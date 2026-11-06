@@ -16,7 +16,7 @@ run_test() {   # <test file> <extension sources...>
     "$TMP/test"
 }
 
-run_test matcher_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift"
+run_test matcher_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift"
 run_test dnsmap_tests.swift "$EXT/DNSMapStore.swift"
 run_test dnspolicy_tests.swift "$EXT/DNSPolicy.swift"
 run_test dnsparser_tests.swift "$EXT/DNSParser.swift"
@@ -25,3 +25,4 @@ run_test diagnostics_tests.swift "$EXT/ProviderDiagnostics.swift"
 run_test liveflow_tests.swift "$EXT/LiveFlowRegistry.swift"
 run_test cli_tests.swift "$APP/CLIArguments.swift" "$APP/CLIProfile.swift" "$APP/CLIText.swift"
 run_test processlist_tests.swift "$APP/ProcessList.swift"
+run_test chain_tests.swift "$EXT/ChainAction.swift" "$APP/ProxyChain.swift"

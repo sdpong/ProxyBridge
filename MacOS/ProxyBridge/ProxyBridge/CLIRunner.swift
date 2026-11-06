@@ -314,7 +314,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
 
         // same messages, same order as the GUI: logging, proxies, the DNS policy, then the rules in one step
         send(["action": "setTrafficLogging", "enabled": verbose >= 2]) { _ in
-            self.send(["action": "setProxyConfigs", "configs": self.proxyMessages()]) { _ in
+            self.send(["action": "setProxyConfigs", "configs": self.proxyMessages(), "chains": self.chainMessages()]) { _ in
                 self.sendDNSPolicy { _ in
                     RuleManager.applyRules(session: session, rules: self.profile.rules) { _, count in
                         CLI.say("Profile \"\(CLIText.safe(self.profile.name))\": \(self.profile.proxies.count) proxies, \(count) rules applied")
@@ -325,6 +325,17 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
                     }
                 }
             }
+        }
+    }
+
+    // the chains go with the proxies: a chain is an ordered list of proxy ids
+    private func chainMessages() -> [[String: Any]] {
+        return profile.chains.map { chain in
+            [
+                "id": chain["id"] as? String ?? "",
+                "name": chain["name"] as? String ?? "",
+                "proxies": chain["proxies"] as? [String] ?? []
+            ]
         }
     }
 

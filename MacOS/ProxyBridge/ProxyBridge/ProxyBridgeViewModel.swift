@@ -252,6 +252,26 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         } else {
             proxyConfigs = []
         }
+        loadChains()
+    }
+
+    // the proxy chains: an ordered list of proxies a connection walks through
+    @Published var chains: [ProxyChain] = []
+
+    // the type of every proxy, by id, so a chain can be checked against it
+    var proxyTypesById: [String: String] {
+        var out: [String: String] = [:]
+        for config in proxyConfigs { out[config.id] = config.type.lowercased() }
+        return out
+    }
+
+    private func loadChains() {
+        if let data = UserDefaults.standard.data(forKey: "chains"),
+           let saved = try? JSONDecoder().decode([ProxyChain].self, from: data) {
+            chains = saved
+        } else {
+            chains = []
+        }
     }
 
     // MARK: - Profiles
@@ -268,6 +288,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private func profileStartupKey(_ name: String) -> String { "profile.\(name).runAtStartup" }
     private func profileDNSKey(_ name: String) -> String { "profile.\(name).dnsEnabled" }
     private func profileDNSPolicyKey(_ name: String) -> String { "profile.\(name).dnsPolicy" }
+    private func profileChainsKey(_ name: String) -> String { "profile.\(name).chains" }
 
     private func loadProfiles() {
         let d = UserDefaults.standard
@@ -293,6 +314,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.bool(forKey: "runAtStartup"), forKey: profileStartupKey(name))
         d.set(isDNSEnabled, forKey: profileDNSKey(name))
         d.set(d.data(forKey: "dnsPolicy"), forKey: profileDNSPolicyKey(name))
+        d.set(d.data(forKey: "chains"), forKey: profileChainsKey(name))
     }
 
     // load a profile's snapshot into the live working keys
@@ -317,6 +339,12 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             d.set(policyData, forKey: "dnsPolicy")
         } else {
             d.removeObject(forKey: "dnsPolicy")
+        }
+        // the chains are per profile too
+        if let chainsData = d.data(forKey: profileChainsKey(name)) {
+            d.set(chainsData, forKey: "chains")
+        } else {
+            d.removeObject(forKey: "chains")
         }
     }
 
@@ -370,6 +398,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.set(d.object(forKey: profileStartupKey(old)), forKey: profileStartupKey(new))
         d.set(d.object(forKey: profileDNSKey(old)), forKey: profileDNSKey(new))
         d.set(d.data(forKey: profileDNSPolicyKey(old)), forKey: profileDNSPolicyKey(new))
+        d.set(d.data(forKey: profileChainsKey(old)), forKey: profileChainsKey(new))
         d.removeObject(forKey: profileConfigsKey(old))
         d.removeObject(forKey: profileRulesKey(old))
         d.removeObject(forKey: profileLoggingKey(old))
@@ -377,6 +406,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.removeObject(forKey: profileStartupKey(old))
         d.removeObject(forKey: profileDNSKey(old))
         d.removeObject(forKey: profileDNSPolicyKey(old))
+        d.removeObject(forKey: profileChainsKey(old))
         if let i = profiles.firstIndex(of: old) { profiles[i] = new }
         d.set(profiles, forKey: "profiles")
         if activeProfile == old {
@@ -399,6 +429,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         d.removeObject(forKey: profileStartupKey(name))
         d.removeObject(forKey: profileDNSKey(name))
         d.removeObject(forKey: profileDNSPolicyKey(name))
+        d.removeObject(forKey: profileChainsKey(name))
         profiles.removeAll { $0 == name }
         d.set(profiles, forKey: "profiles")
     }
@@ -420,7 +451,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             "dnsPolicy": d.data(forKey: profileDNSPolicyKey(name))
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? dnsPolicy.toDictionary(),
             "proxyConfigs": configsJSON,
-            "proxyRules": d.array(forKey: profileRulesKey(name)) ?? []
+            "proxyRules": d.array(forKey: profileRulesKey(name)) ?? [],
+            "proxyChains": d.data(forKey: profileChainsKey(name))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
         ]
         return try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
     }
@@ -451,6 +484,11 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         if let policyDict = obj["dnsPolicy"] as? [String: Any],
            let policyData = try? JSONSerialization.data(withJSONObject: policyDict) {
             d.set(policyData, forKey: profileDNSPolicyKey(name))
+        }
+        // the chains travel with the profile
+        if let chainsJSON = obj["proxyChains"],
+           let chainsData = try? JSONSerialization.data(withJSONObject: chainsJSON) {
+            d.set(chainsData, forKey: profileChainsKey(name))
         }
 
         profiles.append(name)
@@ -487,6 +525,61 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             if let session = tunnelSession {
                 sendProxyConfigsToExtension(session: session)
             }
+        }
+    }
+
+    // MARK: - Proxy chains
+
+    private func saveChains() {
+        if let data = try? JSONEncoder().encode(chains) {
+            UserDefaults.standard.set(data, forKey: "chains")
+        }
+    }
+
+    func addChain(_ chain: ProxyChain) {
+        chains.append(chain)
+        saveChains()
+        pushChainsToExtension()
+    }
+
+    func updateChain(_ chain: ProxyChain) {
+        if let index = chains.firstIndex(where: { $0.id == chain.id }) {
+            chains[index] = chain
+            saveChains()
+            pushChainsToExtension()
+        }
+    }
+
+    // a chain that is removed leaves the rules that used it on DIRECT, so they
+    // do not silently go direct anyway
+    func removeChain(_ chain: ProxyChain) {
+        if var saved = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] {
+            var changed = false
+            for i in saved.indices where (saved[i]["action"] as? String) == chain.action {
+                saved[i]["action"] = "DIRECT"
+                changed = true
+            }
+            if changed {
+                UserDefaults.standard.set(saved, forKey: "proxyRules")
+                if let session = tunnelSession {
+                    RuleManager.resyncRules(session: session) { _, _ in }
+                }
+            }
+        }
+        chains.removeAll { $0.id == chain.id }
+        saveChains()
+        pushChainsToExtension()
+    }
+
+    // how many rules point at this chain
+    func rulesUsingChain(id: String) -> Int {
+        let saved = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
+        return saved.filter { ($0["action"] as? String) == ProxyChain.actionPrefix + id }.count
+    }
+
+    private func pushChainsToExtension() {
+        if let session = tunnelSession {
+            sendProxyConfigsToExtension(session: session)
         }
     }
 
@@ -969,7 +1062,11 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             if let p = config.password { dict["proxyPassword"] = p }
             return dict
         }
-        let message: [String: Any] = ["action": "setProxyConfigs", "configs": configsArray]
+        // the chains go with the proxies: a chain is an ordered list of proxy ids
+        let chainsArray: [[String: Any]] = chains.map { chain in
+            ["id": chain.id, "name": chain.name, "proxies": chain.proxyIds]
+        }
+        let message: [String: Any] = ["action": "setProxyConfigs", "configs": configsArray, "chains": chainsArray]
         guard let data = try? JSONSerialization.data(withJSONObject: message) else {
             addLog("ERROR", "Failed to encode proxy configs")
             return

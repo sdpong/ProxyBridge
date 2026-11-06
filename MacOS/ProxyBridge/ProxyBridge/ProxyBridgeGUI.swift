@@ -57,6 +57,10 @@ struct ProxyBridgeGUIApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
+                Button("Proxy Chains...") {
+                    openProxyChainsWindow()
+                }
+
                 Button("DNS Settings...") {
                     openDNSSettingsWindow()
                 }
@@ -179,6 +183,10 @@ struct ProxyBridgeGUIApp: App {
 
     private func openDNSSettingsWindow() {
         NSApp.sendAction(#selector(AppDelegate.openDNSSettings), to: nil, from: nil)
+    }
+
+    private func openProxyChainsWindow() {
+        NSApp.sendAction(#selector(AppDelegate.openProxyChains), to: nil, from: nil)
     }
     
     private func openAboutWindow() {
@@ -349,6 +357,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func openProxyRules() {
         openWindow(title: "Proxy Rules", size: NSSize(width: 1200, height: 600), resizable: true) {
             ProxyRulesView(viewModel: AppDelegate.viewModel!)
+        }
+    }
+
+    @objc func openProxyChains() {
+        openWindow(title: "Proxy Chains", size: NSSize(width: 720, height: 460)) {
+            ProxyChainsView(viewModel: AppDelegate.viewModel!)
         }
     }
 

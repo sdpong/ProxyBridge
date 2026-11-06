@@ -38,6 +38,9 @@ struct CLIProfile {
     // the profile's DNS policy, as the wire form the extension understands. a profile
     // saved before the policy existed has none, and the extension then uses its default
     var dnsPolicy: [String: Any]? = nil
+    // the profile's proxy chains, as the wire form the extension understands:
+    // a list of {id, name, proxies: [proxy id]}
+    var chains: [[String: Any]] = []
 }
 
 enum CLIProfileError: Error, Equatable {
@@ -67,7 +70,8 @@ enum CLIProfileLoader {
         let rules = obj["proxyRules"] as? [[String: Any]] ?? []
         return CLIProfile(name: (obj["name"] as? String) ?? "profile", proxies: proxies, rules: rules,
                           dnsEnabled: obj["dnsEnabled"] as? Bool ?? true,
-                          dnsPolicy: obj["dnsPolicy"] as? [String: Any])
+                          dnsPolicy: obj["dnsPolicy"] as? [String: Any],
+                          chains: obj["proxyChains"] as? [[String: Any]] ?? [])
     }
 
     // a profile saved in the app. the active profile lives in the working keys
@@ -92,8 +96,16 @@ enum CLIProfileLoader {
         } else {
             policy = read(dnsPolicyKey) as? [String: Any]
         }
+        // the chains are stored as json data, an export carries them as a plain array
+        let chainsKey = name == active ? "chains" : "profile.\(name).chains"
+        var chains: [[String: Any]] = []
+        if let data = read(chainsKey) as? Data {
+            chains = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+        } else if let list = read(chainsKey) as? [[String: Any]] {
+            chains = list
+        }
         return CLIProfile(name: name, proxies: proxies, rules: rules, dnsEnabled: read(dnsKey) as? Bool ?? true,
-                          dnsPolicy: policy)
+                          dnsPolicy: policy, chains: chains)
     }
 
     static func savedNames(read: Reader) -> (names: [String], active: String?) {
