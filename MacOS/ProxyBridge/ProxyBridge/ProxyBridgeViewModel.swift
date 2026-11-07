@@ -41,6 +41,17 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     @Published private(set) var activeProfile: String = "Default"
     // what the last import had to leave out, shown to the user once
     @Published var lastImportNotes: [String] = []
+    // Bumped every time the DNS settings window is opened.
+    //
+    // The window is reused when it is opened again, and a SwiftUI view that
+    // stays in a window does not get its onAppear called a second time. Without
+    // this the window would show what was typed the last time it was open, even
+    // when the settings were changed somewhere else in the meantime.
+    @Published private(set) var dnsSettingsOpenCount = 0
+
+    func noteDNSSettingsOpened() {
+        dnsSettingsOpenCount += 1
+    }
     // macOS asks the user to approve the system extension once. Until that happens
     // nothing can be proxied, so the GUI says where the switch is and opens the pane.
     @Published var needsExtensionApproval = false
@@ -319,8 +330,53 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         let d = UserDefaults.standard
         if let data = try? JSONSerialization.data(withJSONObject: policy.toDictionary()) {
             d.set(data, forKey: "dnsPolicy")
+            // the profile carries a copy of its own. without this the profile
+            // keeps the policy it had, and the settings look like they were
+            // never saved: the exported profile has the old policy in it and
+            // switching away and back throws the change away
+            d.set(data, forKey: profileDNSPolicyKey(activeProfile))
         }
         sendDNSPolicyToExtension()
+        addLog("INFO", "DNS settings saved: \(policy.summary)")
+    }
+
+    // the policy as it is stored right now.
+    //
+    // The window reads this instead of the copy in memory: the window is reused
+    // when it is opened again, and a window that shows an old copy would save
+    // that old copy back over the settings that were changed in the meantime.
+    func storedDNSPolicy() -> DNSPolicySettings {
+        let d = UserDefaults.standard
+        if let data = d.data(forKey: "dnsPolicy"),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return DNSPolicySettings.fromDictionary(dict)
+        }
+        return dnsPolicy
+    }
+
+    // what the DNS proxy is doing, read from the log the extension writes.
+    //
+    // The message channel is not an option: it is checked against the app's
+    // signature and a build that is not signed by a developer gets no message
+    // through it. The log is what is left, and it is where the window gets the
+    // numbers from.
+    func readDNSStatus(completion: @escaping (DNSStatus?) -> Void) {
+        UnifiedLogBacklog.read(seconds: 180) { lines in
+            completion(DNSStatus.newest(in: lines))
+        }
+    }
+
+    // whether the system has the DNS proxy entry turned on. nil means the
+    // system would not say.
+    func readDNSProxyEntry(completion: @escaping (Bool?) -> Void) {
+        let manager = NEDNSProxyManager.shared()
+        manager.loadFromPreferences { error in
+            guard error == nil else {
+                completion(nil)
+                return
+            }
+            completion(manager.isEnabled)
+        }
     }
 
     private func sendDNSPolicyToExtension() {
@@ -901,6 +957,59 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
     }
 
+    // macOS can turn the DNS proxy entry off by itself.
+    //
+    // The entry keeps the code signature of the extension it was written for,
+    // and an ad-hoc build has a new signature every time it is made. The system
+    // then refuses the entry, says so in its own log ("the configuration was
+    // disabled") and the DNS proxy stops. Nothing else notices: the ip -> name
+    // map stays empty, so the proxy server is given an address where a name was
+    // meant, and a site that only answers to a name cannot be reached.
+    //
+    // So the entry is looked at from time to time while the tunnel runs, and it
+    // is written again when it is off.
+    private func ensureDNSProxyEntry() {
+        guard isDNSEnabled, tunnelSession != nil else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastDNSCheckAt) > dnsCheckInterval else { return }
+        lastDNSCheckAt = now
+
+        NEDNSProxyManager.shared().loadFromPreferences { [weak self] error in
+            guard let self = self, error == nil else { return }
+            let manager = NEDNSProxyManager.shared()
+            let ours = manager.providerProtocol?.providerBundleIdentifier == self.extensionIdentifier
+            guard !manager.isEnabled || !ours else { return }
+            DispatchQueue.main.async {
+                self.addLog("INFO", "The DNS proxy entry was off in the system. It is being written again, so host names are known again.")
+                self.applyDNSProxy()
+            }
+        }
+    }
+
+    // when the entry was looked at the last time, and how often
+    private var lastDNSCheckAt = Date.distantPast
+    private let dnsCheckInterval: TimeInterval = 30
+
+    // the timer that keeps an eye on the DNS proxy entry
+    private var dnsCheckTimer: Timer?
+
+    private func startDNSCheckTimer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard self.dnsCheckTimer == nil else { return }
+            self.dnsCheckTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+                self?.ensureDNSProxyEntry()
+            }
+        }
+    }
+
+    private func stopDNSCheckTimer() {
+        DispatchQueue.main.async { [weak self] in
+            self?.dnsCheckTimer?.invalidate()
+            self?.dnsCheckTimer = nil
+        }
+    }
+
     private func reloadAndStartTunnel(manager: NETransparentProxyManager) {
         manager.loadFromPreferences { [weak self] loadError in
             guard let self = self else { return }
@@ -1029,6 +1138,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // The completion is called when the tunnel is down. A caller that starts a
     // tunnel again waits for it, so the two do not run into each other.
     func stopProxy(completion: (() -> Void)? = nil) {
+        stopDNSCheckTimer()
         guard let session = tunnelSession else {
             isProxyActive = false
             logTimer?.invalidate()
@@ -1088,6 +1198,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         sendTrafficLoggingToExtension(isTrafficLoggingEnabled)
         updatePollingState()
         handshakeWithExtension(session: session)
+        // the dns proxy entry can be turned off by the system while the tunnel
+        // runs, and then no host name is known any more
+        startDNSCheckTimer()
         // the extension writes what it does to the unified log, and a build
         // that is not signed by a developer reads it back from there
         startUnifiedLogTail()

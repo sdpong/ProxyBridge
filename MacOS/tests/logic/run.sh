@@ -19,6 +19,7 @@ run_test matcher_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swi
 run_test dnsmap_tests.swift "$EXT/DNSMapStore.swift"
 run_test dnspolicy_tests.swift "$EXT/DNSPolicy.swift" "$APP/DNSPolicySettings.swift"
 run_test dnsparser_tests.swift "$EXT/DNSParser.swift"
+run_test dnsstatus_tests.swift "$EXT/DNSStatusWriter.swift" "$APP/DNSStatusLine.swift" "$APP/ExtensionLogReader.swift"
 run_test flowfailure_tests.swift "$EXT/FlowFailure.swift"
 run_test diagnostics_tests.swift "$EXT/ProviderDiagnostics.swift"
 run_test liveflow_tests.swift "$EXT/LiveFlowRegistry.swift"

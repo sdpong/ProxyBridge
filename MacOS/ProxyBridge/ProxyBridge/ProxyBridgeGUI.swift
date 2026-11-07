@@ -534,9 +534,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     @objc func openDNSSettings() {
-        openWindow(title: "DNS Settings", size: NSSize(width: 620, height: 560)) {
+        openWindow(title: "DNS Settings", size: NSSize(width: 660, height: 660)) {
             DNSSettingsView(viewModel: AppDelegate.viewModel!)
         }
+        // the window is reused, so the view has to be told that it is opened
+        // again: it fills itself with the settings that are stored right now
+        AppDelegate.viewModel?.noteDNSSettingsOpened()
     }
     
     @objc func openAbout() {
