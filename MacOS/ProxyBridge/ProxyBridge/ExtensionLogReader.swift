@@ -1,5 +1,4 @@
 import Foundation
-import OSLog
 
 // What the system extension wrote, read back from the unified log.
 //
@@ -12,13 +11,64 @@ import OSLog
 // there - "Connection TCP ... via SOCKS5 (rule 3)" is one of those lines - and
 // a process that is not sandboxed can read them back.
 //
-// The App Sandbox is what stands in the way. logd refuses to serve the system
-// scope to a sandboxed process, and the /usr/bin/log tool says the same thing
+// The App Sandbox is what stands in the way. logd does not serve the system
+// scope to a sandboxed process, and /usr/bin/log says the same thing
 // ("Cannot run while sandboxed"). So this only works in a build without the
 // sandbox - which is what a build that is not going to the App Store wants.
+//
+// The log is read with the tool macOS ships for it, and not with OSLogStore.
+// A store is a snapshot: it shows the log as it was when the store was made,
+// and a store that is kept shows the log as of that moment forever. The tool
+// follows the log as it grows, and it waits for the entries instead of walking
+// the log over and over, so following it costs about a tenth of a percent of
+// a core.
 enum ExtensionLogReader {
     /// The subsystem the extension writes its lines under.
     static let subsystem = "com.interceptsuite.ProxyBridge.extension"
+
+    /// The tool that reads the log. It is in every macOS.
+    static let toolPath = "/usr/bin/log"
+
+    /// Whether this build can read the unified log at all.
+    ///
+    /// The tool says it when it cannot: in a build that is sandboxed it
+    /// refuses to run at all ("log: Cannot run while sandboxed"). So the
+    /// question is put to the tool.
+    static func canRead() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: toolPath)
+        process.arguments = [
+            "show",
+            "--last", "1s",
+            "--style", "compact",
+            "--predicate", "subsystem == \"\(subsystem)\""
+        ]
+        let errors = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = errors
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        let message = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        if String(decoding: message, as: UTF8.self).contains("sandboxed") { return false }
+        return process.terminationStatus == 0
+    }
+
+    /// The reason the unified log cannot be read, in words.
+    ///
+    /// The tool says why it will not run, and the one reason that matters is
+    /// the sandbox: a build that is sandboxed can not read the log at all, and
+    /// no setting of the app changes that.
+    static func unreadableReason(_ raw: String) -> String {
+        if raw.lowercased().contains("sandboxed") {
+            return "This build cannot read the unified log. The App Sandbox is what stops it: logd does not serve the system scope to a sandboxed process, and /usr/bin/log refuses to run in one at all. A build that is not sandboxed reads it without trouble."
+        }
+        return "The unified log cannot be read: \(raw)"
+    }
 
     /// One line the extension wrote.
     struct Line {
@@ -39,49 +89,6 @@ enum ExtensionLogReader {
         let proxy: String
         /// The number of the rule that decided it, when the line says so.
         let rule: Int?
-    }
-
-    // Can this build read the log at all?
-    //
-    // The answer is no for a sandboxed build, and the reason is the sandbox
-    // itself and not a missing permission: there is no way to ask for it.
-    static func isReadable() -> Bool {
-        guard #available(macOS 12.0, *) else { return false }
-        do {
-            _ = try OSLogStore(scope: .system)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    // The lines the extension wrote after a point in time, newest first.
-    //
-    // A nil "since" reads everything, which is a lot on a busy machine: the
-    // caller keeps a cursor instead.
-    static func lines(since: Date?) -> [Line] {
-        guard #available(macOS 12.0, *) else { return [] }
-        do {
-            let store = try OSLogStore(scope: .system)
-            let predicate = NSPredicate(format: "subsystem == %@", subsystem)
-            let entries: [OSLogEntry]
-            if let since = since {
-                entries = Array(try store.getEntries(at: store.position(date: since), matching: predicate))
-            } else {
-                entries = Array(try store.getEntries(matching: predicate))
-            }
-            return entries.reversed().map { entry in
-                let text = entry.composedMessage
-                // the extension writes its errors as errors and the rest as notes;
-                // the level is what tells them apart
-                let level = (entry as? OSLogEntryLog).map {
-                    $0.level.rawValue >= OSLogEntryLog.Level.error.rawValue ? "ERROR" : "INFO"
-                } ?? "INFO"
-                return Line(date: entry.date, text: text, connection: parse(text), level: level)
-            }
-        } catch {
-            return []
-        }
     }
 
     // Reads a connection out of one of the extension's lines.
@@ -125,5 +132,153 @@ enum ExtensionLogReader {
         guard !destination.isEmpty, !port.isEmpty else { return nil }
 
         return Connection(proto: proto, process: process, destination: destination, port: port, proxy: proxy, rule: rule)
+    }
+
+    // One line of "log stream --style compact":
+    //
+    //   2026-11-07 15:54:32.627 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Connection UDP ...
+    //
+    // The header has six parts and the message is the sixth, whatever the
+    // message holds. The two lines the tool writes before the first entry do
+    // not have six parts and are not lines of the log.
+    static func parseCompact(_ raw: String) -> Line? {
+        let parts = raw.split(separator: " ", maxSplits: 5, omittingEmptySubsequences: true)
+        guard parts.count == 6 else { return nil }
+        guard let date = compactFormatter.date(from: "\(parts[0]) \(parts[1])") else { return nil }
+        // the tool writes the level in two letters: "Ee" is an error, the rest
+        // is what the extension writes its notes as
+        let level = parts[2] == "Ee" ? "ERROR" : "INFO"
+        let text = String(parts[5])
+        return Line(date: date, text: text, connection: parse(text), level: level)
+    }
+
+    // The stamp of a compact line. It is read on one thread at a time - the
+    // thread that reads the tool's output - and it is never changed.
+    private static let compactFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        return f
+    }()
+}
+
+// Follows the unified log and hands over the lines as they come.
+//
+// The tool is started once and left running: it waits for the entries and
+// costs almost nothing that way. Reading the log by walking it over and over
+// instead costs about half a second every time and shows a stale picture.
+final class UnifiedLogTail {
+    private let process = Process()
+    private let output = Pipe()
+    private let errors = Pipe()
+    private var buffer = Data()
+    private var stopped = false
+
+    /// The line that was read.
+    var onLine: ((ExtensionLogReader.Line) -> Void)?
+
+    /// The tool could not run, or it stopped.
+    var onFailure: ((String) -> Void)?
+
+    /// Starts following the log.
+    func start() {
+        process.executableURL = URL(fileURLWithPath: ExtensionLogReader.toolPath)
+        process.arguments = [
+            "stream",
+            "--style", "compact",
+            "--predicate", "subsystem == \"\(ExtensionLogReader.subsystem)\""
+        ]
+        process.standardOutput = output
+        process.standardError = errors
+        process.standardInput = FileHandle.nullDevice
+
+        // the tool writes why it cannot run to its error output, and in a
+        // sandboxed build that is the whole answer: "Cannot run while sandboxed"
+        let errorPipe = errors.fileHandleForReading
+        Thread.detachNewThread {
+            let text = errorPipe.readDataToEndOfFile()
+            let message = String(decoding: text, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !message.isEmpty { self.onFailure?(message) }
+        }
+
+        process.terminationHandler = { [weak self] finished in
+            guard let self = self else { return }
+            if !self.stopped {
+                self.onFailure?("The tool that reads the unified log stopped (status \(finished.terminationStatus)).")
+            }
+        }
+
+        do {
+            try process.run()
+        } catch {
+            onFailure?("The tool that reads the unified log could not be started: \(error.localizedDescription)")
+            return
+        }
+
+        // the output is read on a thread of its own: a read that waits for
+        // the next line must not wait on the thread that draws the window
+        let pipe = output.fileHandleForReading
+        Thread.detachNewThread {
+            while true {
+                let data = pipe.readData(ofLength: 64 * 1024)
+                if data.isEmpty { break }
+                self.consume(data)
+            }
+        }
+    }
+
+    /// Stops following the log.
+    func stop() {
+        stopped = true
+        if process.isRunning { process.terminate() }
+    }
+
+    private func consume(_ data: Data) {
+        buffer.append(data)
+        let pieces = buffer.split(separator: 0x0A, omittingEmptySubsequences: false)
+        guard let last = pieces.last else { return }
+        buffer = Data(last)
+        for piece in pieces.dropLast() {
+            let raw = String(decoding: piece, as: UTF8.self)
+            guard let line = ExtensionLogReader.parseCompact(raw) else { continue }
+            onLine?(line)
+        }
+    }
+}
+
+// Reads the lines of the last while-seconds, once.
+//
+// The tail starts with the log as it is now, so a window that opens shows
+// nothing until the next connection. This is what fills it with the minute
+// before, so the list starts with something in it.
+enum UnifiedLogBacklog {
+    static func read(seconds: Int, completion: @escaping ([ExtensionLogReader.Line]) -> Void) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ExtensionLogReader.toolPath)
+        process.arguments = [
+            "show",
+            "--last", "\(seconds)s",
+            "--style", "compact",
+            "--predicate", "subsystem == \"\(ExtensionLogReader.subsystem)\""
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+
+        Thread.detachNewThread {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            let text = String(decoding: data, as: UTF8.self)
+            let lines = text.split(separator: "\n").compactMap { ExtensionLogReader.parseCompact(String($0)) }
+            completion(lines)
+        }
+
+        do {
+            try process.run()
+        } catch {
+            completion([])
+        }
     }
 }

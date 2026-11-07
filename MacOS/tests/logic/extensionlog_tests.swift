@@ -49,6 +49,31 @@ let noRule = ExtensionLogReader.parse("Connection UDP Game -> 8.8.4.4:53 via Dir
 check(noRule?.proxy == "Direct", "the proxy keeps its name when there is no rule")
 check(noRule?.rule == nil, "no rule number means no rule number")
 
+// the line the tool that reads the log writes, and the parsing of it
+//
+// 2026-11-07 15:54:32.627 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Connection UDP MiniMax Code Helper -> unknown:unknown via Direct
+let compact = ExtensionLogReader.parseCompact("2026-11-07 15:54:32.627 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Connection UDP MiniMax Code Helper -> unknown:unknown via Direct")
+check(compact != nil, "a line of the tool is read")
+check(compact?.level == "INFO", "a note is not an error")
+check(compact?.text == "Connection UDP MiniMax Code Helper -> unknown:unknown via Direct",
+      "the message is read whole")
+check(compact?.connection?.process == "MiniMax Code Helper", "the connection in it is read")
+check(compact?.connection?.proto == "UDP", "the protocol in it is read")
+
+// an error the extension wrote comes with its own mark
+let errorLine = ExtensionLogReader.parseCompact("2026-11-07 15:54:33.001 Ee com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Tunnel stopping: stopped by the user (1)")
+check(errorLine?.level == "ERROR", "an error is an error")
+check(errorLine?.connection == nil, "an error is not a connection")
+
+// the two lines the tool writes before the first entry are not lines of the log
+check(ExtensionLogReader.parseCompact("Filtering the log data using \"subsystem == \\\"x\\\"\"") == nil,
+      "the header of the tool is not a line")
+check(ExtensionLogReader.parseCompact("Timestamp               Ty Process[PID:TID]") == nil,
+      "the column header of the tool is not a line")
+
+// an empty line is not a line either
+check(ExtensionLogReader.parseCompact("") == nil, "an empty line is not a line")
+
 if failures > 0 {
     print("extension log tests: \(failures) FAILED")
     exit(1)

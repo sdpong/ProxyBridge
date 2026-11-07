@@ -40,35 +40,29 @@ enum CLI {
     // to a sandboxed process, and the /usr/bin/log tool refuses to run in one
     // at all ("Cannot run while sandboxed").
     private static func followExtensionLog() -> Never {
-        guard ExtensionLogReader.isReadable() else {
-            fail("""
-            This build cannot read the unified log.
-              The App Sandbox is what stops it: logd does not serve the system scope to a
-              sandboxed process, and /usr/bin/log refuses to run in one at all. A build
-              that is not sandboxed reads it without trouble.
-            """)
-        }
         say("Reading what the system extension writes (\(ExtensionLogReader.subsystem)). Press Ctrl+C to stop.")
         say("")
-        // the last minute, so a run that starts while traffic is flowing shows something
-        var cursor = Date(timeIntervalSinceNow: -60)
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        while true {
-            // the reader hands them back newest first, and a terminal wants the
-            // other way round
-            let fresh = ExtensionLogReader.lines(since: cursor)
-            for line in fresh.reversed() {
+
+        // the minute before, so a run that starts while traffic is flowing
+        // shows something, and then the tool follows the log as it grows
+        UnifiedLogBacklog.read(seconds: 60) { lines in
+            for line in lines {
                 say("[\(formatter.string(from: line.date))] \(CLIText.safe(line.text))")
             }
-            if let newest = fresh.first?.date {
-                // a hair past the newest line, so a line with the same timestamp is
-                // not read twice and one with the same timestamp is not lost
-                cursor = newest.addingTimeInterval(0.001)
+            let tail = UnifiedLogTail()
+            tail.onLine = { line in
+                say("[\(formatter.string(from: line.date))] \(CLIText.safe(line.text))")
             }
-            Thread.sleep(forTimeInterval: 0.5)
+            tail.onFailure = { reason in
+                CLI.warn(ExtensionLogReader.unreadableReason(reason))
+            }
+            tail.start()
         }
+        // the tail runs until the process is stopped
+        dispatchMain()
     }
 
     // the version of the app this executable belongs to. falls back to the bundle that
@@ -217,8 +211,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     // developer gets no message through it - and the log is read instead.
     private var providerChannelAvailable = false
 
-    // where the log lines were read up to, so the same one is not shown twice
-    private var logCursor: Date?
+    // The tool that follows the unified log, and the flag that says it runs.
+    private var unifiedLogTail: UnifiedLogTail?
+    private var unifiedLogStarted = false
 
     private lazy var timestampFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -468,7 +463,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         CLI.say("  shared container: " + (ExtensionDiagnosis.sharedContainerReachable()
             ? "reachable"
             : "refused by the system (the app group needs the team id of the signature)"))
-        CLI.say("  unified log: " + (ExtensionLogReader.isReadable()
+        CLI.say("  unified log: " + (ExtensionLogReader.canRead()
             ? "readable (the extension's decisions are read from there)"
             : "refused by the system (the app sandbox keeps logd from serving it)"))
 
@@ -697,9 +692,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     private func pollLogs() {
         // The extension writes every decision it made to the unified log, and a
         // build that is not signed by a developer cannot read it back over the
-        // message channel. So the log is read from there.
+        // message channel. So the log is followed there instead.
         if !providerChannelAvailable {
-            pollLogsFromUnifiedLog()
+            followUnifiedLog()
             return
         }
         guard !polling, !stopping, let session = session, let data = try? JSONSerialization.data(withJSONObject: ["action": "getLogs"]) else { return }
@@ -718,27 +713,44 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         }
     }
 
-    // reads the lines the extension wrote to the unified log
-    private func pollLogsFromUnifiedLog() {
+    // Follows the unified log and prints what the extension writes.
+    //
+    // The message channel is how a build that is signed by a developer reads
+    // the log. A build that is not signed follows the unified log instead: the
+    // extension writes every decision it made there.
+    private func followUnifiedLog() {
         guard !stopping else { return }
-        if logCursor == nil { logCursor = Date(timeIntervalSinceNow: -2) }
-        let lines = ExtensionLogReader.lines(since: logCursor)
-        guard !lines.isEmpty else { return }
-        // the reader hands them back newest first, a terminal wants the other way
-        for line in lines.reversed() {
-            let stamp = timestampFormatter.string(from: line.date)
+        // the poll runs every second: the tool is started once and left alone
+        guard !unifiedLogStarted else { return }
+        unifiedLogStarted = true
+        let show: (ExtensionLogReader.Line) -> Void = { [weak self] line in
+            guard let self = self else { return }
+            let stamp = self.timestampFormatter.string(from: line.date)
             // the same split the message channel uses: the connections need the
             // loudest level, the rest is for the level that wants everything but
             // is too noisy for the one in between
             if line.connection != nil {
-                guard verbose >= 2 else { continue }
+                guard self.verbose >= 2 else { return }
                 CLI.say("[\(stamp)] " + CLIText.safe(line.text))
             } else {
-                guard verbose == 1 || verbose == 3 else { continue }
+                guard self.verbose == 1 || self.verbose == 3 else { return }
                 CLI.say("[\(stamp)] [\(line.level)] " + CLIText.safe(line.text))
             }
         }
-        if let newest = lines.first?.date { logCursor = newest.addingTimeInterval(0.001) }
+
+        // the minute before, so a run that starts while traffic is flowing
+        // shows something, and then the tool follows the log as it grows
+        UnifiedLogBacklog.read(seconds: 60) { [weak self] lines in
+            guard let self = self, !self.stopping else { return }
+            for line in lines { show(line) }
+            let tail = UnifiedLogTail()
+            tail.onLine = show
+            tail.onFailure = { reason in
+                CLI.warn(ExtensionLogReader.unreadableReason(reason))
+            }
+            self.unifiedLogTail = tail
+            tail.start()
+        }
     }
 
     // one write per answer, not one per line. everything in an entry came from outside (process
@@ -786,6 +798,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         guard !stopping else { return }
         stopping = true
         logTimer?.invalidate()
+        // the tool that follows the log is a process of its own: it goes with
+        // the command
+        unifiedLogTail?.stop()
         guard let session = session else { exit(code) }
         if !started {
             // stopped while still starting: the tunnel may be up already, don't leave it running
