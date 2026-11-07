@@ -136,6 +136,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         // same as the windows app: true = the proxy gets the host name the app resolved
         // (socks5h / CONNECT host:port), false = it gets the ip. per proxy, on by default
         var sendDomain: Bool
+        // tell the proxy server which application the traffic comes from, so a server
+        // that routes by application can do it. off by default: a server that does not
+        // know about it ignores what is sent
+        var sendAppId: Bool
 
         // name is optional, show type and host:port either way
         var displayName: String {
@@ -143,8 +147,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             return name.isEmpty ? server : "\(name) = \(server)"
         }
 
-        init(id: String = UUID().uuidString, name: String = "", type: String, host: String, port: Int, username: String?, password: String?, sendDomain: Bool = true) {
+        init(id: String = UUID().uuidString, name: String = "", type: String, host: String, port: Int, username: String?, password: String?, sendDomain: Bool = true, sendAppId: Bool = false) {
             self.sendDomain = sendDomain
+            self.sendAppId = sendAppId
             self.id = id
             self.name = name
             self.type = type
@@ -165,6 +170,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             self.password = try c.decodeIfPresent(String.self, forKey: .password)
             // proxies saved before this option existed behave like the windows default
             self.sendDomain = try c.decodeIfPresent(Bool.self, forKey: .sendDomain) ?? true
+            // the application id is a new thing: a proxy that was saved before it
+            // existed sends nothing
+            self.sendAppId = try c.decodeIfPresent(Bool.self, forKey: .sendAppId) ?? false
         }
     }
     
@@ -863,7 +871,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 "proxyType": config.type,
                 "proxyHost": config.host,
                 "proxyPort": config.port,
-                "sendDomainToProxy": config.sendDomain
+                "sendDomainToProxy": config.sendDomain,
+                "sendAppIdToProxy": config.sendAppId
             ]
             if let u = config.username { dict["proxyUsername"] = u }
             if let p = config.password { dict["proxyPassword"] = p }
@@ -1841,7 +1850,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 "proxyType": config.type,
                 "proxyHost": config.host,
                 "proxyPort": config.port,
-                "sendDomainToProxy": config.sendDomain
+                "sendDomainToProxy": config.sendDomain,
+                "sendAppIdToProxy": config.sendAppId
             ]
             if let u = config.username { dict["proxyUsername"] = u }
             if let p = config.password { dict["proxyPassword"] = p }

@@ -11,8 +11,10 @@ struct CLIProxy: Decodable, Equatable {
     let username: String?
     let password: String?
     let sendDomain: Bool
+    // tell the proxy server which application the traffic comes from
+    let sendAppId: Bool
 
-    enum CodingKeys: String, CodingKey { case id, name, type, host, port, username, password, sendDomain }
+    enum CodingKeys: String, CodingKey { case id, name, type, host, port, username, password, sendDomain, sendAppId }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,6 +27,8 @@ struct CLIProxy: Decodable, Equatable {
         password = try c.decodeIfPresent(String.self, forKey: .password)
         // proxies saved before the option existed behave like the app's default
         sendDomain = try c.decodeIfPresent(Bool.self, forKey: .sendDomain) ?? true
+        // the application id is a new thing: a proxy saved before it existed sends nothing
+        sendAppId = try c.decodeIfPresent(Bool.self, forKey: .sendAppId) ?? false
     }
 
     var label: String { "\(type.uppercased()) \(host):\(port)" }

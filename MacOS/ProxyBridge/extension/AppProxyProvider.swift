@@ -489,6 +489,19 @@ class AppProxyProvider: NETransparentProxyProvider {
         let username: String?
         let password: String?
         let sendDomain: Bool   // hand the proxy the host name instead of the ip when it is known
+        // tell the proxy server which application the traffic comes from, so a
+        // server that routes by application can do it. off by default: a proxy
+        // server that does not know about it ignores what is sent.
+        let sendAppId: Bool
+    }
+    // one hop of a chain, with the decision of whether the application id is
+    // sent to it. it is a decision of its own because a proxy server that
+    // refuses the authentication can be asked again without the id.
+    private struct ChainHop {
+        // the id of the proxy in the app, so the health of the hop can be looked up
+        let id: String
+        let config: StoredProxyConfig
+        var sendAppId: Bool
     }
     private var storedProxyConfigs: [String: StoredProxyConfig] = [:]
     // a chain is a list of proxy ids, walked through in order
@@ -986,7 +999,9 @@ class AppProxyProvider: NETransparentProxyProvider {
                 username: configDict["proxyUsername"] as? String,
                 password: configDict["proxyPassword"] as? String,
                 // an app that doesn't send the key keeps the old behavior (ip)
-                sendDomain: configDict["sendDomainToProxy"] as? Bool ?? false
+                sendDomain: configDict["sendDomainToProxy"] as? Bool ?? false,
+                // an app that doesn't send the key keeps the old behavior (nothing is sent)
+                sendAppId: configDict["sendAppIdToProxy"] as? Bool ?? false
             )
         }
         // the chains come with the proxies: a chain is nothing but an ordered
@@ -1299,7 +1314,15 @@ class AppProxyProvider: NETransparentProxyProvider {
                 let chainIds = ChainAction.isChain(rule.action)
                     ? ChainPlan.proxyIds(forAction: rule.action, chains: storedChains)
                     : []
-                let hops = chainIds.compactMap { storedProxyConfigs[$0] }
+                let hops = chainIds.compactMap { id -> ChainHop? in
+                    guard let config = storedProxyConfigs[id] else { return nil }
+                    return ChainHop(id: id, config: config, sendAppId: config.sendAppId)
+                }
+                // the application the traffic belongs to. a proxy server that is told
+                // about it can route by application, the way proxifier lets a rule pick
+                // the proxy but does not tell the proxy who is talking
+                let appIdentity = ProxyAppIdentity.Payload(bundleId: processPath,
+                                                           processName: processName ?? "")
                 // the type of every proxy the chain names. a chain may name the
                 // same proxy twice, so the map is built by hand: the initializer
                 // that demands unique keys would trap on that
@@ -1324,7 +1347,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                         return false
                     }
                     sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(hops), rule: matchedRule?.ruleId)
-                    proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: hops)
+                    proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: hops, appIdentity: appIdentity)
                     return true
                 }
 
@@ -1336,7 +1359,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                     return false
                 }
                 sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: proxyLabel(config), rule: matchedRule?.ruleId)
-                proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: [config])
+                proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: [ChainHop(id: rule.action, config: config, sendAppId: config.sendAppId)], appIdentity: appIdentity)
                 return true
             }
         } else {
@@ -1363,8 +1386,8 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
 
     // the label of a chain: every proxy it walks through, in order
-    private func chainLabel(_ hops: [StoredProxyConfig]) -> String {
-        return hops.map { proxyLabel($0) }.joined(separator: " -> ")
+    private func chainLabel(_ hops: [ChainHop]) -> String {
+        return hops.map { proxyLabel($0.config) }.joined(separator: " -> ")
     }
     
     private func handleUDPFlow(_ flow: NEAppProxyUDPFlow) -> Bool {
@@ -1425,7 +1448,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                         return
                     }
                     // pass the resolved display name (curl), not the raw signing id (curl-<hash>)
-                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password)
+                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.Payload(bundleId: processPath, processName: processName ?? "") : nil)
                 }
                 return true
             }
@@ -1448,14 +1471,19 @@ class AppProxyProvider: NETransparentProxyProvider {
         clientFlow.closeWriteWithError(nil)
     }
 
-    private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow, displayName: String, socksHost: String, socksPort: Int, username: String?, password: String?) {
+    private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow, displayName: String, socksHost: String, socksPort: Int, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload? = nil, allowAppIdRetry: Bool = true) {
         let proxyEndpoint = NWHostEndpoint(hostname: socksHost, port: String(socksPort))
         let tcpConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
         armHandshakeTimeout(flow: clientFlow, connection: tcpConnection)
 
-        // offer username/password auth when we have credentials, same as the tcp path
+        // offer username/password auth when we have credentials, same as the tcp path.
+        // when the application id is to be sent, the user/password method is offered
+        // on its own: a server that prefers "no authentication" would pick that one
+        // and the id would never arrive
         let useAuth = (username != nil && password != nil)
-        let greeting: [UInt8] = useAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00]
+        let methods = ProxyAppIdentity.socks5GreetingMethods(sendAppId: appIdentity != nil, hasCredentials: useAuth)
+        var greeting: [UInt8] = [0x05, UInt8(methods.count)]
+        greeting.append(contentsOf: methods)
 
         tcpConnection.write(Data(greeting)) { [weak self] error in
             guard let self = self else { return }
@@ -1482,15 +1510,36 @@ class AppProxyProvider: NETransparentProxyProvider {
                 case 0x00:
                     self.sendSOCKS5UDPAssociate(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName)
                 case 0x02:
-                    self.sendSOCKS5UDPAuth(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName, username: username ?? "", password: password ?? "")
+                    let credentials = ProxyAppIdentity.socks5Credentials(payload: appIdentity, username: username, password: password)
+                    guard let credentials = credentials else {
+                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP wants a user name and there is none")
+                        return
+                    }
+                    // only a request that carried the application id can be tried again without it
+                    let usedAppId = !useAuth && appIdentity != nil
+                    self.sendSOCKS5UDPAuth(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName, username: credentials.username, password: credentials.password, onAuthRefused: usedAppId && allowAppIdRetry ? { [weak self] in
+                        // the server refused the user name it was given, so the handshake
+                        // starts again without the application id. the control connection
+                        // is given up first: the sweep would otherwise time it out and
+                        // close the flow the new handshake needs
+                        self?.abandonConnection(tcpConnection)
+                        self?.proxyUDPFlowViaSOCKS5(clientFlow, displayName: displayName, socksHost: socksHost, socksPort: socksPort, username: username, password: password, appIdentity: nil, allowAppIdRetry: false)
+                    } : nil)
                 default:
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP no acceptable auth method")
+                    // the server does not want the authentication the id needs, so the
+                    // handshake is tried again without the id
+                    if appIdentity != nil, allowAppIdRetry {
+                        self.abandonConnection(tcpConnection)
+                        self.proxyUDPFlowViaSOCKS5(clientFlow, displayName: displayName, socksHost: socksHost, socksPort: socksPort, username: username, password: password, appIdentity: nil, allowAppIdRetry: false)
+                    } else {
+                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP no acceptable auth method")
+                    }
                 }
             }
         }
     }
 
-    private func sendSOCKS5UDPAuth(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, displayName: String, username: String, password: String) {
+    private func sendSOCKS5UDPAuth(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, displayName: String, username: String, password: String, onAuthRefused: (() -> Void)? = nil) {
         let user = Array(username.utf8), pass = Array(password.utf8)
         guard user.count <= 255, pass.count <= 255 else {
             self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP credentials too long")
@@ -1521,7 +1570,14 @@ class AppProxyProvider: NETransparentProxyProvider {
                 }
 
                 guard let data = data, data.count == 2, data[1] == 0x00 else {
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth rejected")
+                    // the server may have refused the user name it was given. the
+                    // handshake is tried again without the application id before the
+                    // flow is given up
+                    if let onAuthRefused = onAuthRefused {
+                        onAuthRefused()
+                    } else {
+                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth rejected")
+                    }
                     return
                 }
 
@@ -1964,26 +2020,61 @@ class AppProxyProvider: NETransparentProxyProvider {
     // a connection walks through the proxies of a chain, one after the other.
     // the last hop is the one that talks to the destination, the hops before it
     // are asked to open a tunnel to the next proxy.
-    private func proxyTCPFlow(_ flow: NEAppProxyTCPFlow, destination originalDestination: String, displayDestination: String, port: UInt16, process: String, hops: [StoredProxyConfig]) {
+    //
+    // The application id is only sent when the hop is configured to send it.
+    // A proxy server that refuses the authentication it was offered makes the
+    // whole chain walk again without the id: the walk uses one connection, so
+    // a hop that is in the middle of it cannot be asked again on its own.
+    private func proxyTCPFlow(_ flow: NEAppProxyTCPFlow, destination originalDestination: String, displayDestination: String, port: UInt16, process: String, hops: [ChainHop], appIdentity: ProxyAppIdentity.Payload?, allowAppIdRetry: Bool = true) {
         guard let first = hops.first else {
             log("A chain has no proxy in it", level: "ERROR")
             flow.closeReadWithError(FlowFailure.refused)
             flow.closeWriteWithError(FlowFailure.refused)
             return
         }
-        let proxyEndpoint = NWHostEndpoint(hostname: first.host, port: String(first.port))
+        let proxyEndpoint = NWHostEndpoint(hostname: first.config.host, port: String(first.config.port))
         let proxyConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
         armHandshakeTimeout(flow: flow, connection: proxyConnection)
         // remember what this flow is, so the relay can register it as a live connection later
         setFlowDescriptor(FlowDescriptor(process: process, destination: displayDestination, port: port, proxy: chainLabel(hops)), for: proxyConnection)
-        connectHop(flow: flow, proxyConnection: proxyConnection, hops: hops, index: 0, destination: originalDestination, port: port)
+        // the proxy server does not want the authentication the id needs, so the walk
+        // starts again without it. it happens once: the second refusal ends the flow.
+        let onAuthRefused: ((NWTCPConnection) -> Void)? = allowAppIdRetry ? { [weak self] connection in
+            self?.retryChainWithoutAppId(flow, connection: connection, destination: originalDestination, displayDestination: displayDestination, port: port, process: process, hops: hops)
+        } : nil
+        connectHop(flow: flow, proxyConnection: proxyConnection, hops: hops, index: 0, destination: originalDestination, port: port, appIdentity: appIdentity, onAuthRefused: onAuthRefused)
+    }
+
+    // The walk again, without the application id.
+    //
+    // The connection that was refused is given up, but the flow stays open: the new
+    // walk needs it, and it uses a connection of its own.
+    private func retryChainWithoutAppId(_ flow: NEAppProxyTCPFlow, connection: NWTCPConnection, destination: String, displayDestination: String, port: UInt16, process: String, hops: [ChainHop]) {
+        abandonConnection(connection)
+        let withoutId = hops.map { hop in
+            ChainHop(id: hop.id, config: hop.config, sendAppId: false)
+        }
+        proxyTCPFlow(flow, destination: destination, displayDestination: displayDestination, port: port, process: process, hops: withoutId, appIdentity: nil, allowAppIdRetry: false)
+    }
+
+    // The connection is given up, but the flow it belongs to stays open.
+    //
+    // The pending handshake has to go as well: the sweep would otherwise time it out
+    // and close the flow that the new walk is about to use.
+    private func abandonConnection(_ connection: NWTCPConnection) {
+        handshakeLock.lock()
+        pendingHandshakes.removeValue(forKey: ObjectIdentifier(connection))
+        handshakeLock.unlock()
+        connection.cancel()
+        _ = takeFlowDescriptor(for: connection)
     }
 
     // the handshake with one hop of the chain. the tunnel it opens is either the
     // way to the next proxy or, for the last hop, the way to the destination.
-    private func connectHop(flow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, hops: [StoredProxyConfig], index: Int, destination: String, port: UInt16) {
+    private func connectHop(flow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, hops: [ChainHop], index: Int, destination: String, port: UInt16, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((NWTCPConnection) -> Void)? = nil) {
         guard index < hops.count else { return }
-        let config = hops[index]
+        let hop = hops[index]
+        let config = hop.config
         let isLast = index == hops.count - 1
 
         // what this hop is asked to reach
@@ -2013,8 +2104,8 @@ class AppProxyProvider: NETransparentProxyProvider {
             // an intermediate hop is asked to open a tunnel to the next proxy.
             // the name goes over as it is, so the hop resolves it.
             let next = hops[index + 1]
-            targetHost = next.host
-            targetPort = UInt16(clamping: next.port)
+            targetHost = next.config.host
+            targetPort = UInt16(clamping: next.config.port)
         }
 
         // the tunnel is open: keep walking the chain, or start the relay
@@ -2023,19 +2114,23 @@ class AppProxyProvider: NETransparentProxyProvider {
             if index + 1 < hops.count {
                 // only a socks5 proxy may sit in the middle of a chain, so there
                 // is never a leftover to carry over
-                self.connectHop(flow: flow, proxyConnection: proxyConnection, hops: hops, index: index + 1, destination: destination, port: port)
+                self.connectHop(flow: flow, proxyConnection: proxyConnection, hops: hops, index: index + 1, destination: destination, port: port, appIdentity: appIdentity, onAuthRefused: onAuthRefused)
             } else {
                 self.relayData(clientFlow: flow, proxyConnection: proxyConnection, initialData: leftover)
             }
         }
 
+        // the application id is only sent when the hop is configured to send it
+        // and the flow knows which application it belongs to
+        let identity = hop.sendAppId ? appIdentity : nil
+
         switch config.type.lowercased() {
         case "socks5":
-            handleSOCKS5Proxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, password: config.password, onEstablished: onEstablished)
+            handleSOCKS5Proxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, password: config.password, appIdentity: identity, onAuthRefused: onAuthRefused, onEstablished: onEstablished)
         case "socks4":
-            handleSOCKS4Proxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, onEstablished: onEstablished)
+            handleSOCKS4Proxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, appIdentity: identity, onAuthRefused: onAuthRefused, onEstablished: onEstablished)
         case "http":
-            handleHTTPProxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, password: config.password, onEstablished: onEstablished)
+            handleHTTPProxy(clientFlow: flow, proxyConnection: proxyConnection, destination: targetHost, port: targetPort, username: config.username, password: config.password, appIdentity: identity, onEstablished: onEstablished)
         default:
             log("unsupported proxy type: \(config.type)", level: "ERROR")
             flow.closeReadWithError(FlowFailure.refused)
@@ -2045,8 +2140,12 @@ class AppProxyProvider: NETransparentProxyProvider {
     
     // SOCKS4 and SOCKS4a. there is no method negotiation, only a user id in
     // the request, and the reply is eight bytes.
-    private func handleSOCKS4Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, onEstablished: ((Data?) -> Void)? = nil) {
-        guard let request = Socks4Request.build(destination: destination, port: port, username: username) else {
+    private func handleSOCKS4Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((NWTCPConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
+        // the user id is the one that is configured, or the application id when there is none
+        let userId = ProxyAppIdentity.socks4UserId(payload: appIdentity, username: username)
+        // only a request that carried the application id can be tried again without it
+        let usedAppId = (username ?? "").isEmpty && userId != nil
+        guard let request = Socks4Request.build(destination: destination, port: port, username: userId) else {
             log("SOCKS4 cannot ask for \(destination)", level: "ERROR")
             closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
             return
@@ -2082,20 +2181,28 @@ class AppProxyProvider: NETransparentProxyProvider {
                     }
                 } else {
                     self.log("SOCKS4 connect rejected (\(Socks4Request.reason(data)))", level: "ERROR")
-                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                    // the server may have refused the user id it was given. the walk is
+                    // tried again without the application id before the flow is given up
+                    if usedAppId, let onAuthRefused = onAuthRefused {
+                        onAuthRefused(proxyConnection)
+                    } else {
+                        self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                    }
                 }
             }
         }
     }
 
-    private func handleSOCKS5Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, onEstablished: ((Data?) -> Void)? = nil) {
-        var greeting: [UInt8]
-        if username != nil && password != nil {
-            greeting = [0x05, 0x02, 0x00, 0x02]
-        } else {
-            greeting = [0x05, 0x01, 0x00]
-        }
-        
+    private func handleSOCKS5Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((NWTCPConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
+        let hasCredentials = (username != nil && password != nil)
+        // the greeting offers the methods the server may pick. when the application
+        // id is to be sent, the user/password method is offered on its own: a server
+        // that prefers "no authentication" would pick that one and the id would
+        // never arrive
+        let methods = ProxyAppIdentity.socks5GreetingMethods(sendAppId: appIdentity != nil, hasCredentials: hasCredentials)
+        var greeting: [UInt8] = [0x05, UInt8(methods.count)]
+        greeting.append(contentsOf: methods)
+
         let greetingData = Data(greeting)
         proxyConnection.write(greetingData) { [weak self] error in
             if let error = error {
@@ -2103,44 +2210,61 @@ class AppProxyProvider: NETransparentProxyProvider {
                 self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                 return
             }
-            
+
             proxyConnection.readMinimumLength(2, maximumLength: 2) { [weak self] data, error in
                 guard let self = self else { return }
-                
+
                 if let error = error {
                     self.log("SOCKS5 greeting response failed: \(error.localizedDescription)", level: "ERROR")
                     self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
-                
+
                 guard let data = data, data.count == 2 else {
                     self.log("SOCKS5 invalid greeting response", level: "ERROR")
                     self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
-                
+
                 let version = data[0]
                 let method = data[1]
-                
+
                 if version != 0x05 {
                     self.log("SOCKS5 invalid version: \(version)", level: "ERROR")
                     self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.proxyUnreachable)
                     return
                 }
-                
+
                 if method == 0x00 {
                     self.sendSOCKS5ConnectRequest(clientFlow: clientFlow, proxyConnection: proxyConnection, destination: destination, port: port, onEstablished: onEstablished)
                 } else if method == 0x02 {
-                    self.sendSOCKS5Auth(clientFlow: clientFlow, proxyConnection: proxyConnection, destination: destination, port: port, username: username ?? "", password: password ?? "", onEstablished: onEstablished)
+                    // the configured credentials are what the server checks. the
+                    // application id is only used when there are none, because there
+                    // is one field and it can hold one thing
+                    let credentials = ProxyAppIdentity.socks5Credentials(payload: appIdentity, username: username, password: password)
+                    guard let credentials = credentials else {
+                        self.log("SOCKS5 wants a user name and there is none", level: "ERROR")
+                        self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                        return
+                    }
+                    // only a request that carried the application id can be tried again without it
+                    let usedAppId = !hasCredentials && appIdentity != nil
+                    self.sendSOCKS5Auth(clientFlow: clientFlow, proxyConnection: proxyConnection, destination: destination, port: port, username: credentials.username, password: credentials.password, onAuthRefused: usedAppId ? onAuthRefused : nil, onEstablished: onEstablished)
                 } else {
                     self.log("SOCKS5 no acceptable auth method: \(method)", level: "ERROR")
-                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                    // the server does not want the authentication the id needs, so the
+                    // walk is tried again without the id
+                    if appIdentity != nil, let onAuthRefused = onAuthRefused {
+                        onAuthRefused(proxyConnection)
+                    } else {
+                        self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                    }
                 }
             }
         }
     }
-    
-    private func sendSOCKS5Auth(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String, password: String, onEstablished: ((Data?) -> Void)? = nil) {
+
+    private func sendSOCKS5Auth(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String, password: String, onAuthRefused: ((NWTCPConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
         let user = Array(username.utf8), pass = Array(password.utf8)
         guard user.count <= 255, pass.count <= 255 else {
             log("SOCKS5 credentials too long", level: "ERROR")
@@ -2172,7 +2296,13 @@ class AppProxyProvider: NETransparentProxyProvider {
                 
                 guard let data = data, data.count == 2, data[1] == 0x00 else {
                     self.log("SOCKS5 auth failed", level: "ERROR")
-                    self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                    // the server may have refused the user name it was given. the walk
+                    // is tried again without the application id before the flow is given up
+                    if let onAuthRefused = onAuthRefused {
+                        onAuthRefused(proxyConnection)
+                    } else {
+                        self.closeRelay(clientFlow, proxyConnection, error: FlowFailure.refused)
+                    }
                     return
                 }
                 
@@ -2235,12 +2365,12 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func handleHTTPProxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, onEstablished: ((Data?) -> Void)? = nil) {
+    private func handleHTTPProxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload?, onEstablished: ((Data?) -> Void)? = nil) {
         // ipv6 literals must be bracketed in the request line and Host header
         let host = IPv6Address(destination) != nil ? "[\(destination)]" : destination
         var request = "CONNECT \(host):\(port) HTTP/1.1\r\n"
         request += "Host: \(host):\(port)\r\n"
-        
+
         if let username = username, let password = password {
             let credentials = "\(username):\(password)"
             if let credData = credentials.data(using: .utf8) {
@@ -2248,7 +2378,14 @@ class AppProxyProvider: NETransparentProxyProvider {
                 request += "Proxy-Authorization: Basic \(base64Creds)\r\n"
             }
         }
-        
+
+        // the application the traffic comes from, in headers of its own. a proxy
+        // server that does not know them ignores them, like any other header it
+        // does not know
+        for line in ProxyAppIdentity.httpHeaderLines(for: appIdentity) {
+            request += line + "\r\n"
+        }
+
         request += "\r\n"
         
         guard let requestData = request.data(using: .utf8) else {

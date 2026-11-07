@@ -601,7 +601,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
 
     private func proxyMessages(_ profile: CLIProfile) -> [[String: Any]] {
         profile.proxies.map { p in
-            var dict: [String: Any] = ["id": p.id, "proxyType": p.type, "proxyHost": p.host, "proxyPort": p.port, "sendDomainToProxy": p.sendDomain]
+            var dict: [String: Any] = ["id": p.id, "proxyType": p.type, "proxyHost": p.host, "proxyPort": p.port, "sendDomainToProxy": p.sendDomain, "sendAppIdToProxy": p.sendAppId]
             if let u = p.username { dict["proxyUsername"] = u }
             if let pw = p.password { dict["proxyPassword"] = pw }
             return dict

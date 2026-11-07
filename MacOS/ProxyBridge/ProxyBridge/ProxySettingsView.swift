@@ -181,6 +181,7 @@ struct ProxyConfigEditorView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var sendDomain = true
+    @State private var sendAppId = false
     @State private var validationError = ""
 
     private let proxyTypes = ["http", "socks5", "socks4"]
@@ -242,6 +243,17 @@ struct ProxyConfigEditorView: View {
                     }
                     .padding(.vertical, 8)
 
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Send the application name to the proxy server", isOn: $sendAppId)
+                        Text("The proxy server is told which application the traffic comes from, so it can route by application. HTTP proxies get it in a header, SOCKS proxies in the user name field.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("A SOCKS5 proxy that needs a user name of its own keeps it: there is only one user name field.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 8)
+
                     if !validationError.isEmpty {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
@@ -276,6 +288,7 @@ struct ProxyConfigEditorView: View {
                 username = e.username ?? ""
                 password = e.password ?? ""
                 sendDomain = e.sendDomain
+                sendAppId = e.sendAppId
             }
             validateInputs()
         }
@@ -330,7 +343,8 @@ struct ProxyConfigEditorView: View {
             port: port,
             username: username.isEmpty ? nil : username,
             password: password.isEmpty ? nil : password,
-            sendDomain: sendDomain
+            sendDomain: sendDomain,
+            sendAppId: sendAppId
         )
         if existing != nil {
             viewModel.updateProxyConfig(config)

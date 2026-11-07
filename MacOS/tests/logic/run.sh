@@ -15,7 +15,7 @@ run_test() {   # <test file> <extension sources...>
     "$TMP/test"
 }
 
-run_test matcher_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift"
+run_test matcher_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift" "$EXT/ProxyAppIdentity.swift"
 run_test dnsmap_tests.swift "$EXT/DNSMapStore.swift"
 run_test dnspolicy_tests.swift "$EXT/DNSPolicy.swift" "$APP/DNSPolicySettings.swift"
 run_test dnsparser_tests.swift "$EXT/DNSParser.swift"
@@ -28,7 +28,8 @@ run_test processlist_tests.swift "$APP/ProcessList.swift"
 run_test chain_tests.swift "$EXT/ChainAction.swift" "$APP/ProxyChain.swift"
 run_test ppx_tests.swift "$APP/PPXImporter.swift" "$APP/ProxyChain.swift"
 run_test socks4_tests.swift "$EXT/Socks4Request.swift"
-run_test handshake_tests.swift "$APP/ExtensionHandshake.swift" "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift"
+run_test handshake_tests.swift "$APP/ExtensionHandshake.swift" "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift" "$EXT/ProxyAppIdentity.swift"
 run_test extensionlog_tests.swift "$APP/ExtensionLogReader.swift"
 run_test rulepattern_tests.swift "$APP/RulePatternValidator.swift"
 run_test ruleusage_tests.swift "$APP/RuleProgramUsage.swift" "$APP/RuleNameIndex.swift" "$APP/RulePatternValidator.swift" "$APP/ProcessList.swift"
+run_test appid_tests.swift "$EXT/ProxyAppIdentity.swift"
