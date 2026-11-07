@@ -45,7 +45,7 @@ verify_universal() {
 }
 
 verify_universal "$APP_PATH/Contents/MacOS/ProxyBridge"
-EXT_BIN="$APP_PATH/Contents/Library/SystemExtensions/com.interceptsuite.ProxyBridge.extension.systemextension/Contents/MacOS/com.interceptsuite.ProxyBridge.extension"
+EXT_BIN="$APP_PATH/Contents/Library/SystemExtensions/com.sdpong.proxybridge.extension.systemextension/Contents/MacOS/com.sdpong.proxybridge.extension"
 if [ -f "$EXT_BIN" ]; then
     verify_universal "$EXT_BIN"
 fi

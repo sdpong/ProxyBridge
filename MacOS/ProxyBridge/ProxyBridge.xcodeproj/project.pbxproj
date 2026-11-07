@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		8466A1E92EC63C5600A8C2E5 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8466A1E82EC63C5600A8C2E5 /* NetworkExtension.framework */; };
-		8466A1F32EC63C5600A8C2E5 /* com.interceptsuite.ProxyBridge.extension.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 8466A1E62EC63C5600A8C2E5 /* com.interceptsuite.ProxyBridge.extension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		8466A1F32EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 8466A1E62EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,7 +28,7 @@
 			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
 			dstSubfolderSpec = 16;
 			files = (
-				8466A1F32EC63C5600A8C2E5 /* com.interceptsuite.ProxyBridge.extension.systemextension in Embed System Extensions */,
+				8466A1F32EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension in Embed System Extensions */,
 			);
 			name = "Embed System Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -39,7 +39,7 @@
 		1B7672902F421AB400B323D6 /* Signing-Config-app.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-app.xcconfig"; sourceTree = "<group>"; };
 		1B7672932F421ABA00B323D6 /* Signing-Config-ext.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-ext.xcconfig"; sourceTree = "<group>"; };
 		8466A1D32EC63B9400A8C2E5 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		8466A1E62EC63C5600A8C2E5 /* com.interceptsuite.ProxyBridge.extension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = com.interceptsuite.ProxyBridge.extension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
+		8466A1E62EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = com.sdpong.proxybridge.extension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
 		8466A1E82EC63C5600A8C2E5 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
 		846F78F82F14204F00C94754 /* Signing-Config-ext.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-ext.xcconfig"; sourceTree = "<group>"; };
 		84AFF4662F23CAC8007CF0B0 /* Signing-Config-app.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-app.xcconfig"; sourceTree = "<group>"; };
@@ -112,7 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				8466A1D32EC63B9400A8C2E5 /* ProxyBridge.app */,
-				8466A1E62EC63C5600A8C2E5 /* com.interceptsuite.ProxyBridge.extension.systemextension */,
+				8466A1E62EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -171,7 +171,7 @@
 			packageProductDependencies = (
 			);
 			productName = extension;
-			productReference = 8466A1E62EC63C5600A8C2E5 /* com.interceptsuite.ProxyBridge.extension.systemextension */;
+			productReference = 8466A1E62EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension */;
 			productType = "com.apple.product-type.system-extension";
 		};
 /* End PBXNativeTarget section */
@@ -502,7 +502,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MARKETING_VERSION = 4.1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.interceptsuite.ProxyBridge.extension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sdpong.proxybridge.extension;
 				PRODUCT_NAME = "$(inherited)";
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;

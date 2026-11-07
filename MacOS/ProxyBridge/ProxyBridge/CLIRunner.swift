@@ -8,7 +8,7 @@ import SystemExtensions
 // activate the system extension, set up the tunnel, send the profile, and clean up on exit.
 enum CLI {
     static let bundleIdentifier = "com.interceptsuite.ProxyBridge"
-    static let extensionIdentifier = "com.interceptsuite.ProxyBridge.extension"
+    static let extensionIdentifier = "com.sdpong.proxybridge.extension"
     static let maxProfileBytes = 4 * 1024 * 1024
     static var runner: CLIRunner?
     private static var lockDescriptor: Int32 = -1
@@ -225,7 +225,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
                 if let error = error { self.fail("Could not load the network configuration: \(error.localizedDescription)"); return }
                 // only this app's own configuration is reused or changed: the other ones in
                 // the list belong to other builds of ProxyBridge and to other proxy apps.
-                let ours = NetworkConfigOwner.ourManagers(managers ?? [], extensionIdentifier: CLI.extensionIdentifier)
+                let ours = NetworkConfigOwner.ourManagers(managers ?? [])
                 let manager = ours.first ?? NETransparentProxyManager()
                 manager.localizedDescription = NetworkConfigOwner.configDescription
                 manager.isEnabled = true

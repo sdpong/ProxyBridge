@@ -15,8 +15,8 @@ DEVELOPMENT_TEAM = L //edit it
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = Developer ID Application
 CODE_SIGN_ENTITLEMENTS = extension/extensionRelease.entitlements
-PRODUCT_BUNDLE_IDENTIFIER = com.interceptsuite.ProxyBridge.extension
-PRODUCT_MODULE_NAME = com_interceptsuite_ProxyBridge_extension
+PRODUCT_BUNDLE_IDENTIFIER = com.sdpong.proxybridge.extension
+PRODUCT_MODULE_NAME = com_sdpong_proxybridge_extension
 PROVISIONING_PROFILE_SPECIFIER = ProxyBridge Extension Prod
 
 // MARK: - Additional Signing Settings

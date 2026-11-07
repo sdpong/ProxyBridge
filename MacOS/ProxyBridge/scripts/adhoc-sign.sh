@@ -29,7 +29,7 @@ APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP="${1:-$APP_ROOT/output/ProxyBridge.app}"
 APP_ENTITLEMENTS="$APP_ROOT/ProxyBridge/ProxyBridgeRelease.entitlements"
 EXT_ENTITLEMENTS="$APP_ROOT/extension/extensionRelease.entitlements"
-EXT_BINARY="Contents/Library/SystemExtensions/com.interceptsuite.ProxyBridge.extension.systemextension/Contents/MacOS/com.interceptsuite.ProxyBridge.extension"
+EXT_BINARY="Contents/Library/SystemExtensions/com.sdpong.proxybridge.extension.systemextension/Contents/MacOS/com.sdpong.proxybridge.extension"
 
 if [ ! -d "$APP" ]; then
     echo "ERROR: no app bundle at $APP"

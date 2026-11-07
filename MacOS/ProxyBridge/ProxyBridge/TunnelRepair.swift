@@ -38,7 +38,12 @@ nonisolated enum TunnelRepair {
         NETransparentProxyManager.loadAllFromPreferences { managers, loadError in
             if let loadError = loadError { note("could not read the network configuration: \(describe(loadError))", problem: true) }
             let ours = (managers ?? []).filter {
-                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == extensionIdentifier
+                let proto = $0.protocolConfiguration as? NETunnelProviderProtocol
+                // the provider id of this build, or a configuration this app wrote
+                // earlier (the extension id changed once, and the old configuration
+                // is still ours and still broken)
+                if proto?.providerBundleIdentifier == extensionIdentifier { return true }
+                return NetworkConfigOwner.isOurs($0)
             }
             let group = DispatchGroup()
             for manager in ours {

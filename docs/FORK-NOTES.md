@@ -208,6 +208,23 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     否则用户的别的代理开关会被 app 动。
     但**修复路径**例外：隧道已经起不来时，本 bundle id 的旧配置全删掉重建
     （那些配置钉的是早已不存在的哈希，留着只会一直失败）。
+  - **本 fork 的扩展有自己独立的 bundle id**：`com.sdpong.proxybridge.extension`
+    （上游是 `com.interceptsuite.ProxyBridge.extension`）。
+    这不是洁癖，是上面那个坑的根治办法：macOS 解析 provider bundle id 时
+    会从**所有已注册的同名扩展**里挑一个，挑中谁就钉谁的 cdhash。
+    只要两个 build 共用一个 id，旧的那个（尤其是 app 已被删掉的孤儿）
+    就会一直把隧道抢走。换成自己的 id 之后，系统只能挑到我们这一份。
+    - app 自己的 bundle id **没改**（还是 `com.interceptsuite.ProxyBridge`）：
+      改了沙盒容器路径，用户已导入的 profile 与设置就全没了。
+    - 扩展的 `PRODUCT_MODULE_NAME` 也跟着改了
+      （`com_sdpong_proxybridge_extension`），
+      扩展 Info.plist 里的 provider 类名用的是 `$(PRODUCT_MODULE_NAME)`。
+    - 真要用 Developer ID 签名时，描述文件的 App ID 要按新 id 申请，
+      app group 也要按签名团队的 id 申请。
+  - **批准入口要摆在用户看得见的地方**：扩展等待批准时，app 会**先把网络配置写进系统**，
+    这样「系统设置 → 网络 → VPN 与过滤软件」里立刻出现一条
+    「ProxyBridge (fork)」，把它打开就等于批准了扩展——
+    比让用户自己去找「登录项与扩展」里的扩展条目靠谱得多。
 
 ### 代理链
 

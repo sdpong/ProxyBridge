@@ -18,21 +18,24 @@ enum NetworkConfigOwner {
     static let key = "owner"
     static let value = "sdpong.ProxyBridge.fork"
     // the name shows in System Settings > Network > VPN & Filters. It says which
-    // build it belongs to, so two configurations of ProxyBridge can be told apart.
-    static let configDescription = "ProxyBridge Transparent Proxy (fork)"
+    // build it belongs to, so two configurations of ProxyBridge can be told apart,
+    // and it is short enough not to be cut off there.
+    static let configDescription = "ProxyBridge (fork)"
 
     static func mark(_ proto: NETunnelProviderProtocol) {
         proto.providerConfiguration = [key: value]
     }
 
-    // true only for the configurations this app wrote
-    static func isOurs(_ manager: NETransparentProxyManager, extensionIdentifier: String) -> Bool {
+    // true only for the configurations this app wrote. The marker is what says so,
+    // not the provider bundle id: the id of the extension changed once, and a
+    // configuration that was written before that still belongs to this app and has
+    // to be updated instead of duplicated.
+    static func isOurs(_ manager: NETransparentProxyManager) -> Bool {
         guard let proto = manager.protocolConfiguration as? NETunnelProviderProtocol else { return false }
-        return proto.providerBundleIdentifier == extensionIdentifier &&
-               proto.providerConfiguration?[key] as? String == value
+        return proto.providerConfiguration?[key] as? String == value
     }
 
-    static func ourManagers(_ managers: [NETransparentProxyManager], extensionIdentifier: String) -> [NETransparentProxyManager] {
-        managers.filter { isOurs($0, extensionIdentifier: extensionIdentifier) }
+    static func ourManagers(_ managers: [NETransparentProxyManager]) -> [NETransparentProxyManager] {
+        managers.filter { isOurs($0) }
     }
 }

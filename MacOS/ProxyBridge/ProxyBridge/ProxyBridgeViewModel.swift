@@ -54,7 +54,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private let trimToEntries = 400
     private let logPollingInterval = 1.0
     private let flowPollingInterval = 1.0
-    private let extensionIdentifier = "com.interceptsuite.ProxyBridge.extension"
+    private let extensionIdentifier = "com.sdpong.proxybridge.extension"
     private let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
@@ -647,7 +647,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
 
-            let ours = NetworkConfigOwner.ourManagers(managers ?? [], extensionIdentifier: self.extensionIdentifier)
+            let ours = NetworkConfigOwner.ourManagers(managers ?? [])
             if let existing = ours.first,
                let session = existing.connection as? NETunnelProviderSession,
                session.status != .disconnected && session.status != .invalid {
@@ -660,6 +660,12 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 self.submitExtensionActivationRequest()
             }
         }
+        // Put the network configuration into the system right away, even when the
+        // extension is not approved yet. It shows up in System Settings > Network >
+        // VPN & Filters, and switching it on is what approves the extension - so the
+        // user gets the switch where they look for it instead of having to find the
+        // extension in another pane.
+        ensureNetworkConfiguration()
     }
     
     private func submitExtensionActivationRequest() {
@@ -671,19 +677,20 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         OSSystemExtensionManager.shared.submitRequest(request)
     }
     
-    func startProxy() {
+    // Writes this app's network configuration. Only the configurations this app wrote
+    // are reused or changed: the other ones in the list belong to other builds of
+    // ProxyBridge and to other proxy apps; taking them over would switch the user's
+    // own proxy off.
+    private func ensureNetworkConfiguration(completion: ((NETransparentProxyManager) -> Void)? = nil) {
         NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
-            
+
             if let error = error {
                 self.addLog("ERROR", "Failed to load managers: \(error.localizedDescription)")
                 return
             }
-            
-            // only this app's own configuration is reused or changed. the other
-            // configurations in the list belong to other builds of ProxyBridge and to
-            // other proxy apps; taking them over would switch the user's own proxy off.
-            let ours = NetworkConfigOwner.ourManagers(managers ?? [], extensionIdentifier: self.extensionIdentifier)
+
+            let ours = NetworkConfigOwner.ourManagers(managers ?? [])
             let manager = ours.first ?? NETransparentProxyManager()
             manager.localizedDescription = NetworkConfigOwner.configDescription
             manager.isEnabled = true
@@ -693,16 +700,21 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             providerProtocol.serverAddress = "ProxyBridge"
             NetworkConfigOwner.mark(providerProtocol)
             manager.protocolConfiguration = providerProtocol
-            
+
             manager.saveToPreferences { saveError in
                 if let saveError = saveError {
                     self.addLog("ERROR", "Failed to save preferences: \(saveError.localizedDescription)")
                     return
                 }
-                
-                self.addLog("INFO", "Configuration saved")
-                self.reloadAndStartTunnel(manager: manager)
+                completion?(manager)
             }
+        }
+    }
+    
+    func startProxy() {
+        ensureNetworkConfiguration { manager in
+            self.addLog("INFO", "Configuration saved")
+            self.reloadAndStartTunnel(manager: manager)
         }
     }
 

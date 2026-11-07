@@ -984,7 +984,9 @@ class AppProxyProvider: NETransparentProxyProvider {
         let processPath = metaData.sourceAppSigningIdentifier
         
         // never proxy our own traffic, it would loop
-        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.interceptsuite.ProxyBridge.extension" {
+        // our own bundle ids: the app and the extension. the old extension id is still
+        // listed so that a build that was not updated does not proxy itself either.
+        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.sdpong.proxybridge.extension" || processPath == "com.interceptsuite.ProxyBridge.extension" {
             return false
         }
 
@@ -1094,7 +1096,9 @@ class AppProxyProvider: NETransparentProxyProvider {
         let processName = getProcessName(from: metaData)
         let displayName = processName ?? processPath
         
-        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.interceptsuite.ProxyBridge.extension" {
+        // our own bundle ids: the app and the extension. the old extension id is still
+        // listed so that a build that was not updated does not proxy itself either.
+        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.sdpong.proxybridge.extension" || processPath == "com.interceptsuite.ProxyBridge.extension" {
             return false
         }
         
