@@ -1767,6 +1767,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
 
     // The same, for a line that came out of the unified log.
     private func makeActivityLog(_ line: ExtensionLogReader.Line) -> ActivityLog? {
+        // the state of the dns proxy is not an event. it is written every few
+        // seconds, and it has its own place: the dns settings window
+        guard !line.text.hasPrefix("DNSStatus ") else { return nil }
         activityIdCounter &+= 1
         return ActivityLog(
             id: activityIdCounter,

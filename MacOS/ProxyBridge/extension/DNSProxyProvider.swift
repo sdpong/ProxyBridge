@@ -145,7 +145,7 @@ class DNSProxyProvider: NEDNSProxyProvider {
     // the status line is written at most this often, so a busy resolver does not
     // fill the log with it
     private var lastStatusAt: TimeInterval = 0
-    private let statusInterval: TimeInterval = 5
+    private let statusInterval: TimeInterval = 10
 
     // writes what the provider is doing, so the app can show it
     private func writeStatus(running: Bool, force: Bool = false) {
