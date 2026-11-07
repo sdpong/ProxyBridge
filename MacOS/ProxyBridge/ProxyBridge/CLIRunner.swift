@@ -239,23 +239,38 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
                 // only this app's own configuration is reused or changed: the other ones in
                 // the list belong to other builds of ProxyBridge and to other proxy apps.
                 let ours = NetworkConfigOwner.ourManagers(managers ?? [])
-                let manager = ours.first ?? NETransparentProxyManager()
-                manager.localizedDescription = NetworkConfigOwner.configDescription
-                manager.isEnabled = true
-                let proto = NETunnelProviderProtocol()
-                proto.providerBundleIdentifier = CLI.extensionIdentifier
-                proto.serverAddress = "ProxyBridge"
-                NetworkConfigOwner.mark(proto)
-                manager.protocolConfiguration = proto
-                manager.saveToPreferences { saveError in
+                if ours.count > 1 {
+                    // more than one configuration of this app is in the system: an earlier
+                    // build wrote one under a different app bundle id and it was never
+                    // removed. The one that belongs to an app that is not installed can
+                    // never start, and macOS shows them all with the same name. All of
+                    // them go and one new one is written, which also gives the new one the
+                    // code signature of the extension that is installed now.
+                    CLI.say("Found \(ours.count) saved network configurations of this app. Removing the old ones and writing a single new one.")
+                    NetworkConfigOwner.clearAll(ours) { self.writeTunnelConfiguration() }
+                    return
+                }
+                self.writeTunnelConfiguration(managers: ours)
+            }
+        }
+    }
+
+    private func writeTunnelConfiguration(managers: [NETransparentProxyManager] = []) {
+        let manager = managers.first ?? NETransparentProxyManager()
+        manager.localizedDescription = NetworkConfigOwner.configDescription
+        manager.isEnabled = true
+        let proto = NETunnelProviderProtocol()
+        proto.providerBundleIdentifier = CLI.extensionIdentifier
+        proto.serverAddress = "ProxyBridge"
+        NetworkConfigOwner.mark(proto)
+        manager.protocolConfiguration = proto
+        manager.saveToPreferences { saveError in
+            DispatchQueue.main.async {
+                if let saveError = saveError { self.fail("Could not save the network configuration: \(saveError.localizedDescription)"); return }
+                manager.loadFromPreferences { loadError in
                     DispatchQueue.main.async {
-                        if let saveError = saveError { self.fail("Could not save the network configuration: \(saveError.localizedDescription)"); return }
-                        manager.loadFromPreferences { loadError in
-                            DispatchQueue.main.async {
-                                if let loadError = loadError { self.fail("Could not reload the network configuration: \(loadError.localizedDescription)"); return }
-                                self.startTunnel(manager)
-                            }
-                        }
+                        if let loadError = loadError { self.fail("Could not reload the network configuration: \(loadError.localizedDescription)"); return }
+                        self.startTunnel(manager)
                     }
                 }
             }

@@ -38,4 +38,29 @@ enum NetworkConfigOwner {
     static func ourManagers(_ managers: [NETransparentProxyManager]) -> [NETransparentProxyManager] {
         managers.filter { isOurs($0) }
     }
+
+    // More than one configuration of this app can be in the system at the same
+    // time: an earlier build wrote one under a different app bundle id, and it
+    // was never removed. macOS shows every one of them in System Settings >
+    // Network > VPN & Filters, so the list fills up with copies of the same
+    // name and the person cannot tell which one is in use.
+    //
+    // A configuration belongs to the app that wrote it, and only that app can
+    // start it: a configuration that belongs to an app that is not installed
+    // any more is dead ("the VPN app used by this configuration is not
+    // installed") and can only be removed and written again. macOS does not
+    // say which app owns a configuration, so when there is more than one, all
+    // of them go and one new one is written.
+    //
+    // One new configuration is written anyway, so the code signature macOS
+    // records for it is the one of the extension that is installed now.
+    static func clearAll(_ managers: [NETransparentProxyManager], completion: @escaping () -> Void) {
+        guard !managers.isEmpty else { completion(); return }
+        let group = DispatchGroup()
+        for manager in managers {
+            group.enter()
+            manager.removeFromPreferences { _ in group.leave() }
+        }
+        group.notify(queue: .main) { completion() }
+    }
 }

@@ -691,17 +691,36 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             }
 
             let ours = NetworkConfigOwner.ourManagers(managers ?? [])
-            let manager = ours.first ?? NETransparentProxyManager()
-            manager.localizedDescription = NetworkConfigOwner.configDescription
-            manager.isEnabled = true
+            if ours.count > 1 {
+                // More than one configuration of this app is in the system: an
+                // earlier build wrote one under a different app bundle id and it
+                // was never removed. The one that belongs to an app that is not
+                // installed can never start, and macOS shows them all with the
+                // same name, so the person cannot tell which one is in use. All
+                // of them go and one new one is written.
+                self.addLog("INFO", "Found \(ours.count) saved network configurations of this app. Removing the old ones and writing a single new one.")
+                NetworkConfigOwner.clearAll(ours) {
+                    self.writeNetworkConfiguration(completion: completion)
+                }
+                return
+            }
+            self.writeNetworkConfiguration(managers: ours, completion: completion)
+        }
+    }
 
-            let providerProtocol = NETunnelProviderProtocol()
-            providerProtocol.providerBundleIdentifier = self.extensionIdentifier
-            providerProtocol.serverAddress = "ProxyBridge"
-            NetworkConfigOwner.mark(providerProtocol)
-            manager.protocolConfiguration = providerProtocol
+    private func writeNetworkConfiguration(managers: [NETransparentProxyManager] = [], completion: ((NETransparentProxyManager) -> Void)? = nil) {
+        let manager = managers.first ?? NETransparentProxyManager()
+        manager.localizedDescription = NetworkConfigOwner.configDescription
+        manager.isEnabled = true
 
-            manager.saveToPreferences { saveError in
+        let providerProtocol = NETunnelProviderProtocol()
+        providerProtocol.providerBundleIdentifier = self.extensionIdentifier
+        providerProtocol.serverAddress = "ProxyBridge"
+        NetworkConfigOwner.mark(providerProtocol)
+        manager.protocolConfiguration = providerProtocol
+
+        manager.saveToPreferences { saveError in
+            DispatchQueue.main.async {
                 if let saveError = saveError {
                     self.addLog("ERROR", "Failed to save preferences: \(saveError.localizedDescription)")
                     return
