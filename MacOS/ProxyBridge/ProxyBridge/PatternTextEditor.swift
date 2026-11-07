@@ -128,8 +128,12 @@ final class ClickAwareTextView: NSTextView {
     var onClick: ((Int) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
+        // The click is reported before the text view takes it over. Its own
+        // handling runs a tracking loop that waits for the button to come back
+        // up, so a report made afterwards can be late or lost when the window
+        // is rebuilt while the loop is running.
         let point = convert(event.locationInWindow, from: nil)
         onClick?(characterIndexForInsertion(at: point))
+        super.mouseDown(with: event)
     }
 }

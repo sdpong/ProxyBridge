@@ -115,6 +115,45 @@ eq("the host a wildcard covers is found",
 eq("a host nobody names is not found",
    RulePatternMatch.hostPattern(host: "gitlab.com", entries: hostIndex.enabledEntries), nil)
 
+// MARK: - what a click in the editor lands on
+
+let boxEntries = RulePatternValidator.entries("curl; *.zjtelecom.cn; example.com",
+                                              separators: RulePatternValidator.programSeparators)
+eq("the click lands on the entry it points at",
+   RuleClickLookup.entry(at: 0, in: boxEntries)?.text, "curl")
+eq("the click in the middle of an entry is still that entry",
+   RuleClickLookup.entry(at: 3, in: boxEntries)?.text, "curl")
+eq("the click lands on the entry after it",
+   RuleClickLookup.entry(at: 7, in: boxEntries)?.text, "*.zjtelecom.cn")
+eq("the click lands on the last entry",
+   RuleClickLookup.entry(at: 30, in: boxEntries)?.text, "example.com")
+eq("a click on the space between two entries is on nothing",
+   RuleClickLookup.entry(at: 5, in: boxEntries)?.text, nil)
+eq("a click past the end is on nothing",
+   RuleClickLookup.entry(at: 500, in: boxEntries)?.text, nil)
+
+let offIndex = RuleNameIndexBuilder.build(
+    [RuleNameSource(id: "7", name: "spare", entries: "*.zjtelecom.cn", enabled: false)],
+    separators: RulePatternValidator.programSeparators)
+eq("the rule that is off that names the entry is found",
+   RuleClickLookup.offOwner(for: boxEntries[1], names: offIndex, isHost: false), "spare")
+eq("a rule that is off that names nothing else is not found",
+   RuleClickLookup.offOwner(for: boxEntries[0], names: offIndex, isHost: false), nil)
+eq("a rule that is in effect is not a warning",
+   RuleClickLookup.offOwner(for: boxEntries[1], names: index, isHost: false), nil)
+
+let offHostIndex = RuleNameIndexBuilder.build(
+    [RuleNameSource(id: "8", name: "web", entries: "*.example.com", enabled: false)],
+    separators: RulePatternValidator.hostSeparators,
+    keepRangesTogether: true)
+let hostEntries = RulePatternValidator.entries("example.com",
+                                               separators: RulePatternValidator.hostSeparators,
+                                               keepRangesTogether: true)
+eq("the rule that is off that names the host is found",
+   RuleClickLookup.offOwner(for: hostEntries[0], names: offHostIndex, isHost: true), "web")
+eq("a host is not looked up as a program",
+   RuleClickLookup.offOwner(for: hostEntries[0], names: offHostIndex, isHost: false), nil)
+
 if fails > 0 {
     print("\(fails) test(s) failed")
     exit(1)

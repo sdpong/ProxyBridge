@@ -60,6 +60,30 @@ enum RuleNameIndexBuilder {
     }
 }
 
+// What the click in the editor lands on.
+//
+// The editor tells the app at which character the user pointed. The app has to
+// work out which entry of the box that is, and whether a rule that is switched
+// off already names it.
+enum RuleClickLookup {
+    // the entry the character sits in
+    static func entry(at index: Int, in entries: [RulePatternEntry]) -> RulePatternEntry? {
+        for entry in entries where NSLocationInRange(index, entry.range) {
+            return entry
+        }
+        return nil
+    }
+
+    // the rule that is switched off and names this entry, if there is one
+    static func offOwner(for entry: RulePatternEntry, names: RuleNameIndex, isHost: Bool) -> String? {
+        let pattern = isHost
+            ? RulePatternMatch.hostPattern(host: entry.text, entries: names.disabledEntries)
+            : RulePatternMatch.programEntryPattern(entry: entry.text, entries: names.disabledEntries)
+        guard let pattern = pattern else { return nil }
+        return names.disabledOwner[pattern]
+    }
+}
+
 // Whether a pattern of one rule names the same thing as an entry of another.
 // The rules here are the ones the matcher in the extension uses, so that what
 // the app says about a rule is what the extension does with it.

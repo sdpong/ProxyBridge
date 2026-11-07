@@ -796,16 +796,10 @@ struct RuleEditorView: View {
     // the user clicked in the box. an entry that a rule which is switched off
     // names is worth a word about, but it can still be used here.
     private func handleClick(_ index: Int, entries: [RulePatternEntry], names: RuleNameIndex, isHost: Bool) {
-        for entry in entries {
-            guard NSLocationInRange(index, entry.range) else { continue }
-            let pattern = isHost
-                ? RulePatternMatch.hostPattern(host: entry.text, entries: names.disabledEntries)
-                : RulePatternMatch.programEntryPattern(entry: entry.text, entries: names.disabledEntries)
-            guard let pattern = pattern, let owner = names.disabledOwner[pattern] else { return }
-            notice = RuleNotice(title: "Also named by a rule that is off",
-                                message: "\"\(entry.text)\" is also named by the rule \"\(owner)\", which is switched off. It can still be used here.")
-            return
-        }
+        guard let entry = RuleClickLookup.entry(at: index, in: entries) else { return }
+        guard let owner = RuleClickLookup.offOwner(for: entry, names: names, isHost: isHost) else { return }
+        notice = RuleNotice(title: "Also named by a rule that is off",
+                            message: "\"\(entry.text)\" is also named by the rule \"\(owner)\", which is switched off. It can still be used here.")
     }
 
     @ViewBuilder
