@@ -258,6 +258,47 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     「ProxyBridge (fork)」，把它打开就等于批准了扩展——
     比让用户自己去找「登录项与扩展」里的扩展条目靠谱得多。
 
+### 扩展 → app 的回读通道：两道闸门，各有各的钥匙
+
+扩展是**另一个进程**，app 要看到它做了什么，只有两条路。**两条都被卡住过，卡住的原因不一样**：
+
+| 通道 | 谁在管 | 现状 |
+|---|---|---|
+| provider 消息通道（`sendProviderMessage`） | **签名** | 没开发者签名 → 一条消息都过不去 |
+| 统一日志（`OSLogStore(scope: .system)`） | **App Sandbox** | 沙盒进程 → logd 拒绝 |
+
+- **provider 通道卡在签名上**：`amfid` 报
+  `not valid: Code=-424 "The file is adhoc signed but contains restricted entitlements"`。
+  扩展收不到任何消息，但**隧道是好的**（规则随 `startTunnel(options:)` 下发，那条路系统不查签名）。
+- **统一日志这条路卡在沙盒上**，实测三种表现：
+  - `OSLogStore(scope: .system)` → `OSLogErrorDomain Code=10 "Connection to logd failed"`
+  - `Process` 派生 `/usr/bin/log` → 工具自己拒绝：`log: Cannot run while sandboxed`
+  - 直接读 `/var/log/system.log`、`/Library/Preferences/com.apple.networkextension.plist` → 权限拒绝
+
+  **去掉 App Sandbox 之后三条全通**：同一个进程读同一份日志，读到 1 万 9 千条扩展写的记录。
+- **统一日志里有什么**：扩展把**每一条连接判定**都写在那儿，格式固定——
+  ```
+  Connection TCP MiniMax Code Helper -> agent.minimax.cn:443 via Direct (rule 26)
+  Connection TCP WeChat -> 240e:978:d04:3001::1d:80 via SOCKS5 127.0.0.1:9991 (rule 3)
+  Flow #2300 from com.openai.codex.helper
+  ```
+  所以**连接列表与 Activity Log 都能从日志读回来**，
+  只有「正在进行的连接 + 字节数」和「带密码的代理」还需要 provider 通道。
+- **去掉沙盒的代价**（都要处理）：
+  - **偏好设置换地方**：沙盒里在
+    `~/Library/Containers/<bundle id>/Data/Library/Preferences/<bundle id>.plist`，
+    去掉沙盒后在 `~/Library/Preferences/<bundle id>.plist`。
+    **用户的规则和代理会「消失」**——`PreferencesMigration` 在读任何设置之前把它们搬过去。
+  - **app group 失效**：没有沙盒就没有 group container，
+    `containerURL(forSecurityApplicationGroupIdentifier:)` 直接返回 nil。
+    DNS 策略本来就随隧道启动参数下发（`payload["dnsPolicy"]`），所以不受影响。
+  - **不能再上 App Store**：App Store 要求沙盒。Developer ID 直发不需要沙盒。
+  - 扩展**保留沙盒**：它是碰流量的那部分，读回日志不需要动它。
+- **两把钥匙的分工**：Developer ID 打开 provider 通道（正在进行的连接、带密码代理），
+  去掉沙盒打开统一日志（连接列表、Activity Log）。
+  **两个都要**才是完整的客户端——这也是为什么将来拿到付费会员之后，
+  这套改动不用推倒重来。
+
 ### macOS 系统扩展的登记、显示与清理（实测）
 
 这一节记的是「用户看得到、但说不清」的那几个现象，都是实测出来的。
