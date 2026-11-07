@@ -44,6 +44,17 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // Then the rules and the proxies never arrive and nothing is proxied, so the
     // window has to say why instead of showing an empty list.
     @Published private(set) var extensionProblem: String? = nil
+    // The long form of the notice, when there is one. The bar itself says
+    // what the problem is in one line, and this is what the "Details" button
+    // shows.
+    @Published private(set) var extensionProblemDetails: String? = nil
+    // Whether the notice in the window is a standing condition - something
+    // that is true from the first launch until the app is signed - rather
+    // than something that happened. A standing condition can be pushed away
+    // for good; an event can not.
+    private var extensionProblemIsStanding = false
+    // where a pushed-away standing notice is remembered
+    private static let standingNoticeDismissedKey = "standingExtensionNoticeDismissed"
     // what the notice in the window offers. Not every problem has a command:
     // the one that says the extension does not answer at all is fixed by a
     // signature, not by a command in a terminal.
@@ -936,6 +947,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 // not help, the system would bind it to the same extension again.
                 if ExtensionDiagnosis.isMissingProviderApp(reason: reason) {
                     self.extensionProblem = ExtensionDiagnosis.missingProviderAppExplanation
+                    self.extensionProblemDetails = nil
+                    self.extensionProblemIsStanding = false
                     self.extensionProblemAction = .copyRemoveCommand
                     self.addLog("ERROR", ExtensionDiagnosis.missingProviderAppExplanation)
                     self.addLog("ERROR", "Command: \(ExtensionDiagnosis.removeOldExtensionsCommand)")
@@ -1052,6 +1065,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             case .ok(let api, let version):
                 self.providerChannelAvailable = true
                 self.extensionProblem = nil
+                self.extensionProblemDetails = nil
+                self.extensionProblemIsStanding = false
                 self.addLog("INFO", "Extension handshake ok (protocol \(api), version \(version))")
             case .mismatch(let api):
                 self.providerChannelAvailable = false
@@ -1087,6 +1102,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private func reportExtensionMismatch(api: Int? = nil) {
         let detail = api.map { " (it speaks protocol \($0))" } ?? ""
         extensionProblem = "The system bound the tunnel to another, older ProxyBridge extension\(detail). That one does not understand this version's rules, so nothing is proxied. Take it out with the command below, then switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions."
+        extensionProblemDetails = nil
+        extensionProblemIsStanding = false
         extensionProblemAction = .copyRemoveCommand
         addLog("ERROR", "The extension that answered is not this build\(detail). The rules and the proxies never reach it, so no connection is proxied. Take the older extension out and approve this one.")
     }
@@ -1096,15 +1113,29 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // to be deleted. There is no command for that, so the notice has no button.
     private func reportExtensionUnreachable() {
         let signed = ExtensionDiagnosis.hasDeveloperSignature()
-        extensionProblem = ExtensionDiagnosis.extensionUnreachableExplanation(hasDeveloperSignature: signed).joined(separator: " ")
+        extensionProblemDetails = ExtensionDiagnosis.extensionUnreachableExplanation(hasDeveloperSignature: signed).joined(separator: " ")
         if signed {
             // A build with a team id is refused by nothing, so an extension that
             // does not answer is an extension that is not this build. That one
             // has to be taken out, and there is a command for it.
+            extensionProblem = ExtensionDiagnosis.extensionUnreachableSummary(hasDeveloperSignature: true)
             extensionProblemAction = .copyRemoveCommand
             addLog("ERROR", "The extension does not answer over the provider channel. The tunnel is up, so the extension on the other end is not this build. Take the older extension out and approve this one.")
         } else {
+            // A build that is not signed by a developer never gets a message
+            // through, and it never will: this is a standing condition and not
+            // something that happened. So the bar says what it is in one line,
+            // the rest is one click away, and being pushed away is remembered -
+            // otherwise it is back on every launch and the person learns to
+            // read past it.
             extensionProblemAction = .none
+            extensionProblemIsStanding = true
+            if UserDefaults.standard.bool(forKey: Self.standingNoticeDismissedKey) {
+                extensionProblem = nil
+                extensionProblemDetails = nil
+            } else {
+                extensionProblem = ExtensionDiagnosis.extensionUnreachableSummary(hasDeveloperSignature: false)
+            }
             addLog("ERROR", "The extension does not answer over the provider channel: this build is not signed by a developer, and macOS does not let it talk to its own system extension. The traffic is proxied (the rules went with the start of the tunnel), but this window cannot read the connection list back.")
         }
     }
@@ -1465,8 +1496,16 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // The user pushed the notice away for this session. The problem stays in the
     // activity log, and Settings still has the way to act on it.
     func dismissExtensionProblem() {
+        // A standing condition is remembered as pushed away: it is true from
+        // the first launch until the app is signed, and a notice that comes
+        // back on every launch is a notice the person learns to read past.
+        if extensionProblemIsStanding {
+            UserDefaults.standard.set(true, forKey: Self.standingNoticeDismissedKey)
+        }
         extensionProblem = nil
+        extensionProblemDetails = nil
         extensionProblemAction = .none
+        extensionProblemIsStanding = false
         needsExtensionApproval = false
     }
     

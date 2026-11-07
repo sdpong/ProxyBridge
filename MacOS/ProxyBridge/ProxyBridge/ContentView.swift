@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var connectionSearchText = ""
     @State private var activitySearchText = ""
+    // whether the long form of the notice is shown
+    @State private var showNoticeDetails = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,6 +47,7 @@ struct ContentView: View {
                 noticeBar(
                     icon: "exclamationmark.triangle.fill",
                     text: problem,
+                    details: viewModel.extensionProblemDetails,
                     actionTitle: nil,
                     action: {},
                     dismiss: { viewModel.dismissExtensionProblem() }
@@ -60,28 +63,48 @@ struct ContentView: View {
             )
         }
     }
-    
+
     // The notice can be pushed away for this session. The problem stays in the activity
     // log, and the menu has the way to act on it, so hiding it does not hide it for good.
     // actionTitle is optional: a notice that explains a problem nobody can fix
     // with a command has no button to offer.
-    private func noticeBar(icon: String, text: String, actionTitle: String?, action: @escaping () -> Void, dismiss: @escaping () -> Void) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .foregroundColor(Color.orange)
-            Text(text)
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            if let actionTitle = actionTitle {
-                Button(actionTitle, action: action)
-            }
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
+    //
+    // details is optional too: a notice that is a standing condition says what it
+    // is in one line and keeps the long form one click away. Five lines of text
+    // about something that is true on every launch is a third of the window.
+    private func noticeBar(icon: String, text: String, details: String? = nil, actionTitle: String?, action: @escaping () -> Void, dismiss: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: icon)
                     .foregroundColor(Color.orange)
+                Text(text)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if details != nil {
+                    Button(showNoticeDetails ? "Hide details" : "Details") {
+                        showNoticeDetails.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(Color.orange)
+                }
+                if let actionTitle = actionTitle {
+                    Button(actionTitle, action: action)
+                }
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .foregroundColor(Color.orange)
+                }
+                .buttonStyle(.plain)
+                .help("Hide this notice for now")
             }
-            .buttonStyle(.plain)
-            .help("Hide this notice for now")
+            if let details = details, showNoticeDetails {
+                Text(details)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 26)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

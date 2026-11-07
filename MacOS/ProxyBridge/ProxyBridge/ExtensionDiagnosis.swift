@@ -80,6 +80,19 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         return Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") != nil
     }
 
+    // The one line that says what the notice is about.
+    //
+    // The explanation itself is three paragraphs, and it is true from the first
+    // launch of an unsigned build until the app is signed. Putting all of it in
+    // the window took a third of the window every time the app opened, so the
+    // bar says what it is in one line and the rest is one click away.
+    static func extensionUnreachableSummary(hasDeveloperSignature: Bool) -> String {
+        if hasDeveloperSignature {
+            return "The extension does not answer. The tunnel is up, so the extension on the other end is not this build."
+        }
+        return "This build is not signed by a developer, so the open connections and the switches the extension reads while it runs are not available. The traffic is proxied all the same, and the connection list comes from the system log."
+    }
+
     // The extension does not answer at all.
     //
     // This is not the same thing as "another build answered": here nothing came
