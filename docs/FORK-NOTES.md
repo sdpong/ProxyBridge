@@ -282,8 +282,24 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
   Connection TCP WeChat -> 240e:978:d04:3001::1d:80 via SOCKS5 127.0.0.1:9991 (rule 3)
   Flow #2300 from com.openai.codex.helper
   ```
-  所以**连接列表与 Activity Log 都能从日志读回来**，
-  只有「正在进行的连接 + 字节数」和「带密码的代理」还需要 provider 通道。
+  所以**连接列表与 Activity Log 都能从日志读回来**。
+- **带密码的代理不需要 provider 通道**——这一条以前写错了。
+  用户名和密码跟着隧道启动参数一起下去，那条路系统不查签名。
+  实测（本地 RFC1929 认证的 SOCKS5 服务端）：正确密码 `AUTH OK` 并连上，
+  错误密码 `AUTH FAIL`。
+  还留在 provider 通道上的只有**「正在进行的连接 + 字节数」**和**扩展的运行期开关**。
+- **provider 通道不通时，运行期的改动怎么到扩展**：
+  改规则、改代理、改链以前只有一条路——往 provider 通道发消息。
+  通道被签名拦下时，**窗口里的改动就静悄悄地什么也没发生**。
+  现在两条路：通道通 → 照旧发消息；通道不通 → **重启隧道**，
+  改动随隧道启动参数一起下去。重启会等一小会儿再动（连改三条规则只重启一次），
+  并且等隧道真的停了才启动新的。
+  实测：改一个代理的端口 → `Tunnel stopping` → `Tunnel starting` →
+  之后的流量走新端口。
+- **provider 通道不通时，`sendProviderMessage` 是抛异常的**。
+  旧代码用 `try?` 吞了异常，**回调再也不来**，而 `stopProxy()` 等的就是那个回调，
+  于是**隧道停不掉**：退出程序时隧道还在跑、规则还留着。
+  现在发送失败也会回调，调用方知道「不会有回答了」，照常往下走。
 - **去掉沙盒的代价**（都要处理）：
   - **偏好设置换地方**：沙盒里在
     `~/Library/Containers/<bundle id>/Data/Library/Preferences/<bundle id>.plist`，
@@ -294,7 +310,7 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     DNS 策略本来就随隧道启动参数下发（`payload["dnsPolicy"]`），所以不受影响。
   - **不能再上 App Store**：App Store 要求沙盒。Developer ID 直发不需要沙盒。
   - 扩展**保留沙盒**：它是碰流量的那部分，读回日志不需要动它。
-- **两把钥匙的分工**：Developer ID 打开 provider 通道（正在进行的连接、带密码代理），
+- **两把钥匙的分工**：Developer ID 打开 provider 通道（正在进行的连接、运行期开关），
   去掉沙盒打开统一日志（连接列表、Activity Log）。
   **两个都要**才是完整的客户端——这也是为什么将来拿到付费会员之后，
   这套改动不用推倒重来。
