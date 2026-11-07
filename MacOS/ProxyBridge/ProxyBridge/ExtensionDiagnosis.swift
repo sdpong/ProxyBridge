@@ -20,7 +20,7 @@ enum ExtensionDiagnosis {
     }
 
     static let missingProviderAppExplanation =
-    "macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxyBridge is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Take it out with the command below, then start the proxy again."
+    "macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxyBridge is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Copy the command and run it in the Terminal to take the old extension out, then start the proxy again. macOS finishes the removal at the next restart."
 
     // The command finds the team ids itself, so it works on any machine. It only
     // touches extensions with ProxyBridge's bundle id that were signed by a team;

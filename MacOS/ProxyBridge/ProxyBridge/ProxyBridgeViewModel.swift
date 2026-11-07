@@ -1185,6 +1185,13 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
     }
     
+    // The user pushed the notice away for this session. The problem stays in the
+    // activity log, and Settings still has the way to act on it.
+    func dismissExtensionProblem() {
+        extensionProblem = nil
+        needsExtensionApproval = false
+    }
+    
     func clearConnections() {
         connections.removeAll()
     }

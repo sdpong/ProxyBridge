@@ -33,19 +33,23 @@ struct ContentView: View {
                 action: {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(ExtensionDiagnosis.removeOldExtensionsCommand, forType: .string)
-                }
+                },
+                dismiss: { viewModel.dismissExtensionProblem() }
             )
         } else if viewModel.needsExtensionApproval {
             noticeBar(
                 icon: "lock.shield.fill",
                 text: "macOS has to approve ProxyBridge once, and until it does no traffic can be proxied. Look in System Settings > General > Login Items & Extensions > Network Extensions (on macOS 26 and later: Network > VPN & Filters) and switch ProxyBridge on. If ProxyBridge is not listed there, this build did not pass the system's signature check and needs a build signed with a Developer ID.",
                 actionTitle: "Open System Settings",
-                action: openSystemSettings
+                action: openSystemSettings,
+                dismiss: { viewModel.dismissExtensionProblem() }
             )
         }
     }
     
-    private func noticeBar(icon: String, text: String, actionTitle: String, action: @escaping () -> Void) -> some View {
+    // The notice can be pushed away for this session. The problem stays in the activity
+    // log, and the menu has the way to act on it, so hiding it does not hide it for good.
+    private func noticeBar(icon: String, text: String, actionTitle: String, action: @escaping () -> Void, dismiss: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .foregroundColor(Color.orange)
@@ -54,6 +58,12 @@ struct ContentView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             Button(actionTitle, action: action)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .foregroundColor(Color.orange)
+            }
+            .buttonStyle(.plain)
+            .help("Hide this notice for now")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
