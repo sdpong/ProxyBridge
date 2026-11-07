@@ -211,7 +211,11 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             // the DNS entry is set up now, not after the tunnel is up. when the tunnel never starts, a DNS
             // proxy that was meant to be off must not stay on
             CLI.say(self.profile?.dnsEnabled == true ? "DNS proxy: on" : "DNS proxy: off (host name rules and send hostname do not work)")
-            self.applyDNSProxy()
+            // the diagnosis has no profile, so it must not touch the DNS entry of the
+            // profile that is in use
+            if !self.diagnoseOnly {
+                self.applyDNSProxy()
+            }
             self.configureTunnel()
         }
     }
@@ -548,7 +552,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     // still points at an older build is silently ignored: the system never starts the
     // dns proxy provider, no ip -> name map is built, and every host name rule misses.
     // Writing it again is what makes macOS look at the extension that is installed now.
-    private func applyDNSProxy() {
+    private func applyDNSProxy(attempt: Int = 0) {
         let dns = NEDNSProxyManager.shared()
         let wanted = profile?.dnsEnabled ?? false
         dns.loadFromPreferences { loadError in
@@ -567,7 +571,20 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             dns.localizedDescription = "ProxyBridge DNS"
             dns.isEnabled = true
             dns.saveToPreferences { error in
-                if let error = error { CLI.warn("DNS proxy setup failed: \(error.localizedDescription)") }
+                if let error = error {
+                    // The system refuses the configuration while the extension is
+                    // still waiting for its approval, and it says so with a bare
+                    // "permission denied". It is a state that passes, so it is
+                    // worth a few tries: without the dns proxy there is no ip ->
+                    // name map, and every rule that names a host misses.
+                    if attempt < 5 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.applyDNSProxy(attempt: attempt + 1)
+                        }
+                        return
+                    }
+                    CLI.warn("DNS proxy setup failed: \(error.localizedDescription). Host name rules and send hostname will not work.")
+                }
             }
         }
     }

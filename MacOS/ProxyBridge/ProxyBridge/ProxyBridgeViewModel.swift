@@ -786,7 +786,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // ad-hoc build gets a new signature every time it is made. A configuration that still
     // points at an older build is ignored by the system: the dns proxy provider is never
     // started, the ip -> name map stays empty, and every host name rule misses.
-    func applyDNSProxy() {
+    func applyDNSProxy(attempt: Int = 0) {
         guard extensionReady else { return }
         let enable = isDNSEnabled
         let manager = NEDNSProxyManager.shared()
@@ -802,7 +802,19 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 manager.saveToPreferences { error in
                     DispatchQueue.main.async {
                         if let error = error {
-                            self.addLog("ERROR", "DNS proxy setup failed: \(error.localizedDescription)")
+                            // The system refuses the configuration while the
+                            // extension is still waiting for its approval, and it
+                            // says so with a bare "permission denied". It is a state
+                            // that passes, so it is worth a few tries: without the
+                            // dns proxy there is no ip -> name map, and every rule
+                            // that names a host misses.
+                            if attempt < 5 {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                    self.applyDNSProxy(attempt: attempt + 1)
+                                }
+                                return
+                            }
+                            self.addLog("ERROR", "DNS proxy setup failed: \(error.localizedDescription). Host name rules and send hostname will not work.")
                         } else {
                             self.addLog("INFO", "DNS proxy enabled")
                         }
