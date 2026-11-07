@@ -409,8 +409,15 @@ struct RuleEditorView: View {
         self.onCommit = onCommit
 
         _ruleName = State(initialValue: existingRule?.name ?? "")
-        _processNames = State(initialValue: existingRule?.processNames ?? "*")
-        _targetHosts = State(initialValue: existingRule?.targetHosts ?? "*")
+        // the rule is stored with the entries in one line, the editor shows
+        // them one per line
+        _processNames = State(initialValue: RulePatternValidator.displayForm(
+            existingRule?.processNames ?? "*",
+            separators: RulePatternValidator.programSeparators))
+        _targetHosts = State(initialValue: RulePatternValidator.displayForm(
+            existingRule?.targetHosts ?? "*",
+            separators: RulePatternValidator.hostSeparators,
+            keepRangesTogether: true))
         _targetPorts = State(initialValue: existingRule?.targetPorts ?? "*")
         _selectedProtocol = State(initialValue: existingRule?.ruleProtocol ?? "TCP")
         // default to first proxy config if there is one, otherwise direct
@@ -443,19 +450,27 @@ struct RuleEditorView: View {
                                 Label("Choose...", systemImage: "app.badge")
                             }
                         }
-                        TextField("*", text: $processNames)
-                            .textFieldStyle(.roundedBorder)
-                        Text("Matches the bundle id or the process name. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *")
+                        PatternTextEditor(text: $processNames,
+                                          highlights: problemRanges(processEntries),
+                                          isInvalid: !processEntries.filter({ $0.hasProblem }).isEmpty)
+                            .frame(height: 96)
+                        problemList(processEntries)
+                        Text("Matches the bundle id or the process name, one per line. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    
-                    formField(
-                        label: "Target hosts",
-                        placeholder: "*",
-                        text: $targetHosts,
-                        hint: "IP: 127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1   Domain: github.com; *.github.com; *google*"
-                    )
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Target hosts").fontWeight(.medium)
+                        PatternTextEditor(text: $targetHosts,
+                                          highlights: problemRanges(hostEntries),
+                                          isInvalid: !hostEntries.filter({ $0.hasProblem }).isEmpty)
+                            .frame(height: 96)
+                        problemList(hostEntries)
+                        Text("One per line. IP: 127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1   Domain: github.com; *.github.com; *google*")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     HStack(spacing: 4) {
                         Image(systemName: viewModel.isDNSEnabled ? "info.circle" : "exclamationmark.triangle.fill")
                             .foregroundColor(viewModel.isDNSEnabled ? .secondary : .orange)
@@ -560,8 +575,19 @@ struct RuleEditorView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
+                .disabled(hasProblems)
             }
             .padding(.horizontal)
+
+            if hasProblems {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
+                    Text("The marked entries cannot work. Fix them before saving.")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+                .padding(.horizontal)
+            }
         }
         .sheet(isPresented: $showProcessPicker) {
             ProcessPickerView { values in
@@ -569,9 +595,48 @@ struct RuleEditorView: View {
             }
         }
         .padding()
-        .frame(width: 600, height: 620)
+        .frame(width: 600, height: 720)
     }
-    
+
+    // the entries of the program list the user typed
+    private var processEntries: [RulePatternEntry] {
+        return RulePatternValidator.checkPrograms(processNames)
+    }
+
+    // the entries of the host list the user typed
+    private var hostEntries: [RulePatternEntry] {
+        return RulePatternValidator.checkHosts(targetHosts)
+    }
+
+    // something in the lists cannot work
+    private var hasProblems: Bool {
+        return processEntries.contains { $0.hasProblem } || hostEntries.contains { $0.hasProblem }
+    }
+
+    // the entries that are marked in the editor
+    private func problemRanges(_ entries: [RulePatternEntry]) -> [NSRange] {
+        return entries.filter { $0.hasProblem }.map { $0.range }
+    }
+
+    // what is wrong with the entries, said out loud under the box
+    @ViewBuilder
+    private func problemList(_ entries: [RulePatternEntry]) -> some View {
+        let broken = entries.filter { $0.hasProblem }
+        if !broken.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(broken.enumerated()), id: \.offset) { _, entry in
+                    HStack(alignment: .top, spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                        Text("\"\(entry.text)\" \(entry.summary)")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func formField(label: String, placeholder: String, text: Binding<String>, hint: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -584,28 +649,29 @@ struct RuleEditorView: View {
                 .foregroundColor(.secondary)
         }
     }
-    
+
     // the picked programs are added to the list the matcher reads, which is
     // separated by ';' or ','. a program that is already in the list is not
     // added twice.
     private func addProcesses(_ values: [String]) {
         guard !values.isEmpty else { return }
-        var existing = processNames
-            .components(separatedBy: CharacterSet(charactersIn: ",;"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        for value in values where !existing.contains(value) {
+        var existing = RulePatternValidator
+            .entries(processNames, separators: RulePatternValidator.programSeparators)
+            .map { $0.text }
+        for value in values where !existing.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
             existing.append(value)
         }
-        processNames = existing.joined(separator: "; ")
+        processNames = existing.joined(separator: "\n")
     }
 
     private func saveRule() {
         let rule = ProxyRule(
             localId: existingRule?.localId ?? UUID().uuidString,
             name: ruleName.trimmingCharacters(in: .whitespaces),
-            processNames: processNames,
-            targetHosts: targetHosts,
+            processNames: RulePatternValidator.storedForm(
+                processNames, separators: RulePatternValidator.programSeparators),
+            targetHosts: RulePatternValidator.storedForm(
+                targetHosts, separators: RulePatternValidator.hostSeparators, keepRangesTogether: true),
             targetPorts: targetPorts,
             ruleProtocol: selectedProtocol,
             action: selectedAction,
