@@ -117,11 +117,24 @@ jobs:
         shell: bash
 
       - name: Locate bpftool
+        # "bpftool" is a virtual package on Ubuntu, but linux-tools-common ships a real binary as
+        # /usr/sbin/bpftool, which is already on PATH. Only older images kept it inside the
+        # versioned linux-tools-<kernel> directories, and the runner's cloud kernel has no
+        # matching linux-tools package at all, so look on PATH first and fall back to those dirs.
         run: |
-          shopt -s nullglob
-          candidates=(/usr/lib/linux-tools/*/bpftool)
-          [ ${#candidates[@]} -gt 0 ] || { echo "bpftool binary not found"; ls /usr/lib/linux-tools 2>&1 || true; exit 1; }
-          echo "BPFTOOL=${candidates[0]}" >> "$GITHUB_ENV"
+          if command -v bpftool >/dev/null 2>&1; then
+            BPFTOOL="$(command -v bpftool)"
+          else
+            shopt -s nullglob
+            candidates=(/usr/lib/linux-tools/*/bpftool)
+            if [ ${#candidates[@]} -eq 0 ]; then
+              echo "bpftool binary not found" >&2
+              ls /usr/lib/linux-tools 2>&1 || true
+              exit 1
+            fi
+            BPFTOOL="${candidates[0]}"
+          fi
+          echo "BPFTOOL=${BPFTOOL}" >> "$GITHUB_ENV"
         shell: bash
 
       - name: Install Build Wrapper
