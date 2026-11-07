@@ -9,8 +9,8 @@
 #define PB_VER_MINOR 8
 #define PB_VER_PATCH 0
 #define PB_VER_BUILD 0
-#define PB_VER_STR   "4.8.0"     // narrow, for the .rc VERSIONINFO strings
-#define PB_VER_STRW  L"4.8.0"    // wide, for the C/About UI
+#define PB_VER_STR   "4.9.0"     // narrow, for the .rc VERSIONINFO strings
+#define PB_VER_STRW  L"4.9.0"    // wide, for the C/About UI
 
 #define IDI_APPICON                 101
 

@@ -201,6 +201,38 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     修法只有一个：**把那个孤儿扩展从系统里摘掉**
     （`sudo systemextensionsctl uninstall <团队ID> com.interceptsuite.ProxyBridge.extension`），
     之后新建的配置才会钉到当前这个扩展的哈希上，隧道才起得来。
+  - **DNS 代理配置也按 cdhash 认扩展，坑与上面同一个**：
+    `NEDNSProxyManager` 保存的那条配置里也有 `ProviderDesignatedRequirement` = `cdhash H"…"`。
+    ad-hoc 签名每构建一次哈希就变一次，配置里记的还是旧构建的哈希时，
+    系统**直接忽略这条配置**——不报错、不启动 DNS provider，
+    于是 `ip -> name` 映射永远是空的，**所有按域名写的规则全部落空**。
+    隧道配置每次启动都重写（所以隧道一直好），DNS 配置当年是「已经是想要的状态就不动」，
+    正好踩中这个坑。
+    **修法：DNS 配置也每次启动都重写**，让系统去看当前装着的那个扩展。
+    症状识别：扩展日志里有 `DNS provider is taking a query` 就是起来了，
+    一行都没有就是配置过期了。
+  - **provider 消息通道会按 app 的签名被系统拦下**：
+    `sendProviderMessage` 走的是 app 与它自己的系统扩展之间的通道，
+    系统核对签名，**ad-hoc 签名一条消息都过不去**。
+    症状：隧道起得来、扩展在跑，但扩展**一条规则都没有**，
+    所有连接直连，窗口里的连接列表永远是空的。
+    实测：`amfid` 报 `not valid: Code=-424 "The file is adhoc signed but contains
+    restricted entitlements"`，`containermanagerd` 报 app group 被拒
+    （`Group containers identifiers should be prefixed by requestor's team ID`）。
+    **规则、代理列表、链与 DNS 策略改为随 `startTunnel(options:)` 下发**——
+    系统把启动参数交给 provider 时不查签名，这条路是通的。
+    通道本身保留：正式签名的构建仍然走通道（那条路还能读回连接列表和日志）。
+    - 实测还排除了两个看似合理的猜测：**扩展 bundle id 的前缀规则**不是原因
+      （把 app id 改成 `com.sdpong.proxybridge` 让扩展 id 成为其前缀，照样失败）；
+      **共享容器通道**也不成立——app 拿到的是用户级容器，
+      扩展（root）拿到的是 `/private/var/root/Library/Group Containers/…`，
+      根本不是同一个容器。
+    - **Developer ID 是「窗口读得到连接列表」的正解**：
+      通道恢复之后，窗口里的连接列表、Activity Log、实时流才有数据。
+      不签名也能看到扩展的判定——判定写进了统一日志。
+  - **统一日志会丢行**：`log show` 读的是落盘的日志库，量大了会掉行，
+      看起来像「流没到扩展」。排查时用 `log stream` 实时抓，
+      别用 `log show | tail`——`tail` 也会把关键行切掉。
   - **app 不能抢别人的网络配置**：macOS 把所有 app 的透明代理配置放在同一个列表里，
     而它们的 provider bundle id 可能一模一样（上游的 ProxyBridge 和本 fork 就是）。
     所以配置里要写自己的标记（`providerConfiguration`），
