@@ -27,11 +27,52 @@ struct ProxyChain: Identifiable, Codable, Equatable {
         self.proxyIds = proxyIds
     }
 
+    // The hops of a chain travel as json between the app, the command line and
+    // the extension, and the key they travel under is "proxies": the Proxifier
+    // import writes it, the command line reads it and the extension reads it.
+    //
+    // The app used to write "proxyIds" instead, and a profile saved that way
+    // was read back with no hops at all: the chain looked empty, the extension
+    // was given a chain with nothing to walk through and dropped it. Both keys
+    // are read now, and "proxies" is the one that is written.
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case proxies
+        case proxyIds
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(String.self, forKey: .id)
         self.name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        self.proxyIds = try c.decodeIfPresent([String].self, forKey: .proxyIds) ?? []
+        if let hops = try c.decodeIfPresent([String].self, forKey: .proxies) {
+            self.proxyIds = hops
+        } else {
+            self.proxyIds = try c.decodeIfPresent([String].self, forKey: .proxyIds) ?? []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(proxyIds, forKey: .proxies)
+    }
+
+    // the hops of a chain that was read as a plain json object. the object can
+    // come from a snapshot on disk, from an import or from the command line,
+    // and each of them may spell the key its own way.
+    static func hops(from object: [String: Any]) -> [String] {
+        if let hops = object["proxies"] as? [String] { return hops }
+        if let hops = object["proxyIds"] as? [String] { return hops }
+        return []
+    }
+
+    // the chains of a snapshot, in the shape everything else reads
+    static func list(from data: Data?) -> [ProxyChain] {
+        guard let data, let chains = try? JSONDecoder().decode([ProxyChain].self, from: data) else { return [] }
+        return chains
     }
 }
 

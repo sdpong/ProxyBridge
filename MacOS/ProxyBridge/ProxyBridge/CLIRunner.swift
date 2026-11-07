@@ -594,7 +594,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             [
                 "id": chain["id"] as? String ?? "",
                 "name": chain["name"] as? String ?? "",
-                "proxies": chain["proxies"] as? [String] ?? []
+                // the hops may sit under either key: a profile saved by the app
+                // and a profile that came from Proxifier spell them differently
+                "proxies": ProxyChain.hops(from: chain)
             ]
         }
     }

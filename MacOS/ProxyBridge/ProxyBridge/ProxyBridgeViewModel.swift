@@ -435,12 +435,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     }
 
     private func loadChains() {
-        if let data = UserDefaults.standard.data(forKey: "chains"),
-           let saved = try? JSONDecoder().decode([ProxyChain].self, from: data) {
-            chains = saved
-        } else {
-            chains = []
-        }
+        chains = ProxyChain.list(from: UserDefaults.standard.data(forKey: "chains"))
     }
 
     // MARK: - Profiles
@@ -620,8 +615,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? dnsPolicy.toDictionary(),
             "proxyConfigs": configsJSON,
             "proxyRules": d.array(forKey: profileRulesKey(name)) ?? [],
-            "proxyChains": d.data(forKey: profileChainsKey(name))
-                .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
+            // the chains go out in the current shape, so an exported profile
+            // is read the same way whatever build wrote the snapshot
+            "proxyChains": ProxyChain.list(from: d.data(forKey: profileChainsKey(name)))
+                .map { ["id": $0.id, "name": $0.name, "proxies": $0.proxyIds] }
         ]
         return try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
     }
@@ -663,10 +660,18 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
            let policyData = try? JSONSerialization.data(withJSONObject: policyDict) {
             d.set(policyData, forKey: profileDNSPolicyKey(name))
         }
-        // the chains travel with the profile
-        if let chainsJSON = obj["proxyChains"],
-           let chainsData = try? JSONSerialization.data(withJSONObject: chainsJSON) {
-            d.set(chainsData, forKey: profileChainsKey(name))
+        // the chains travel with the profile. they are read through the decoder and
+        // written back in the current shape, so a profile that came in with the
+        // hops under another key keeps its hops.
+        if let chainsJSON = obj["proxyChains"] as? [[String: Any]] {
+            let chains = chainsJSON.map { chain in
+                ProxyChain(id: chain["id"] as? String ?? UUID().uuidString,
+                           name: chain["name"] as? String ?? "",
+                           proxyIds: ProxyChain.hops(from: chain))
+            }
+            if let chainsData = try? JSONEncoder().encode(chains) {
+                d.set(chainsData, forKey: profileChainsKey(name))
+            }
         }
 
         profiles.append(name)
