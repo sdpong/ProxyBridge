@@ -277,10 +277,13 @@ struct ProxyRulesView: View {
             loadRules()
         }
         .sheet(isPresented: $showAddRule) {
-            RuleEditorView(viewModel: viewModel, onCommit: { commitRule($0) })
+            RuleEditorView(viewModel: viewModel, otherRules: rules, onCommit: { commitRule($0) })
         }
         .sheet(item: $editingRule) { rule in
-            RuleEditorView(viewModel: viewModel, existingRule: rule, onCommit: { commitRule($0) })
+            RuleEditorView(viewModel: viewModel,
+                           existingRule: rule,
+                           otherRules: rules.filter { $0.id != rule.id },
+                           onCommit: { commitRule($0) })
         }
         .alert(notice?.title ?? "", isPresented: Binding(
             get: { notice != nil },
@@ -482,6 +485,9 @@ struct ProxyRulesView: View {
 struct RuleEditorView: View {
     @ObservedObject var viewModel: ProxyBridgeViewModel
     var existingRule: ProxyRule?
+    // the rules other than the one being edited. the rules list knows them,
+    // the editor only needs to know what they name.
+    var otherRules: [ProxyRule] = []
     var onCommit: (ProxyRule) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -497,9 +503,13 @@ struct RuleEditorView: View {
 
     private var isEditMode: Bool { existingRule != nil }
 
-    init(viewModel: ProxyBridgeViewModel, existingRule: ProxyRule? = nil, onCommit: @escaping (ProxyRule) -> Void) {
+    init(viewModel: ProxyBridgeViewModel,
+         existingRule: ProxyRule? = nil,
+         otherRules: [ProxyRule] = [],
+         onCommit: @escaping (ProxyRule) -> Void) {
         self.viewModel = viewModel
         self.existingRule = existingRule
+        self.otherRules = otherRules
         self.onCommit = onCommit
 
         _ruleName = State(initialValue: existingRule?.name ?? "")
@@ -753,25 +763,21 @@ struct RuleEditorView: View {
     // the ones that are switched off.
     private var usedPrograms: RuleNameIndex {
         RuleNameIndexBuilder.build(otherRuleSources { $0.processNames },
-                                   separators: RulePatternValidator.programSeparators,
-                                   excluding: existingRule?.localId ?? "")
+                                   separators: RulePatternValidator.programSeparators)
     }
 
     // the hosts the other rules name, the same way
     private var usedHosts: RuleNameIndex {
         RuleNameIndexBuilder.build(otherRuleSources { $0.targetHosts },
                                    separators: RulePatternValidator.hostSeparators,
-                                   keepRangesTogether: true,
-                                   excluding: existingRule?.localId ?? "")
+                                   keepRangesTogether: true)
     }
 
     // every rule but the one being edited
     private func otherRuleSources(_ entries: (ProxyRule) -> String) -> [RuleNameSource] {
-        let dicts = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
-        return dicts.map { ProxyRule(dict: $0) }
-            .map {
-                RuleNameSource(id: $0.localId, name: $0.name, entries: entries($0), enabled: $0.enabled)
-            }
+        return otherRules.map {
+            RuleNameSource(id: $0.localId, name: $0.name, entries: entries($0), enabled: $0.enabled)
+        }
     }
 
     // the entries another rule that is in effect names. they are marked in
