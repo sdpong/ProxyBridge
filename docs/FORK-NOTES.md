@@ -52,6 +52,15 @@ cd Windows
 `run_tests.ps1` 里的 `static_checks` 段会做纯文本一致性检查（版本号、loc.h 枚举与翻译表同序、
 每个 `test_*.c` 都注册在册等），这些不需要编译就能跑。
 
+**版本号是写在一个地方的，但宏才是真源**。`Windows/gui/res/resource.h` 里的
+`PB_VER_MAJOR / PB_VER_MINOR / PB_VER_PATCH` 三个数字宏拼出期望版本，
+`static_checks` 再拿它去比 `PB_VER_STR`、`PB_VER_STRW`、安装包的 `PRODUCT_VERSION` /
+`VIProductVersion`、`cli/main.c` 的 `VERSION`、`src/pb_internal.h` 的 `VERSION`、
+`app.manifest` 的 `assemblyIdentity version` 和 `CONTRIBUTING.md` 里的安装包名——
+**一共十一个地方**。升版本时只改字符串、漏了数字宏（或反过来），
+九项检查会一起红，`test_gui_misc` 里「解析 `PB_VER_STRW` 和宏要相等」那项也会红。
+改版本号时，**先把三个数字宏改对，再照着它们核对所有字符串**。
+
 ### macOS（需要 Xcode）
 
 ```bash
@@ -69,7 +78,7 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 |---|---|---|
 | Build Windows | ✅ 绿 | 跑全部测试（含 GUI 测试）、编译并用 NSIS 生成安装包，产物是 workflow artifact |
 | Build macOS | ✅ 绿 | 本 fork 没有签名证书时构建通用二进制 App 与 pkg，产物是 workflow artifact |
-| Build Linux | ❌ 红 | runner 镜像缺 `bpftool`（eBPF 工具链），与本 fork 的改动无关 |
+| Build Linux | ✅ 绿 | 曾经长期红：runner 换镜像后 `bpftool` 找不到、测试有泄漏，都已修（见下） |
 | SonarQube / CodeQL | ❌ 红 | 需要上游的 Sonar 服务端令牌 / 授权，fork 里没有 |
 
 **注意：secret 不能出现在 step 级的 `if:` 里**（GitHub 会判定工作流非法）。需要按 secret 取分支时，
@@ -88,6 +97,26 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 **注意：没有证书也要 ad-hoc 签一次**。macOS 不许从没有 entitlement 的 app 里装系统扩展，
 所以 CI 在打包前跑 `scripts/adhoc-sign.sh`（详见「macOS 系统扩展」一节）。
 装了之后仍然需要用户在系统设置里开一次开关，这是 macOS 的规矩，构建替不了。
+
+### runner 换镜像之后，Linux 构建连着坏了两处
+
+runner 换到新镜像后，`Build Linux` **每次 push 都红**，而且是**一处接一处**——
+修掉一个才看得见下一个：
+
+1. **找不到 `bpftool`**。Ubuntu 上 `bpftool` 是虚拟包，真正的二进制由 `linux-tools-common`
+   装成 `/usr/sbin/bpftool`（本来就在 PATH 上）；workflow 偏偏去
+   `/usr/lib/linux-tools/*/bpftool` 里找，而 runner 跑在云内核上，没有对应的
+   `linux-tools` 包，那个 glob 只能找到空目录。改成**先看 PATH，再退回版本目录**
+   （`build-linux.yml`、`release-linux.yml`、`codeql.yml`、`sonarqube.yml` 四处都改了）。
+2. **`Linux/gui/tests/boot_test.c` 有一处内存泄漏**。测试假定 `/usr/bin/true`
+   一定是普通的 root 文件，但新镜像上它不是，于是 `boot_path_trusted()` 返回了拒绝理由，
+   而测试没释放这个字符串，LeakSanitizer 直接把构建判死。
+   改成用 `/`（任何 Linux 上都是 root 拥有的目录）测可信路径；
+   `/usr/bin/true` 则**两种答案都接受**，但要求「拒绝必须带理由」且「理由不许留下」。
+
+**Linux 侧的测试是开着 ASan/LSan 的**：测试里任何一处泄漏都会让整个构建失败。
+所以在 Linux 侧写测试时，`g_strdup*` 出来的字符串都要有明确的释放点，
+「函数会给我一个理由字符串」这种约定，调用方（包括测试）必须负责释放。
 
 ### 发一个 release
 
