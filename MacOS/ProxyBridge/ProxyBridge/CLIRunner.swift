@@ -211,6 +211,21 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     private var extensionActive = false
     private var started = false
     private var stopping = false
+
+    // whether the extension answers over the provider channel. the system checks
+    // that channel against the app's signature, so a build that is not signed by a
+    // developer gets no message through it - and the log is read instead.
+    private var providerChannelAvailable = false
+
+    // where the log lines were read up to, so the same one is not shown twice
+    private var logCursor: Date?
+
+    private lazy var timestampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
     // a tunnel start that macOS stops again at once (#282) is retried once with a fresh configuration
     private var startAttempt = 0
     private var startFailureHandled = false
@@ -494,6 +509,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         // rule and every proxy is dropped in silence and nothing is proxied. the
         // answer is what turns that silence into a reason.
         handshake(session: session) { ok in
+            self.providerChannelAvailable = ok
             if !ok {
                 // not fatal: the rules and the proxy list went with the start of
                 // the tunnel, and the system hands those over without the check
@@ -679,6 +695,13 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     // answer, ask again straight away instead of waiting a second and losing the oldest lines.
     // never two requests at once.
     private func pollLogs() {
+        // The extension writes every decision it made to the unified log, and a
+        // build that is not signed by a developer cannot read it back over the
+        // message channel. So the log is read from there.
+        if !providerChannelAvailable {
+            pollLogsFromUnifiedLog()
+            return
+        }
         guard !polling, !stopping, let session = session, let data = try? JSONSerialization.data(withJSONObject: ["action": "getLogs"]) else { return }
         polling = true
         do {
@@ -693,6 +716,29 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         } catch {
             polling = false
         }
+    }
+
+    // reads the lines the extension wrote to the unified log
+    private func pollLogsFromUnifiedLog() {
+        guard !stopping else { return }
+        if logCursor == nil { logCursor = Date(timeIntervalSinceNow: -2) }
+        let lines = ExtensionLogReader.lines(since: logCursor)
+        guard !lines.isEmpty else { return }
+        // the reader hands them back newest first, a terminal wants the other way
+        for line in lines.reversed() {
+            let stamp = timestampFormatter.string(from: line.date)
+            // the same split the message channel uses: the connections need the
+            // loudest level, the rest is for the level that wants everything but
+            // is too noisy for the one in between
+            if line.connection != nil {
+                guard verbose >= 2 else { continue }
+                CLI.say("[\(stamp)] " + CLIText.safe(line.text))
+            } else {
+                guard verbose == 1 || verbose == 3 else { continue }
+                CLI.say("[\(stamp)] [\(line.level)] " + CLIText.safe(line.text))
+            }
+        }
+        if let newest = lines.first?.date { logCursor = newest.addingTimeInterval(0.001) }
     }
 
     // one write per answer, not one per line. everything in an entry came from outside (process
