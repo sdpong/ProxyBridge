@@ -76,6 +76,10 @@ enum ExtensionLogReader {
         let text: String
         /// The connection this line describes, when it describes one.
         let connection: Connection?
+        /// What this line says about the traffic of the open flows, when it says anything.
+        let flowEvent: FlowEvent?
+        /// The totals of every proxy, when the line carries them.
+        let proxyTotals: [(proxy: String, up: Int64, down: Int64, connections: Int)]?
         /// "ERROR" when the extension wrote it as an error, "INFO" otherwise.
         let level: String
     }
@@ -89,6 +93,27 @@ enum ExtensionLogReader {
         let proxy: String
         /// The number of the rule that decided it, when the line says so.
         let rule: Int?
+    }
+
+    /// What the extension wrote about the flows it carries.
+    ///
+    /// The extension counts the bytes of every flow it proxies. It used to report them
+    /// over the message channel only, and that channel is closed for a build that is not
+    /// signed by a developer - so the traffic was counted and never seen. It now writes
+    /// it to the unified log as well, where the app reads it like everything else.
+    enum FlowEvent {
+        /// A flow was opened: what it is, where it goes and which proxy it goes through.
+        case open(id: UInt64, proto: String, process: String, destination: String, port: String, proxy: String)
+        /// The flows that are open right now, with the bytes each one carried.
+        case bytes([(id: UInt64, up: Int64, down: Int64)])
+        /// A flow that is open, with everything about it and the bytes it carried.
+        ///
+        /// This is what the line about the flow opening cannot do: an app that starts
+        /// later never sees that line, and a flow that was already open when the app
+        /// started would stay invisible to it forever.
+        case live(id: UInt64, proto: String, process: String, destination: String, port: String, proxy: String, up: Int64, down: Int64)
+        /// A flow was closed, with the bytes it carried while it was open.
+        case end(id: UInt64, up: Int64, down: Int64)
     }
 
     // Reads a connection out of one of the extension's lines.
@@ -134,6 +159,135 @@ enum ExtensionLogReader {
         return Connection(proto: proto, process: process, destination: destination, port: port, proxy: proxy, rule: rule)
     }
 
+    // Reads the traffic of the flows out of one of the extension's lines.
+    //
+    // The extension writes:
+    //   FlowOpen 42 TCP curl -> api.github.com:443 via SOCKS5 127.0.0.1:19998
+    //   Flows 42:1234:5678 43:10:20
+    //   FlowLive 42 TCP curl -> api.github.com:443 via SOCKS5 127.0.0.1:19998 1234 5678
+    //   FlowEnd 42 9876 65432
+    static func parseFlow(_ text: String) -> FlowEvent? {
+        if text.hasPrefix("FlowOpen ") { return parseFlowOpen(text) }
+        if text.hasPrefix("Flows ") { return parseFlowBytes(text) }
+        if text.hasPrefix("FlowLive ") { return parseFlowLive(text) }
+        if text.hasPrefix("FlowEnd ") { return parseFlowEnd(text) }
+        return nil
+    }
+
+    // The head of a flow line: <id> <proto> <process> -> <host>:<port> via <proxy>
+    struct FlowHead {
+        let id: UInt64
+        let proto: String
+        let process: String
+        let destination: String
+        let port: String
+        let proxy: String
+    }
+
+    // Reads the head of a flow line.
+    //
+    // The process name can have spaces in it ("MiniMax Code Helper"), so the protocol is
+    // the first word and the process is the rest of the left side of the arrow.
+    private static func parseFlowHead(_ text: String, allowEmptyDestination: Bool = false) -> FlowHead? {
+        let parts = text.split(separator: " ", maxSplits: 1)
+        guard parts.count == 2, let id = UInt64(parts[0]) else { return nil }
+        let rest = String(parts[1])
+        guard let arrow = rest.range(of: " -> ") else { return nil }
+        let left = String(rest[rest.startIndex..<arrow.lowerBound])
+        let right = String(rest[arrow.upperBound...])
+
+        let leftParts = left.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+        guard leftParts.count == 2, !leftParts[1].isEmpty else { return nil }
+        let proto = String(leftParts[0])
+        let process = String(leftParts[1])
+
+        guard let via = right.range(of: " via ") else { return nil }
+        let hostAndPort = String(right[right.startIndex..<via.lowerBound])
+        let proxy = String(right[via.upperBound...])
+
+        // the host can be an ipv6 address, which has colons in it: the port is after the last one
+        guard let colon = hostAndPort.lastIndex(of: ":") else { return nil }
+        let destination = String(hostAndPort[hostAndPort.startIndex..<colon])
+        let port = String(hostAndPort[hostAndPort.index(after: colon)...])
+        guard !port.isEmpty else { return nil }
+        // the destination of a udp flow is only known once its first datagram arrives, so it
+        // can be empty
+        if !allowEmptyDestination && destination.isEmpty { return nil }
+
+        return FlowHead(id: id, proto: proto, process: process, destination: destination,
+                        port: port, proxy: proxy)
+    }
+
+    private static func parseFlowOpen(_ text: String) -> FlowEvent? {
+        let body = String(text.dropFirst("FlowOpen ".count))
+        guard let head = parseFlowHead(body) else { return nil }
+        return .open(id: head.id, proto: head.proto, process: head.process,
+                     destination: head.destination, port: head.port, proxy: head.proxy)
+    }
+
+    // Reads a line about a flow that is open right now.
+    //
+    // The bytes are the last two words of the line, so the name of the proxy can be as
+    // long as it likes - it has a space in it ("SOCKS5 127.0.0.1:9991").
+    private static func parseFlowLive(_ text: String) -> FlowEvent? {
+        let body = String(text.dropFirst("FlowLive ".count))
+        let words = body.split(separator: " ")
+        guard words.count >= 3,
+              let up = Int64(words[words.count - 2]),
+              let down = Int64(words[words.count - 1]) else { return nil }
+        let head = words.dropLast(2).joined(separator: " ")
+        guard let parsed = parseFlowHead(head, allowEmptyDestination: true) else { return nil }
+        return .live(id: parsed.id, proto: parsed.proto, process: parsed.process,
+                     destination: parsed.destination, port: parsed.port, proxy: parsed.proxy,
+                     up: up, down: down)
+    }
+
+    private static func parseFlowBytes(_ text: String) -> FlowEvent? {
+        let body = String(text.dropFirst("Flows ".count))
+        var rows: [(id: UInt64, up: Int64, down: Int64)] = []
+        for piece in body.split(separator: " ") {
+            let parts = piece.split(separator: ":")
+            guard parts.count == 3,
+                  let id = UInt64(parts[0]),
+                  let up = Int64(parts[1]),
+                  let down = Int64(parts[2]) else { continue }
+            rows.append((id: id, up: up, down: down))
+        }
+        guard !rows.isEmpty else { return nil }
+        return .bytes(rows)
+    }
+
+    private static func parseFlowEnd(_ text: String) -> FlowEvent? {
+        let parts = text.dropFirst("FlowEnd ".count).split(separator: " ")
+        guard parts.count == 3,
+              let id = UInt64(parts[0]),
+              let up = Int64(parts[1]),
+              let down = Int64(parts[2]) else { return nil }
+        return .end(id: id, up: up, down: down)
+    }
+
+    // Reads the totals of every proxy out of one of the extension's lines.
+    //
+    // The extension writes:
+    //   ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
+    //
+    // The name of a proxy can have a space in it, so it is the last field of its record
+    // and the numbers are the ones before it.
+    static func parseProxyTotals(_ text: String) -> [(proxy: String, up: Int64, down: Int64, connections: Int)]? {
+        guard text.hasPrefix("ProxyTotals ") else { return nil }
+        let body = String(text.dropFirst("ProxyTotals ".count))
+        var rows: [(proxy: String, up: Int64, down: Int64, connections: Int)] = []
+        for record in body.split(separator: ";") {
+            let parts = record.split(separator: "|", maxSplits: 3)
+            guard parts.count == 4,
+                  let up = Int64(parts[1]),
+                  let down = Int64(parts[2]),
+                  let connections = Int(parts[3]) else { continue }
+            rows.append((proxy: String(parts[0]), up: up, down: down, connections: connections))
+        }
+        return rows.isEmpty ? nil : rows
+    }
+
     // One line of "log stream --style compact":
     //
     //   2026-11-07 15:54:32.627 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Connection UDP ...
@@ -149,7 +303,8 @@ enum ExtensionLogReader {
         // is what the extension writes its notes as
         let level = parts[2] == "Ee" ? "ERROR" : "INFO"
         let text = String(parts[5])
-        return Line(date: date, text: text, connection: parse(text), level: level)
+        return Line(date: date, text: text, connection: parse(text), flowEvent: parseFlow(text),
+                    proxyTotals: parseProxyTotals(text), level: level)
     }
 
     // The stamp of a compact line. It is read on one thread at a time - the
@@ -177,6 +332,12 @@ final class UnifiedLogTail {
 
     /// The line that was read.
     var onLine: ((ExtensionLogReader.Line) -> Void)?
+
+    /// The lines that were read, in one go.
+    ///
+    /// A batch is what the window wants: the log comes in bursts, and handing over
+    /// every line on its own makes the window redraw once per line.
+    var onLines: (([ExtensionLogReader.Line]) -> Void)?
 
     /// The tool could not run, or it stopped.
     var onFailure: ((String) -> Void)?
@@ -222,8 +383,22 @@ final class UnifiedLogTail {
         let pipe = output.fileHandleForReading
         Thread.detachNewThread {
             while true {
-                let data = pipe.readData(ofLength: 64 * 1024)
-                if data.isEmpty { break }
+                // What is there, not a fixed number of bytes.
+                //
+                // A read that asks for a fixed amount waits until it has that
+                // much, and the pipe holds less than that: the tool fills the
+                // pipe and waits for the reader, the reader waits for bytes
+                // that can no longer fit into it, and neither side moves
+                // again. The window then never sees a line that comes after
+                // the tool started, and the list of the live connections stays
+                // empty for good.
+                let data = pipe.availableData
+                if data.isEmpty {
+                    // nothing came: the tool is gone
+                    if !self.process.isRunning { break }
+                    Thread.sleep(forTimeInterval: 0.05)
+                    continue
+                }
                 self.consume(data)
             }
         }
@@ -240,10 +415,17 @@ final class UnifiedLogTail {
         let pieces = buffer.split(separator: 0x0A, omittingEmptySubsequences: false)
         guard let last = pieces.last else { return }
         buffer = Data(last)
+        var lines: [ExtensionLogReader.Line] = []
         for piece in pieces.dropLast() {
             let raw = String(decoding: piece, as: UTF8.self)
             guard let line = ExtensionLogReader.parseCompact(raw) else { continue }
-            onLine?(line)
+            lines.append(line)
+        }
+        guard !lines.isEmpty else { return }
+        if let onLines {
+            onLines(lines)
+        } else {
+            for line in lines { onLine?(line) }
         }
     }
 }

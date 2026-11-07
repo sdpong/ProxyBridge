@@ -50,11 +50,19 @@ enum CLI {
         // shows something, and then the tool follows the log as it grows
         UnifiedLogBacklog.read(seconds: 60) { lines in
             for line in lines {
+                // the lines about the traffic of the flows are the bookkeeping of the app and
+                // the extension, not something to read: they come every second
+                guard line.flowEvent == nil, line.proxyTotals == nil else { continue }
                 say("[\(formatter.string(from: line.date))] \(CLIText.safe(line.text))")
             }
             let tail = UnifiedLogTail()
-            tail.onLine = { line in
-                say("[\(formatter.string(from: line.date))] \(CLIText.safe(line.text))")
+            tail.onLines = { lines in
+                for line in lines {
+                    // the lines about the traffic of the flows are the bookkeeping of the app
+                    // and the extension, not something to read: they come every second
+                    guard line.flowEvent == nil, line.proxyTotals == nil else { continue }
+                    say("[\(formatter.string(from: line.date))] \(CLIText.safe(line.text))")
+                }
             }
             tail.onFailure = { reason in
                 CLI.warn(ExtensionLogReader.unreadableReason(reason))
@@ -725,6 +733,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         unifiedLogStarted = true
         let show: (ExtensionLogReader.Line) -> Void = { [weak self] line in
             guard let self = self else { return }
+            // the lines about the traffic of the flows are the bookkeeping of the app and the
+            // extension, not something to read: they come every second
+            guard line.flowEvent == nil, line.proxyTotals == nil else { return }
             let stamp = self.timestampFormatter.string(from: line.date)
             // the same split the message channel uses: the connections need the
             // loudest level, the rest is for the level that wants everything but
@@ -744,7 +755,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             guard let self = self, !self.stopping else { return }
             for line in lines { show(line) }
             let tail = UnifiedLogTail()
-            tail.onLine = show
+            tail.onLines = { lines in
+                for line in lines { show(line) }
+            }
             tail.onFailure = { reason in
                 CLI.warn(ExtensionLogReader.unreadableReason(reason))
             }
