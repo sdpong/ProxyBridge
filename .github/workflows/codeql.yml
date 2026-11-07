@@ -110,26 +110,19 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Create stub xcconfig files
+      # The same step as the Build macOS workflow: copy the committed templates instead of
+      # writing the settings by hand. The templates carry the product name, the bundle id and
+      # the module name of this fork (com.sdpong...), and the hand written stubs still named
+      # the upstream ones, so the "Embed System Extensions" copy phase looked for
+      # com.sdpong.proxybridge.extension.systemextension while the build had produced
+      # com.interceptsuite.ProxyBridge.extension.systemextension, and the job failed before
+      # CodeQL ever saw a line of Swift.
+      - name: Create xcconfig files
         run: |
-          cat > MacOS/ProxyBridge/Signing-Config-app.xcconfig << 'EOF'
-          PRODUCT_MODULE_NAME = ProxyBridge
-          PRODUCT_NAME = ProxyBridge
-          PRODUCT_BUNDLE_IDENTIFIER = com.interceptsuite.ProxyBridge
-          ARCHS = arm64 x86_64
-          ONLY_ACTIVE_ARCH = NO
-          EOF
-          # PRODUCT_NAME must match the extension's product filename recorded in the
-          # Xcode project (com.interceptsuite.ProxyBridge.extension.systemextension),
-          # otherwise the app target's "Embed System Extensions" copy phase fails with
-          # "no such file". The module name stays the sanitized identifier.
-          cat > MacOS/ProxyBridge/Signing-Config-ext.xcconfig << 'EOF'
-          PRODUCT_MODULE_NAME = com_interceptsuite_ProxyBridge_extension
-          PRODUCT_NAME = com.interceptsuite.ProxyBridge.extension
-          PRODUCT_BUNDLE_IDENTIFIER = com.interceptsuite.ProxyBridge.extension
-          ARCHS = arm64 x86_64
-          ONLY_ACTIVE_ARCH = NO
-          EOF
+          for part in app ext; do
+            cp "MacOS/ProxyBridge/proxybridge-$part.xcconfig" "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
+            printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
+          done
 
       - name: Build (no signing)
         run: |
