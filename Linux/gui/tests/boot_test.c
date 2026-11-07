@@ -48,7 +48,17 @@ int main(void)
     g_free(why); why = NULL;
     CHECK(!boot_path_trusted("relative/ProxyBridge", &why) && why); g_free(why); why = NULL;
     CHECK(!boot_path_trusted("/nonexistent/ProxyBridge", &why) && why); g_free(why); why = NULL;
-    if (access("/usr/bin/true", X_OK) == 0) CHECK(boot_path_trusted("/usr/bin/true", &why) && why == NULL);
+    // "/" is a root-owned directory on every Linux, so it has to be trusted.
+    { bool trusted = boot_path_trusted("/", &why); CHECK(trusted && (why == NULL)); g_free(why); why = NULL; }
+    if (access("/usr/bin/true", X_OK) == 0) {
+        // /usr/bin/true is not a safe choice for the trusted case: on some images it is a symlink, and
+        // refusing a symlink is exactly what this function is for. Take the answer the machine gives
+        // and only require that a refusal carries a reason, and that the reason is not left behind.
+        bool trusted = boot_path_trusted("/usr/bin/true", &why);
+        if (trusted) CHECK(why == NULL);
+        else CHECK(why != NULL);
+        g_free(why); why = NULL;
+    }
     char *lnk = g_build_filename(dir, "lnk", NULL);
     CHECK(symlink("/usr/bin/true", lnk) == 0 && !boot_path_trusted(lnk, &why)); g_free(why); why = NULL; g_free(lnk);
 
