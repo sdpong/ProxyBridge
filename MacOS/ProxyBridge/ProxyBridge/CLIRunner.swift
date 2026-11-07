@@ -59,16 +59,25 @@ enum CLI {
         if options.listProfiles { listProfiles(); exit(0) }
         if options.update { checkForUpdates() }
 
+        // only one controller at a time: the GUI and the CLI would fight over the same tunnel
+        if guiIsRunning() { fail("The ProxyBridge app is running. Quit it first, only one of them can control the extension at a time.") }
+        guard takeLock() else { fail("Another ProxyBridge CLI is already running.") }
+
+        // the diagnosis stands on its own: it needs the tunnel, not a profile
+        if options.diagnose {
+            let r = CLIRunner(profile: nil, verbose: 0, diagnoseOnly: true)
+            runner = r
+            r.start()
+            RunLoop.main.run()
+            exit(0)
+        }
+
         guard let spec = options.profile else { fail("--profile is required. Use --help.", code: 2) }
         let profile: CLIProfile
         do { profile = try loadProfile(spec) } catch let e as CLIProfileError { fail(e.message) } catch { fail(error.localizedDescription) }
 
         let errors = CLIProfileLoader.errors(for: profile)
         if !errors.isEmpty { fail("The profile can't be used:\n  - " + errors.map { CLIText.safe($0) }.joined(separator: "\n  - ")) }
-
-        // only one controller at a time: the GUI and the CLI would fight over the same tunnel
-        if guiIsRunning() { fail("The ProxyBridge app is running. Quit it first, only one of them can control the extension at a time.") }
-        guard takeLock() else { fail("Another ProxyBridge CLI is already running.") }
 
         for note in profile.notes { CLI.warn(CLIText.safe(note)) }
         for w in CLIProfileLoader.warnings(for: profile) { warn(CLIText.safe(w)) }
@@ -144,8 +153,11 @@ enum CLI {
 }
 
 final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
-    private let profile: CLIProfile
+    private let profile: CLIProfile?
     private let verbose: Int
+    // --diagnose: no profile, no rules. the tunnel comes up and the app says whether
+    // it can reach the extension at all, and why not when it cannot.
+    private let diagnoseOnly: Bool
     private var manager: NETransparentProxyManager?
     private var session: NETunnelProviderSession?
     private var statusObserver: NSObjectProtocol?
@@ -165,9 +177,10 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         return f
     }()
 
-    init(profile: CLIProfile, verbose: Int) {
+    init(profile: CLIProfile?, verbose: Int, diagnoseOnly: Bool = false) {
         self.profile = profile
         self.verbose = verbose
+        self.diagnoseOnly = diagnoseOnly
         super.init()
     }
 
@@ -197,7 +210,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             CLI.say("Extension: active")
             // the DNS entry is set up now, not after the tunnel is up. when the tunnel never starts, a DNS
             // proxy that was meant to be off must not stay on
-            CLI.say(self.profile.dnsEnabled ? "DNS proxy: on" : "DNS proxy: off (host name rules and send hostname do not work)")
+            CLI.say(self.profile?.dnsEnabled == true ? "DNS proxy: on" : "DNS proxy: off (host name rules and send hostname do not work)")
             self.applyDNSProxy()
             self.configureTunnel()
         }
@@ -268,7 +281,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             case .connecting:
                 sawConnecting = true
             case .connected:
-                if !self.started { self.applyProfile() }
+                if !self.started { self.tunnelIsUp() }
             case .disconnected, .invalid:
                 if self.started && !self.stopping {
                     self.fail("The tunnel was stopped by something else (is the ProxyBridge app running?). Nothing is being redirected any more.")
@@ -279,8 +292,13 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             }
         }
 
-        if session.status == .connected { applyProfile(); return }
-        do { try session.startTunnel() } catch { fail("Could not start the tunnel: \(error.localizedDescription)"); return }
+        if session.status == .connected { tunnelIsUp(); return }
+        // The rules and the proxy list go with the start of the tunnel. The system
+        // hands them to the extension, and they never touch a file: the provider
+        // channel is the normal way, but the system checks that channel against the
+        // app's signature, and a build that is not signed by a developer never gets a
+        // message through. Then the extension has no rules at all and proxies nothing.
+        do { try session.startTunnel(options: startOptions()) } catch { fail("Could not start the tunnel: \(error.localizedDescription)"); return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
             self?.startFailed(attempt: attempt, why: "The tunnel did not start in 30 seconds")
         }
@@ -322,18 +340,122 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
 
     // MARK: - profile
 
+    // The rules and the proxy list, in the shape the extension reads them. They are
+    // handed over when the tunnel starts, so they arrive even when the provider
+    // channel does not open.
+    private func startOptions() -> [String: Any]? {
+        guard let profile = profile else { return nil }
+        var payload: [String: Any] = [
+            "version": 1,
+            "proxies": proxyMessages(profile),
+            "chains": chainMessages(profile),
+            "rules": RuleManager.rulePayload(profile.rules)
+        ]
+        // the DNS policy as well: the rules that name a host need the map that the
+        // DNS proxy builds with it, and the policy is what tells the DNS proxy how
+        if let policy = profile.dnsPolicy, !policy.isEmpty { payload["dnsPolicy"] = policy }
+        return ["proxybridge": payload]
+    }
+
+    // the tunnel is up. either the profile goes to the extension, or the app says
+    // whether it can reach the extension at all (--diagnose)
+    private func tunnelIsUp() {
+        if diagnoseOnly {
+            runDiagnosis()
+            return
+        }
+        applyProfile()
+    }
+
+    // Says what is between the app and the extension.
+    //
+    // The rules and the proxy list travel to the extension over the provider channel,
+    // and the system checks that channel against the app's signature. When the app is
+    // not signed by a developer the system drops the message without a word: the
+    // tunnel is up, the extension runs, and it has no rules at all, so every
+    // connection goes direct and the connections list stays empty.
+    //
+    // This is the report that says so out loud, with the two things that can be
+    // checked: the signature of the app, and whether the app group it declares can
+    // be used at all.
+    private func runDiagnosis() {
+        CLI.say("")
+        CLI.say("ProxyBridge diagnosis")
+        CLI.say("  app: \(CLI.bundleIdentifier)")
+        CLI.say("  extension: \(CLI.extensionIdentifier)")
+        CLI.say("  signature: " + (ExtensionDiagnosis.hasDeveloperSignature()
+            ? "signed by a developer (team id present)"
+            : "ad-hoc (no team id) - the system refuses what is tied to a team"))
+        CLI.say("  shared container: " + (ExtensionDiagnosis.sharedContainerReachable()
+            ? "reachable"
+            : "refused by the system (the app group needs the team id of the signature)"))
+
+        guard let session = session else {
+            CLI.say("  extension channel: no tunnel to talk over")
+            self.stop(code: 1)
+            return
+        }
+
+        handshake(session: session, attempt: 0) { ok in
+            if ok {
+                CLI.say("  extension channel: the extension answers")
+                CLI.say("")
+                CLI.say("The app and the extension can talk to each other: the rules and the")
+                CLI.say("proxy list will arrive.")
+            } else {
+                CLI.say("  extension channel: the extension does not answer")
+                CLI.say("")
+                CLI.say("The tunnel is up, but the extension never receives the rules and the")
+                CLI.say("proxy list, so it proxies nothing and every connection goes direct.")
+                CLI.say("A build that is not signed by a developer cannot talk to its own")
+                CLI.say("system extension on macOS: the system checks the signature and drops")
+                CLI.say("the message without a word. Sign the app with a Developer ID")
+                CLI.say("certificate (and notarize it) to fix this.")
+            }
+            self.stop(code: ok ? 0 : 1)
+        }
+    }
+
     private func applyProfile() {
+        guard let profile = profile else { return }
         guard !started, !stopping, let session = session else { return }
         started = true
 
+        // first: who is on the other end of this tunnel? a tunnel can be up while the
+        // extension behind it is another build, or does not answer at all. then every
+        // rule and every proxy is dropped in silence and nothing is proxied. the
+        // answer is what turns that silence into a reason.
+        handshake(session: session) { ok in
+            if !ok {
+                // not fatal: the rules and the proxy list went with the start of
+                // the tunnel, and the system hands those over without the check
+                // that shuts the provider channel for a build that is not signed
+                // by a developer
+                CLI.warn("The extension does not answer over the provider channel. The rules and the proxy list went with the start of the tunnel instead.")
+            }
+            self.sendProfile(session: session, profile: profile, providerChannel: ok)
+        }
+    }
+
+    private func sendProfile(session: NETunnelProviderSession, profile: CLIProfile, providerChannel: Bool) {
         // same messages, same order as the GUI: logging, proxies, the DNS policy, then the rules in one step
         send(["action": "setTrafficLogging", "enabled": verbose >= 2]) { _ in
-            self.send(["action": "setProxyConfigs", "configs": self.proxyMessages(), "chains": self.chainMessages()]) { _ in
-                self.sendDNSPolicy { _ in
-                    RuleManager.applyRules(session: session, rules: self.profile.rules) { _, count in
-                        CLI.say("Profile \"\(CLIText.safe(self.profile.name))\": \(self.profile.proxies.count) proxies, \(count) rules applied")
-                        // the extension skips a rule it can't read, don't let that pass silently
-                        if count < self.profile.rules.count { CLI.warn("\(self.profile.rules.count - count) rule(s) were rejected by the extension (invalid fields)") }
+            self.send(["action": "setProxyConfigs", "configs": self.proxyMessages(profile), "chains": self.chainMessages(profile)]) { _ in
+                self.sendDNSPolicy(profile) { _ in
+                    RuleManager.applyRulesReporting(session: session, rules: profile.rules) { _, count, answer in
+                        if providerChannel {
+                            CLI.say("Profile \"\(CLIText.safe(profile.name))\": \(profile.proxies.count) proxies, \(count) rules applied")
+                            // the extension skips a rule it can't read, don't let that pass silently
+                            if count < profile.rules.count {
+                                let reason = answer?["message"] as? String
+                                CLI.warn("\(profile.rules.count - count) rule(s) were rejected by the extension" + (reason.map { ": \($0)" } ?? ""))
+                            }
+                        } else {
+                            // the extension never answered, so it cannot say how many
+                            // rules it took. the rules went through the container, and
+                            // the extension counts them there.
+                            CLI.say("Profile \"\(CLIText.safe(profile.name))\": \(profile.proxies.count) proxies, \(profile.rules.count) rules handed to the extension with the start of the tunnel")
+                        }
                         CLI.say("Redirecting traffic. Press Ctrl+C to stop.")
                         if self.verbose > 0 { self.startLogPolling() }
                     }
@@ -342,8 +464,45 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         }
     }
 
+    // Asks the extension that the tunnel is connected to which one it is.
+    //
+    // macOS keeps every registered version of a system extension under the same bundle
+    // id. An older one may answer, or answer with another protocol, and then the rules
+    // and the proxies are ignored without a word. Same check the window does, so the
+    // command line says the same thing the window says.
+    private func handshake(session: NETunnelProviderSession, attempt: Int = 0, completion: @escaping (Bool) -> Void) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["action": "getInfo"]) else { completion(false); return }
+        do {
+            try session.sendProviderMessage(data) { response in
+                DispatchQueue.main.async {
+                    switch ExtensionHandshake.verdict(response: response) {
+                    case .ok(let api, let version):
+                        CLI.say("Extension: protocol \(api), version \(version)")
+                        completion(true)
+                    case .mismatch(let api):
+                        CLI.warn("The extension speaks protocol \(api), this build speaks \(ExtensionHandshake.protocolAPI). It is another build of ProxyBridge.")
+                        completion(false)
+                    case .noAnswer:
+                        // the extension needs a moment to answer after the tunnel comes up
+                        self.retryHandshake(session: session, attempt: attempt, completion: completion)
+                    }
+                }
+            }
+        } catch {
+            DispatchQueue.main.async { self.retryHandshake(session: session, attempt: attempt, completion: completion) }
+        }
+    }
+
+    private func retryHandshake(session: NETunnelProviderSession, attempt: Int, completion: @escaping (Bool) -> Void) {
+        guard attempt < 10, !stopping else { completion(false); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { completion(false); return }
+            self.handshake(session: session, attempt: attempt + 1, completion: completion)
+        }
+    }
+
     // the chains go with the proxies: a chain is an ordered list of proxy ids
-    private func chainMessages() -> [[String: Any]] {
+    private func chainMessages(_ profile: CLIProfile) -> [[String: Any]] {
         return profile.chains.map { chain in
             [
                 "id": chain["id"] as? String ?? "",
@@ -353,7 +512,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         }
     }
 
-    private func proxyMessages() -> [[String: Any]] {
+    private func proxyMessages(_ profile: CLIProfile) -> [[String: Any]] {
         profile.proxies.map { p in
             var dict: [String: Any] = ["id": p.id, "proxyType": p.type, "proxyHost": p.host, "proxyPort": p.port, "sendDomainToProxy": p.sendDomain]
             if let u = p.username { dict["proxyUsername"] = u }
@@ -362,13 +521,19 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         }
     }
 
-    // the DNS provider is what makes domain rules and hostnames work, the GUI turns it on too, and
-    // the profile's Enable DNS setting decides. when the entry is already in the wanted state it is
-    // left alone, saving it again on every start is a needless system configuration change. only our
-    // own entry is ever switched off.
+    // The DNS provider is what makes domain rules and host names work, the GUI turns it on
+    // too, and the profile's Enable DNS setting decides. Only our own entry is ever
+    // switched off.
+    //
+    // The entry is written again on every start, even when it already says what we want.
+    // macOS records the code signature of the extension in the saved configuration, and
+    // an ad-hoc build gets a new signature every time it is made. A configuration that
+    // still points at an older build is silently ignored: the system never starts the
+    // dns proxy provider, no ip -> name map is built, and every host name rule misses.
+    // Writing it again is what makes macOS look at the extension that is installed now.
     private func applyDNSProxy() {
         let dns = NEDNSProxyManager.shared()
-        let wanted = profile.dnsEnabled
+        let wanted = profile?.dnsEnabled ?? false
         dns.loadFromPreferences { loadError in
             let ours = dns.providerProtocol?.providerBundleIdentifier == CLI.extensionIdentifier
             if !wanted {
@@ -379,7 +544,6 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
                 }
                 return
             }
-            if loadError == nil, dns.isEnabled, ours { return }
             let proto = NEDNSProxyProviderProtocol()
             proto.providerBundleIdentifier = CLI.extensionIdentifier
             dns.providerProtocol = proto
@@ -394,7 +558,7 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     // the DNS policy reaches the DNS proxy provider through the shared container,
     // the same way the GUI does it. a profile without a policy leaves the
     // extension on its default, so nothing is sent.
-    private func sendDNSPolicy(completion: @escaping ([String: Any]?) -> Void) {
+    private func sendDNSPolicy(_ profile: CLIProfile, completion: @escaping ([String: Any]?) -> Void) {
         guard let policy = profile.dnsPolicy, !policy.isEmpty else {
             completion(nil)
             return
@@ -404,12 +568,22 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
 
     private func send(_ message: [String: Any], completion: (([String: Any]?) -> Void)? = nil) {
         guard let session = session, let data = try? JSONSerialization.data(withJSONObject: message) else { completion?(nil); return }
+        let action = message["action"] as? String ?? "?"
         do {
             try session.sendProviderMessage(data) { response in
                 let object = response.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-                DispatchQueue.main.async { completion?(object) }
+                DispatchQueue.main.async {
+                    // an answer that says "error" is worth saying out loud: the
+                    // extension understood the message and could not do it
+                    if let status = object?["status"] as? String, status != "ok" {
+                        CLI.warn("The extension could not \(action): \(object?["message"] as? String ?? "unknown reason")")
+                    }
+                    completion?(object)
+                }
             }
         } catch {
+            // the message could not even be sent: the tunnel is not really up
+            CLI.warn("Could not send \"\(action)\" to the extension: \(error.localizedDescription)")
             DispatchQueue.main.async { completion?(nil) }
         }
     }

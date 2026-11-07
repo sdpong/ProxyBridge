@@ -103,7 +103,15 @@ struct RuleManager {
         rules: [[String: Any]],
         completion: @escaping (Bool, Int) -> Void
     ) {
-        let payload: [[String: Any]] = rules.map { rule in
+        applyRulesReporting(session: session, rules: rules) { success, count, _ in
+            completion(success, count)
+        }
+    }
+
+    // the rules in the shape the extension reads them. the same shape is written
+    // into the shared container, so the two ways of delivering them cannot drift
+    static func rulePayload(_ rules: [[String: Any]]) -> [[String: Any]] {
+        return rules.map { rule in
             [
                 "processNames": rule["processNames"] as? String ?? "",
                 "targetHosts": rule["targetHosts"] as? String ?? "",
@@ -113,18 +121,29 @@ struct RuleManager {
                 "enabled": rule["enabled"] as? Bool ?? true
             ]
         }
+    }
+
+    // the same, but the extension's own answer comes back as well. the command line
+    // needs it: "some rules were rejected" is not something a person can act on,
+    // but "the field 'ruleProtocol' is missing" is.
+    static func applyRulesReporting(
+        session: NETunnelProviderSession,
+        rules: [[String: Any]],
+        completion: @escaping (Bool, Int, [String: Any]?) -> Void
+    ) {
+        let payload = rulePayload(rules)
 
         sendMessage(session: session, action: "setRules", params: ["rules": payload]) { success, result in
             if success {
                 let count = result?["count"] as? Int ?? payload.count
-                DispatchQueue.main.async { completion(true, count) }
+                DispatchQueue.main.async { completion(true, count, result) }
                 return
             }
             // an extension that predates setRules answers nothing, fall back to
             // clear + add one by one (leaves a short gap while it runs)
             clearRules(session: session) { _, _ in
                 guard !rules.isEmpty else {
-                    DispatchQueue.main.async { completion(true, 0) }
+                    DispatchQueue.main.async { completion(true, 0, result) }
                     return
                 }
                 addRulesInOrder(session: session, rules: rules, index: 0, added: 0, completion: completion)
@@ -132,15 +151,14 @@ struct RuleManager {
         }
     }
 
-    private static func addRulesInOrder(
-        session: NETunnelProviderSession,
+    private static func addRulesInOrder(        session: NETunnelProviderSession,
         rules: [[String: Any]],
         index: Int,
         added: Int,
-        completion: @escaping (Bool, Int) -> Void
+        completion: @escaping (Bool, Int, [String: Any]?) -> Void
     ) {
         guard index < rules.count else {
-            DispatchQueue.main.async { completion(true, added) }
+            DispatchQueue.main.async { completion(true, added, nil) }
             return
         }
         let rule = rules[index]

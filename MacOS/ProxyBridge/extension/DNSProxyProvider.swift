@@ -74,6 +74,13 @@ class DNSProxyProvider: NEDNSProxyProvider {
         if !policy.autoDetectUpstream && policy.upstreamResolvers.isEmpty {
             return false
         }
+        // the map is what host name rules are matched against, so it has to be
+        // filled. the first answers are written to the log, otherwise an empty
+        // map looks the same as a provider that never started at all
+        DNSProxyProvider.noteAnswers += 1
+        if DNSProxyProvider.noteAnswers <= 20 {
+            ProviderDiagnostics.note("DNS provider is taking a query")
+        }
         udp.open(withLocalEndpoint: nil) { [weak self] error in
             guard error == nil, let self = self else {
                 udp.closeReadWithError(error)
@@ -88,6 +95,10 @@ class DNSProxyProvider: NEDNSProxyProvider {
         }
         return true
     }
+
+    // how many dns answers were written to the log. the counter is per process,
+    // the extension is restarted with every tunnel
+    private static var noteAnswers = 0
 
     private func finish(_ flow: NEAppProxyUDPFlow, _ state: FlowSessions) {
         statesLock.lock()
@@ -142,6 +153,9 @@ class DNSProxyProvider: NEDNSProxyProvider {
                         // it is not recorded at all
                         if !DNSPolicyStore.shared.policy.isExcluded(parsed.domain) {
                             DNSMapStore.shared.record(domain: parsed.domain, ips: parsed.ips)
+                            if DNSProxyProvider.noteAnswers <= 20 {
+                                ProviderDiagnostics.note("DNS answer: \(parsed.domain) -> \(parsed.ips.joined(separator: ", "))")
+                            }
                         }
                     }
                 }

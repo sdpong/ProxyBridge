@@ -711,6 +711,37 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
     }
     
+    // The rules and the proxy list, in the shape the extension reads them.
+    private func tunnelStartOptions() -> [String: Any]? {
+        let proxies: [[String: Any]] = proxyConfigs.map { config in
+            var dict: [String: Any] = [
+                "id": config.id,
+                "proxyType": config.type,
+                "proxyHost": config.host,
+                "proxyPort": config.port,
+                "sendDomainToProxy": config.sendDomain
+            ]
+            if let u = config.username { dict["proxyUsername"] = u }
+            if let p = config.password { dict["proxyPassword"] = p }
+            return dict
+        }
+        let chains: [[String: Any]] = chains.map { chain in
+            ["id": chain.id, "name": chain.name, "proxies": chain.proxyIds]
+        }
+        let rules = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
+        var payload: [String: Any] = [
+            "version": 1,
+            "proxies": proxies,
+            "chains": chains,
+            "rules": RuleManager.rulePayload(rules)
+        ]
+        // the DNS policy as well: the rules that name a host need the map that the
+        // DNS proxy builds with it, and the policy is what tells the DNS proxy how
+        let policy = dnsPolicy.toDictionary()
+        if !policy.isEmpty { payload["dnsPolicy"] = policy }
+        return ["proxybridge": payload]
+    }
+
     func startProxy() {
         ensureNetworkConfiguration { manager in
             self.addLog("INFO", "Configuration saved")
@@ -722,6 +753,12 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // the dns answers and can build the ip -> name map used by host name rules and "send hostname".
     // off: the entry is switched off so macOS sends dns the normal way and another tool can use the
     // one dns proxy slot macOS has. only our own entry is ever changed.
+    //
+    // The entry is written again on every start, even when it already says what we want.
+    // macOS records the code signature of the extension in the saved configuration, and an
+    // ad-hoc build gets a new signature every time it is made. A configuration that still
+    // points at an older build is ignored by the system: the dns proxy provider is never
+    // started, the ip -> name map stays empty, and every host name rule misses.
     func applyDNSProxy() {
         guard extensionReady else { return }
         let enable = isDNSEnabled
@@ -730,10 +767,6 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             guard let self = self else { return }
             let ours = manager.providerProtocol?.providerBundleIdentifier == self.extensionIdentifier
             if enable {
-                if loadError == nil, ours, manager.isEnabled {
-                    DispatchQueue.main.async { self.addLog("INFO", "DNS proxy enabled") }
-                    return
-                }
                 let proto = NEDNSProxyProviderProtocol()
                 proto.providerBundleIdentifier = self.extensionIdentifier
                 manager.providerProtocol = proto
@@ -805,7 +838,13 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
 
             do {
                 DispatchQueue.main.async { self.watchTunnelStart(session: session) }
-                try session.startTunnel()
+                // The rules and the proxy list go with the start of the tunnel. The
+                // system hands them to the extension, and they never touch a file:
+                // the provider channel is the normal way, but the system checks that
+                // channel against the app's signature, and a build that is not signed
+                // by a developer never gets a message through. Then the extension has
+                // no rules at all and proxies nothing.
+                try session.startTunnel(options: self.tunnelStartOptions())
                 DispatchQueue.main.async {
                     self.isProxyActive = true
                     self.addLog("INFO", "Proxy tunnel started")

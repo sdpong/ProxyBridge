@@ -515,6 +515,22 @@ class AppProxyProvider: NETransparentProxyProvider {
         log(message, level: level)
     }
 
+    // a short reason why a rule was turned away. the app passes it on, so the person
+    // sees which field is wrong instead of a number of rules that vanished.
+    static func describe(_ error: Error) -> String {
+        guard let decoding = error as? DecodingError else { return error.localizedDescription }
+        func field(_ context: DecodingError.Context) -> String {
+            context.codingPath.first?.stringValue ?? "?"
+        }
+        switch decoding {
+        case .keyNotFound(let key, _): return "the field '\(key.stringValue)' is missing"
+        case .typeMismatch(let type, let context): return "the field '\(field(context))' is not a \(type)"
+        case .valueNotFound(let type, let context): return "the field '\(field(context))' has no \(type) value"
+        case .dataCorrupted(let context): return "the field '\(field(context))' cannot be read"
+        @unknown default: return error.localizedDescription
+        }
+    }
+
     private func appendLog(_ entry: LogEntry) {
         logQueueLock.lock()
         logBuffer[logTail] = entry
@@ -544,6 +560,10 @@ class AppProxyProvider: NETransparentProxyProvider {
 
         startUDPSweepTimer()
         diag("Tunnel starting")
+        // the rules and the proxy list can come with the configuration itself. they
+        // do when the provider channel does not open, which is what happens on a
+        // build that is not signed by a developer.
+        applyConfigurationPayload(options)
 
         self.setTunnelNetworkSettings(settings) { [weak self] error in
             if let error = error {
@@ -770,6 +790,110 @@ class AppProxyProvider: NETransparentProxyProvider {
         takeFlowDescriptor(for: connection)
     }
     
+    // ---- the rules and the proxy list ----
+    //
+    // They reach the extension in two ways: in a message over the provider channel,
+    // and with the configuration the tunnel is started with.
+    //
+    // The channel is the normal way, but the system checks it against the app's
+    // signature. A build that is not signed by a developer never gets a message
+    // through: the tunnel comes up, the extension runs, and it has no rules at all,
+    // so every connection goes direct and the list of connections stays empty. The
+    // system hands the start options to the provider without that check, so the
+    // rules travel that way as well - that is what keeps a build that is signed
+    // ad-hoc usable.
+
+    // how many flows arrived, for the log
+    private var flowCounter = 0
+
+    private func applyProxyConfigs(_ configs: [[String: Any]], chains: [[String: Any]]) {
+        proxyLock.lock()
+        storedProxyConfigs = [:]
+        warnedKeys.removeAll()
+        for configDict in configs {
+            guard let id = configDict["id"] as? String,
+                  let type = configDict["proxyType"] as? String,
+                  let host = configDict["proxyHost"] as? String,
+                  let port = configDict["proxyPort"] as? Int else { continue }
+            storedProxyConfigs[id] = StoredProxyConfig(
+                type: type, host: host, port: port,
+                username: configDict["proxyUsername"] as? String,
+                password: configDict["proxyPassword"] as? String,
+                // an app that doesn't send the key keeps the old behavior (ip)
+                sendDomain: configDict["sendDomainToProxy"] as? Bool ?? false
+            )
+        }
+        // the chains come with the proxies: a chain is nothing but an ordered
+        // list of proxy ids
+        storedChains = [:]
+        for chainDict in chains {
+            guard let chainId = chainDict["id"] as? String else { continue }
+            let proxies = chainDict["proxies"] as? [String] ?? []
+            guard !proxies.isEmpty else { continue }
+            storedChains[chainId] = proxies
+        }
+        let configCount = storedProxyConfigs.count
+        let chainCount = storedChains.count
+        proxyLock.unlock()
+        diag("Proxy configs updated: \(configCount) config(s), \(chainCount) chain(s)")
+    }
+
+    // replaces the rule list. returns how many rules were applied, how many were
+    // turned away, and the reason of the first one that was
+    @discardableResult
+    private func applyRules(_ raw: [[String: Any]]) -> (Int, Int, String?) {
+        var built: [CompiledRule] = []
+        built.reserveCapacity(raw.count)
+        var rejected = 0
+        var firstReason: String?
+        for dict in raw {
+            guard let ruleData = try? JSONSerialization.data(withJSONObject: dict) else {
+                rejected += 1
+                if firstReason == nil { firstReason = "the rule is not valid json" }
+                continue
+            }
+            do {
+                let rule = try JSONDecoder().decode(ProxyRule.self, from: ruleData)
+                built.append((rule, ProxyRule.Matcher(rule)))
+            } catch {
+                // a rule that is turned away is a rule that does not exist for the
+                // traffic, so the reason is worth more than the number
+                rejected += 1
+                if firstReason == nil { firstReason = AppProxyProvider.describe(error) }
+            }
+        }
+        rulesLock.lock()
+        rules = built.map { item in
+            var rule = item.rule
+            rule.ruleId = nextRuleId
+            nextRuleId += 1
+            return (rule, item.matcher)
+        }
+        rulesLock.unlock()
+        let summary = "Rules: \(built.count) applied, \(rejected) rejected" + (firstReason.map { " (the first one: \($0))" } ?? "")
+        log(summary)
+        diag(summary)
+        return (built.count, rejected, firstReason)
+    }
+
+    // The rules and the proxy list that came with the configuration. The system
+    // hands them to the provider when the tunnel starts.
+    private func applyConfigurationPayload(_ options: [String: Any]?) {
+        guard let payload = options?["proxybridge"] as? [String: Any] else { return }
+        if let configs = payload["proxies"] as? [[String: Any]] {
+            applyProxyConfigs(configs, chains: payload["chains"] as? [[String: Any]] ?? [])
+        }
+        if let rules = payload["rules"] as? [[String: Any]] {
+            applyRules(rules)
+        }
+        if let policy = payload["dnsPolicy"] as? [String: Any] {
+            // the DNS proxy provider cannot be sent a message, so the policy is
+            // published in the container it reads
+            DNSPolicyStore.shared.publish(DNSPolicy.fromDictionary(policy))
+            log("DNS policy updated")
+        }
+    }
+
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         guard let message = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
               let action = message["action"] as? String else {
@@ -777,6 +901,10 @@ class AppProxyProvider: NETransparentProxyProvider {
             return
         }
         
+        // every message that arrives is written down. when the app says the rules were
+        // not applied, this line is the one that says whether the message came in at all.
+        ProviderDiagnostics.note("Message: \(action)")
+
         switch action {
         case "getInfo":
             // Who is answering? The app asks as soon as the tunnel is up.
@@ -833,33 +961,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok"]))
         case "setProxyConfigs":
             if let configs = message["configs"] as? [[String: Any]] {
-                proxyLock.lock()
-                storedProxyConfigs = [:]
-                warnedKeys.removeAll()
-                for configDict in configs {
-                    guard let id = configDict["id"] as? String,
-                          let type = configDict["proxyType"] as? String,
-                          let host = configDict["proxyHost"] as? String,
-                          let port = configDict["proxyPort"] as? Int else { continue }
-                    storedProxyConfigs[id] = StoredProxyConfig(
-                        type: type, host: host, port: port,
-                        username: configDict["proxyUsername"] as? String,
-                        password: configDict["proxyPassword"] as? String,
-                        // an app that doesn't send the key keeps the old behavior (ip)
-                        sendDomain: configDict["sendDomainToProxy"] as? Bool ?? false
-                    )
-                }
-                // the chains come with the proxies: a chain is nothing but an ordered
-                // list of proxy ids
-                storedChains = [:]
-                for chainDict in (message["chains"] as? [[String: Any]]) ?? [] {
-                    guard let chainId = chainDict["id"] as? String else { continue }
-                    let proxies = chainDict["proxies"] as? [String] ?? []
-                    guard !proxies.isEmpty else { continue }
-                    storedChains[chainId] = proxies
-                }
-                proxyLock.unlock()
-                log("Proxy configs updated: \(storedProxyConfigs.count) config(s), \(storedChains.count) chain(s)")
+                applyProxyConfigs(configs, chains: message["chains"] as? [[String: Any]] ?? [])
             }
             completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok"]))
 
@@ -896,22 +998,9 @@ class AppProxyProvider: NETransparentProxyProvider {
                 completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "error", "message": "Invalid rules payload"]))
                 return
             }
-            var built: [CompiledRule] = []
-            built.reserveCapacity(raw.count)
-            for dict in raw {
-                guard let ruleData = try? JSONSerialization.data(withJSONObject: dict),
-                      let rule = try? JSONDecoder().decode(ProxyRule.self, from: ruleData) else { continue }
-                built.append((rule, ProxyRule.Matcher(rule)))
-            }
-            rulesLock.lock()
-            rules = built.map { item in
-                var rule = item.rule
-                rule.ruleId = nextRuleId
-                nextRuleId += 1
-                return (rule, item.matcher)
-            }
-            rulesLock.unlock()
-            let response: [String: Any] = ["status": "ok", "count": built.count, "skipped": raw.count - built.count]
+            let (count, rejected, firstReason) = applyRules(raw)
+            var response: [String: Any] = ["status": "ok", "count": count, "skipped": rejected]
+            if let firstReason = firstReason { response["message"] = firstReason }
             completionHandler?(try? JSONSerialization.data(withJSONObject: response))
 
         case "clearRules":
@@ -971,6 +1060,12 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
     
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
+        // a word about the flow in the unified log: when nothing is proxied, the
+        // first question is whether the flows arrive at all
+        flowCounter += 1
+        if flowCounter <= 10 || flowCounter % 50 == 0 {
+            diag("Flow #\(flowCounter) from \(flow.metaData.sourceAppSigningIdentifier ?? "?")")
+        }
         if let tcpFlow = flow as? NEAppProxyTCPFlow {
             return handleTCPFlow(tcpFlow)
         } else if let udpFlow = flow as? NEAppProxyUDPFlow {
@@ -986,7 +1081,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         // never proxy our own traffic, it would loop
         // our own bundle ids: the app and the extension. the old extension id is still
         // listed so that a build that was not updated does not proxy itself either.
-        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.sdpong.proxybridge.extension" || processPath == "com.interceptsuite.ProxyBridge.extension" {
+        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.interceptsuite.ProxyBridge.fork" || processPath == "com.interceptsuite.ProxyBridge.extension" {
             return false
         }
 
@@ -1006,7 +1101,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         
         let processName = getProcessName(from: metaData)
         let displayName = processName ?? processPath
-        
+
         // domains that resolved to this ip (from the dns proxy), used for domain
         // rules and to show the hostname in the log instead of the raw ip
         let domains = DNSMapStore.shared.domains(forIP: destination)
@@ -1020,10 +1115,10 @@ class AppProxyProvider: NETransparentProxyProvider {
         if let rule = matchedRule {
             switch rule.action {
             case "DIRECT":
-                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct")
+                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
                 return false
             case "BLOCK":
-                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "BLOCK")
+                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "BLOCK", rule: matchedRule?.ruleId)
                 flow.closeReadWithError(nil)
                 flow.closeWriteWithError(nil)
                 return true
@@ -1049,16 +1144,16 @@ class AppProxyProvider: NETransparentProxyProvider {
                 if ChainAction.isChain(rule.action) {
                     guard !hops.isEmpty else {
                         warnOnce("missing-chain:\(rule.action)", "A rule routes to a chain that has no usable proxy in it, its traffic is going direct")
-                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct")
+                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
                         return false
                     }
                     let problems = ChainPlan.problems(withProxyIds: chainIds, proxyTypes: chainTypes)
                     if !problems.isEmpty {
                         warnOnce("broken-chain:\(rule.action)", "A rule routes to a chain that cannot work: \(problems.joined(separator: "; ")). Its traffic is going direct.")
-                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct")
+                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
                         return false
                     }
-                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(hops))
+                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(hops), rule: matchedRule?.ruleId)
                     proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: hops)
                     return true
                 }
@@ -1067,15 +1162,15 @@ class AppProxyProvider: NETransparentProxyProvider {
                     // rule points at a proxy that no longer exists. it still goes
                     // direct, but say so instead of leaking silently
                     warnOnce("missing:\(rule.action)", "A rule routes to a proxy that no longer exists, its traffic is going direct")
-                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct")
+                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
                     return false
                 }
-                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: proxyLabel(config))
+                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: proxyLabel(config), rule: matchedRule?.ruleId)
                 proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: [config])
                 return true
             }
         } else {
-            sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct")
+            sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
             return false
         }
     }
@@ -1098,7 +1193,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         
         // our own bundle ids: the app and the extension. the old extension id is still
         // listed so that a build that was not updated does not proxy itself either.
-        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.sdpong.proxybridge.extension" || processPath == "com.interceptsuite.ProxyBridge.extension" {
+        if processPath == "com.interceptsuite.ProxyBridge" || processPath == "com.interceptsuite.ProxyBridge.fork" || processPath == "com.interceptsuite.ProxyBridge.extension" {
             return false
         }
         
@@ -1114,10 +1209,10 @@ class AppProxyProvider: NETransparentProxyProvider {
             let action = rule.action
             switch action {
             case "DIRECT":
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct")
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: matchedRule?.ruleId)
                 return false
             case "BLOCK":
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "BLOCK")
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "BLOCK", rule: matchedRule?.ruleId)
                 // a handled flow that is never closed stays pinned in the extension
                 flow.closeReadWithError(nil)
                 flow.closeWriteWithError(nil)
@@ -1156,7 +1251,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             // no rule matched. as before, only log it when udp proxying is possible
             // at all, otherwise every mDNS/NTP flow would fill the log
             if hasAnySocks5 {
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct")
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: matchedRule?.ruleId)
             }
             return false
         }
@@ -2125,9 +2220,19 @@ class AppProxyProvider: NETransparentProxyProvider {
         return wildcardRule
     }
     
-    private func sendLogToApp(protocol: String, process: String, destination: String, port: String, proxy: String) {
+    // the rule that sent the traffic where it went is written with it. a user who
+    // asks "why did this go direct" needs the number of the rule, not the name of
+    // the proxy alone
+    private func sendLogToApp(protocol: String, process: String, destination: String, port: String, proxy: String, rule: UInt32? = nil) {
         guard trafficLoggingEnabled else { return }
         appendLog(.connection(proto: `protocol`, process: process, destination: destination, port: port, proxy: proxy))
+        // the same line in the unified log. the app reads the activity log over the
+        // provider channel, and that channel does not open on a build that is not
+        // signed by a developer: this is then the only place where the decision the
+        // extension made can be seen.
+        let proto = `protocol`
+        let ruleText = rule.map { " (rule \($0))" } ?? ""
+        diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)\(ruleText)")
     }
 }
 
