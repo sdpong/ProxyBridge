@@ -11,7 +11,6 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerView
             Divider()
             noticeBanner
             tabSelector
@@ -116,17 +115,6 @@ struct ContentView: View {
         // inside Login Items & Extensions)
         guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
         NSWorkspace.shared.open(url)
-    }
-
-    private var headerView: some View {
-        HStack {
-            Text("ProxyBridge")
-                .font(.headline)
-                .padding(.leading)
-            Spacer()
-        }
-        .frame(height: 44)
-        .background(Color(NSColor.windowBackgroundColor))
     }
 
     private var tabSelector: some View {

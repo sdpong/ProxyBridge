@@ -36,6 +36,15 @@ struct ProxyBridgeGUIApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(viewModel: viewModel)
+                // The window needs a title bar of its own, otherwise there is
+                // nothing to take hold of: the window cannot be moved. A strip
+                // the app draws itself is only a picture of a title bar.
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        Text("ProxyBridge")
+                            .font(.headline)
+                    }
+                }
                 .background(WindowAccessor())
                 .onAppear {
                     AppDelegate.viewModel = viewModel
