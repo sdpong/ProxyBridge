@@ -188,6 +188,11 @@ jobs:
         # an app without the com.apple.developer.system-extension.install entitlement.
         # An ad-hoc signature carries it. A build signed with a real Developer ID is
         # left alone by the script.
+        #
+        # The ad-hoc signature leaves the App Sandbox out on purpose: the app reads
+        # the extension's decisions from the unified log, and logd refuses the system
+        # scope to a sandboxed process. A build that is not going to the App Store
+        # does not need the sandbox.
         chmod +x scripts/adhoc-sign.sh
         bash scripts/adhoc-sign.sh build/DerivedData/Build/Products/Release/ProxyBridge.app
         codesign -d --entitlements - build/DerivedData/Build/Products/Release/ProxyBridge.app
