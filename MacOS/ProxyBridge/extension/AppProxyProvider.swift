@@ -386,6 +386,12 @@ extension ProxyRule {
 
 class AppProxyProvider: NETransparentProxyProvider {
     
+    // The version of the message protocol between the app and the extension.
+    // The app checks it when the tunnel comes up: an extension that answers with
+    // another number is an older build, and its rules and proxies would be
+    // ignored in silence. The app and the extension must agree on this number.
+    static let protocolAPI = 2
+    
     // one log entry, kept as an enum so we don't allocate a dictionary per line,
     // the dict is only built when the gui drains a batch
     private enum LogEntry {
@@ -772,6 +778,23 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
         
         switch action {
+        case "getInfo":
+            // Who is answering? The app asks as soon as the tunnel is up.
+            //
+            // macOS keeps every registered version of a system extension under the
+            // same bundle id. If an older ProxyBridge is still registered, the
+            // system may bind the tunnel to that one instead of this build. The
+            // old one speaks an older protocol: it ignores the rules and the
+            // proxies, so nothing is proxied and the window stays empty with no
+            // reason given. This answer is what lets the app say what is wrong.
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+            let info: [String: Any] = [
+                "status": "ok",
+                "api": AppProxyProvider.protocolAPI,
+                "version": version,
+                "pid": ProcessInfo.processInfo.processIdentifier
+            ]
+            completionHandler?(try? JSONSerialization.data(withJSONObject: info))
         case "getLogs":
             logQueueLock.lock()
             if logCount > 0 {

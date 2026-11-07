@@ -34,7 +34,22 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // macOS asks the user to approve the system extension once. Until that happens
     // nothing can be proxied, so the GUI says where the switch is and opens the pane.
     @Published var needsExtensionApproval = false
+    // set when the extension that answered the handshake is not this build: an
+    // older ProxyBridge is still registered and the system bound the tunnel to it.
+    // Then the rules and the proxies never arrive and nothing is proxied, so the
+    // window has to say why instead of showing an empty list.
+    @Published private(set) var extensionProblem: String? = nil
     
+    // The version of the message protocol between the app and the extension. It has
+    // to match AppProxyProvider.protocolAPI on the extension side.
+    private let extensionProtocolAPI = ExtensionHandshake.protocolAPI
+    
+    // The command that takes the other, older extensions out of the system. It needs
+    // root, so the user runs it in a terminal; the window puts it on the clipboard.
+    // It finds the team ids itself, so it works on any machine.
+    static let removeOldExtensionsCommand =
+    "sudo /usr/bin/systemextensionsctl uninstall $(/usr/bin/systemextensionsctl list | /usr/bin/awk -F'\\t' '$0 ~ /com\\.interceptsuite\\.ProxyBridge\\.extension/ {t=$3; gsub(/teamID\\(\"|\"\\)|-/,\"\",t); if (t != \"\") print t}' | /usr/bin/sort -u) com.interceptsuite.ProxyBridge.extension"
+
     private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
     private let trimToEntries = 400
@@ -887,6 +902,63 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         tunnelSession = session
         sendTrafficLoggingToExtension(isTrafficLoggingEnabled)
         updatePollingState()
+        handshakeWithExtension(session: session)
+    }
+    
+    // Asks the extension that the tunnel is connected to which one it is.
+    //
+    // macOS keeps every registered version of a system extension under the same
+    // bundle id. When an older ProxyBridge is still registered, the system may bind
+    // the tunnel to that one instead of this build. The old one speaks an older
+    // protocol: it ignores the rules and the proxies, so nothing is proxied and the
+    // window shows an empty list without saying why. The handshake is what turns
+    // that silence into an explanation.
+    private func handshakeWithExtension(session: NETunnelProviderSession, attempt: Int = 0) {
+        let message = ["action": "getInfo"]
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        do {
+            try session.sendProviderMessage(data) { [weak self] response in
+                self?.handleHandshakeResponse(response, session: session, attempt: attempt)
+            }
+        } catch {
+            // the message could not even be sent: the tunnel is not up
+            scheduleHandshakeRetry(session: session, attempt: attempt)
+        }
+    }
+    
+    private func handleHandshakeResponse(_ response: Data?, session: NETunnelProviderSession, attempt: Int) {
+        DispatchQueue.main.async {
+            switch ExtensionHandshake.verdict(response: response) {
+            case .ok(let api, let version):
+                self.extensionProblem = nil
+                self.addLog("INFO", "Extension handshake ok (protocol \(api), version \(version))")
+            case .mismatch(let api):
+                self.reportExtensionMismatch(api: api)
+            case .noAnswer:
+                // the extension may simply not be ready yet, so try a few more
+                // times before calling it a mismatch
+                self.scheduleHandshakeRetry(session: session, attempt: attempt)
+            }
+        }
+    }
+    
+    // the extension needs a moment to answer right after the tunnel comes up, so
+    // a missing answer is not proof of a mismatch. try again a few times first.
+    private func scheduleHandshakeRetry(session: NETunnelProviderSession, attempt: Int) {
+        guard attempt < 3 else {
+            reportExtensionMismatch()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.handshakeWithExtension(session: session, attempt: attempt + 1)
+        }
+    }
+    
+    // The tunnel is up, but the extension on the other end is not this build.
+    private func reportExtensionMismatch(api: Int? = nil) {
+        let detail = api.map { " (it speaks protocol \($0))" } ?? ""
+        extensionProblem = "The system bound the tunnel to another, older ProxyBridge extension\(detail). That one does not understand this version's rules, so nothing is proxied. Take it out with the command below, then switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions."
+        addLog("ERROR", "The extension that answered is not this build\(detail). The rules and the proxies never reach it, so no connection is proxied. Take the older extension out and approve this one.")
     }
     
     private func startLogPollingTimer() {
@@ -1132,6 +1204,8 @@ extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
         DispatchQueue.main.async {
             self.addLog("INFO", "Extension installed successfully")
             self.extensionReady = true
+            // the switch in System Settings is on now, the notice has nothing to say
+            self.needsExtensionApproval = false
             self.startProxy()
             self.applyDNSProxy()
         }

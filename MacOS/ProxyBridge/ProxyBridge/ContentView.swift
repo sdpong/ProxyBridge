@@ -11,11 +11,60 @@ struct ContentView: View {
         VStack(spacing: 0) {
             headerView
             Divider()
+            noticeBanner
             tabSelector
             Divider()
             contentView
         }
         .frame(minWidth: 800, minHeight: 600)
+    }
+    
+    // A notice the user has to act on: the system extension still waits for the
+    // one-time approval, or the system bound the tunnel to an older extension.
+    // It is a banner and not a dialog: a dialog on every launch is worse than the
+    // problem it describes.
+    @ViewBuilder
+    private var noticeBanner: some View {
+        if let problem = viewModel.extensionProblem {
+            noticeBar(
+                icon: "exclamationmark.triangle.fill",
+                text: problem,
+                actionTitle: "Copy the command",
+                action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(ProxyBridgeViewModel.removeOldExtensionsCommand, forType: .string)
+                }
+            )
+        } else if viewModel.needsExtensionApproval {
+            noticeBar(
+                icon: "lock.shield.fill",
+                text: "macOS wants to approve ProxyBridge once: System Settings > General > Login Items & Extensions > Network Extensions, and switch ProxyBridge on. Until that is done no traffic can be proxied.",
+                actionTitle: "Open System Settings",
+                action: openSystemSettings
+            )
+        }
+    }
+    
+    private func noticeBar(icon: String, text: String, actionTitle: String, action: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundColor(Color.orange)
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(actionTitle, action: action)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+    }
+    
+    private func openSystemSettings() {
+        // the pane with the network extension switches (macOS 13 and later keep them
+        // inside Login Items & Extensions)
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private var headerView: some View {

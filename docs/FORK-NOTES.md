@@ -151,11 +151,29 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
   app 能打开、能显示界面，但**什么都不会被代理**。
   - 本 fork 的 CI 把 `CODE_SIGNING_ALLOWED = NO` 写进了 xcconfig，
     所以**产物从来没有 entitlement**——这就是本机装完「没起作用」的原因。
-  - **ad-hoc 签名就够用**：`codesign --force --sign - --entitlements <file> --options runtime`
-    能带上 entitlement，sysextd 接受（`teamID: none` 照样装），
-    扩展会走到 `activated_waiting_for_user`。
-    实测脚本：`MacOS/ProxyBridge/scripts/adhoc-sign.sh`，
-    `build.sh` 与 macOS CI 打包前都会调它；已经是 Developer ID 签名的构建不动。
+  - **ad-hoc 签名能让它装上，但不能让它跑起来**（这是两件事，别混）：
+    - `codesign --force --sign - --entitlements <file> --options runtime`
+      会把 entitlement 真正嵌进二进制，`systemextensionsctl list` 里能看到
+      `activated waiting for user`——**注册成功**。
+    - 但 **AMFI 会拒绝这个 app**：
+      ```
+      Restricted entitlements not validated, bailing out. Code=-427 "Unable to retrieve certificate chain"
+      Adhoc signed app with restricted entitlements detected
+      ... not valid: Code=-424 "The file is adhoc signed but contains restricted entitlements"
+      ```
+      受限 entitlement（`system-extension.install` 与
+      `networking.networkextension`）必须由**描述文件**放行，ad-hoc 签名没有描述文件，
+      所以这些能力**不生效**——扩展注册了、进程却起不来，还是不代理任何流量。
+  - **结论：macOS 上能用的构建必须有 Developer ID + 描述文件**。
+    Apple DTS（Quinn）原话：Network Extension provider 与 Mac 上的 system extension
+    所需 entitlement「must be whitelisted by a provisioning profile, which means that
+    you will need a **paid developer membership**」；
+    **免费的 Personal Team 不支持 Network Extensions 与 System Extension 这两个能力**。
+    自签证书、自己编的 team id、`CODE_SIGN_IDENTITY="-"` 都等价于 ad-hoc，没有用。
+  - **本 fork 的 CI 已经预留好了这条路**：workflow 里 `HAS_SIGNING_CERT` 为真时，
+    会导入 `MACOS_CERTIFICATE`、安装 `MACOS_APP_PROVISION_PROFILE` /
+    `MACOS_EXT_PROVISION_PROFILE`、用 `MACOS_APP_XCCONFIG` / `MACOS_EXT_XCCONFIG`，
+    并走 `productsign` + `notarytool`。把凭据配成仓库 secret，产物就是正式签名并公证的。
   - **顺序：先签扩展，再签 app**。签 app 不会重签 bundle 里的代码，
     两部分各要各的 entitlement。
   - **entitlement 文件只有 Release 版本有**：`ProxyBridgeRelease.entitlements` 与
@@ -165,6 +183,13 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     「系统设置 → 通用 → 登录项与扩展 → 网络扩展」里开一次开关。
     深链 `x-apple.systempreferences:com.apple.LoginItems-Settings.extension` 实测能打开该面板，
     app 里已经有这个按钮。
+  - **同一 bundle id 的新旧扩展会同时留在系统里**：上游正式版是 Developer ID 签名，
+    本 fork 是 ad-hoc 签名（`teamID: none`），macOS 按「版本 + 签名团队」把它们记成
+    两条独立的扩展记录。系统可能把隧道绑到**旧的那条**上，而旧扩展的协议更老
+    （只认 `addRule` / `getLogs` / `setTrafficLogging`），于是规则和代理配置发过去没人懂，
+    窗口里一条连接也没有。app 现在会做**握手自检**（扩展回答 `getInfo`，
+    报协议号与版本），发现对不上就在窗口里明说，并给出清理命令
+    （`scripts/remove-old-extensions.sh`，需要 root）。
 
 ### 代理链
 

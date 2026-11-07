@@ -41,10 +41,14 @@ struct ProxyBridgeGUIApp: App {
                     AppDelegate.viewModel = viewModel
                     checkForUpdatesOnStartup()
                 }
-                .onChange(of: viewModel.needsExtensionApproval) { _ in
-                    // macOS needs the user to switch the extension on once. Without it
-                    // nothing is proxied, so say where the switch is and open the pane.
-                    if viewModel.needsExtensionApproval { showExtensionApprovalAlert() }
+                .onChange(of: viewModel.needsExtensionApproval) { needsApproval in
+                    // The first time this happens it deserves a dialog, so it is not
+                    // missed. After that the notice in the window is enough: a dialog
+                    // on every launch is worse than the problem it describes.
+                    guard needsApproval,
+                          !UserDefaults.standard.bool(forKey: "extensionApprovalPromptShown") else { return }
+                    UserDefaults.standard.set(true, forKey: "extensionApprovalPromptShown")
+                    showExtensionApprovalAlert()
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -138,6 +142,10 @@ struct ProxyBridgeGUIApp: App {
 
                 Button("Approve ProxyBridge in System Settings...") {
                     openSystemSettingsForExtension()
+                }
+
+                Button("Take Out Older ProxyBridge Extensions...") {
+                    showRemoveOldExtensionsHint()
                 }
             }
 
@@ -297,6 +305,31 @@ struct ProxyBridgeGUIApp: App {
     private func openSystemSettingsForExtension() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    // An older ProxyBridge extension can stay registered under the same bundle id.
+    // The system may then bind the tunnel to it, and that one speaks an older
+    // protocol: the rules and the proxies never arrive, so nothing is proxied.
+    // Taking it out needs root, so the command goes on the clipboard and the user
+    // runs it in a terminal.
+    private func showRemoveOldExtensionsHint() {
+        let command = ProxyBridgeViewModel.removeOldExtensionsCommand
+        let alert = NSAlert()
+        alert.messageText = "Take the older ProxyBridge extensions out"
+        alert.informativeText = "Run this in the Terminal. It removes the ProxyBridge extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 44))
+        field.stringValue = command
+        field.isEditable = false
+        field.isSelectable = true
+        field.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        field.backgroundColor = NSColor.textBackgroundColor
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Close")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+        }
     }
 
     // small AppKit text prompt, SwiftUI has no clean text-input alert on macOS
