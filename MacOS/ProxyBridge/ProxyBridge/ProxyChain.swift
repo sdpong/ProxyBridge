@@ -18,7 +18,7 @@ struct ProxyChain: Identifiable, Codable, Equatable {
     var action: String { ProxyChain.actionPrefix + id }
 
     var displayName: String {
-        name.isEmpty ? "Chain" : name
+        name.isEmpty ? L10n.t("Chain") : name
     }
 
     init(id: String = UUID().uuidString, name: String = "", proxyIds: [String] = []) {
@@ -42,26 +42,26 @@ extension ProxyChain {
     func problems(proxyTypes: [String: String]) -> [String] {
         var out: [String] = []
         if proxyIds.isEmpty {
-            out.append("The chain has no proxy in it.")
+            out.append(L10n.t("The chain has no proxy in it."))
             return out
         }
         for i in proxyIds.indices {
             let type = (proxyTypes[proxyIds[i]] ?? "").lowercased()
             if type.isEmpty {
-                out.append("Proxy \(i + 1) of the chain does not exist.")
+                out.append(L10n.f("Proxy %@ of the chain does not exist.", "\(i + 1)"))
                 continue
             }
             if type != "socks5" && type != "socks4" && type != "http" {
-                out.append("Proxy \(i + 1) of the chain has the type '\(type)', it must be socks5, socks4 or http.")
+                out.append(L10n.f("Proxy %@ of the chain has the type '%@', it must be socks5, socks4 or http.", "\(i + 1)", type))
                 continue
             }
             // only the last hop may be an http proxy
             if type == "http" && i != proxyIds.count - 1 {
-                out.append("Proxy \(i + 1) of the chain is an HTTP proxy. Only the last proxy of a chain may be one.")
+                out.append(L10n.f("Proxy %@ of the chain is an HTTP proxy. Only the last proxy of a chain may be one.", "\(i + 1)"))
             }
         }
         for i in 1..<proxyIds.count where proxyIds[i] == proxyIds[i - 1] {
-            out.append("The same proxy is used twice in a row.")
+            out.append(L10n.t("The same proxy is used twice in a row."))
             break
         }
         return out

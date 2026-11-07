@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct AboutView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @Environment(\.dismiss) var dismiss
 
     // read from the bundle so the About window always shows the built version
@@ -18,27 +21,27 @@ struct AboutView: View {
                 .font(.system(size: 14))
                 .foregroundColor(.secondary)
 
-            Text("Universal proxy client for macOS applications")
+            Text(L10n.t("Universal proxy client for macOS applications"))
                 .font(.system(size: 14))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.bottom, 8)
 
-            Text("Author: Sourav Kalal / InterceptSuite")
+            Text(L10n.t("Author: Sourav Kalal / InterceptSuite"))
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
 
             VStack(spacing: 12) {
                 HStack {
-                    Text("Website:")
+                    Text(L10n.t("Website:"))
                         .foregroundColor(.secondary)
                     Link("interceptsuite.com", destination: URL(string: "https://interceptsuite.com")!)
                         .foregroundColor(.accentColor)
                 }
 
                 HStack {
-                    Text("GitHub:")
+                    Text(L10n.t("GitHub:"))
                         .foregroundColor(.secondary)
                     Link("github.com/InterceptSuite/ProxyBridge", destination: URL(string: "https://github.com/InterceptSuite/ProxyBridge")!)
                         .foregroundColor(.accentColor)
@@ -46,12 +49,12 @@ struct AboutView: View {
             }
             .font(.system(size: 13))
 
-            Text("License: MIT")
+            Text(L10n.t("License: MIT"))
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
                 .padding(.top, 8)
 
-            Button("Close") {
+            Button(L10n.t("Close")) {
                 dismiss()
             }
             .keyboardShortcut(.defaultAction)

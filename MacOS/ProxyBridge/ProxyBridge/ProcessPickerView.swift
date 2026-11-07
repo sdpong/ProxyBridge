@@ -8,6 +8,9 @@ import SwiftUI
 // the sandbox allows. System daemons are in the list too, they are programs
 // like any other.
 struct ProcessPickerView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     // what the rule ends up matching on. the matcher compares a pattern with a
     // slash in it against the full path, a plain pattern against the executable
     // name, and the bundle id is matched as well.
@@ -59,7 +62,7 @@ struct ProcessPickerView: View {
             get: { notice != nil },
             set: { if !$0 { notice = nil } }
         )) {
-            Button("OK", role: .cancel) { notice = nil }
+            Button(L10n.t("OK"), role: .cancel) { notice = nil }
         } message: {
             Text(notice?.message ?? "")
         }
@@ -70,11 +73,11 @@ struct ProcessPickerView: View {
             Image(systemName: "app.badge")
                 .font(.title2)
                 .foregroundColor(.accentColor)
-            Text("Choose Programs")
+            Text(L10n.t("Choose Programs"))
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
-            Text("\(processes.count) program(s) running")
+            Text(L10n.f("%@ program(s) running", "\(processes.count)"))
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -87,17 +90,17 @@ struct ProcessPickerView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
-                TextField("Search by name, bundle id or path", text: $search)
+                TextField(L10n.t("Search by name, bundle id or path"), text: $search)
                     .textFieldStyle(.roundedBorder)
                 Button {
                     reload()
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label(L10n.t("Refresh"), systemImage: "arrow.clockwise")
                 }
             }
 
             HStack(spacing: 16) {
-                Picker("Add", selection: $valueMode) {
+                Picker(L10n.t("Add"), selection: $valueMode) {
                     ForEach(ValueMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
@@ -105,7 +108,7 @@ struct ProcessPickerView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 280)
 
-                Toggle("Only my programs", isOn: $onlyMine)
+                Toggle(L10n.t("Only my programs"), isOn: $onlyMine)
 
                 Spacer()
             }
@@ -150,7 +153,7 @@ struct ProcessPickerView: View {
                         } else if let owner = disabledOwner(for: process) {
                             // the rule names it too, but it is switched off, so
                             // it takes nothing away
-                            Label("\(owner) (off)", systemImage: "pause.circle")
+                            Label(L10n.f("%@ (off)", owner), systemImage: "pause.circle")
                                 .labelStyle(.titleAndIcon)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -174,9 +177,9 @@ struct ProcessPickerView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
-            Button("Cancel") { dismiss() }
+            Button(L10n.t("Cancel")) { dismiss() }
                 .keyboardShortcut(.cancelAction)
-            Button("Add to Rule") {
+            Button(L10n.t("Add to Rule")) {
                 let picked = filtered.filter { selection.contains($0.pid) && !isTaken($0) }
                 let values = picked.map { valueMode.value(for: $0) }.filter { !$0.isEmpty }
                 // keep the order of the list and drop duplicates

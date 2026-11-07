@@ -29,6 +29,9 @@ enum LoginItem {
 // no @main here, main.swift starts this for a normal launch (and the command line mode otherwise)
 struct ProxyBridgeGUIApp: App {
     @StateObject private var viewModel = ProxyBridgeViewModel()
+    // the language of the app. the menus are built again when it changes, so a
+    // language can be picked without restarting the app
+    @StateObject private var localization = LocalizationManager.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     // when on, closing the window hides the app to the menu bar instead of quitting
     @AppStorage("closeToMenuBar") private var closeToMenuBar = false
@@ -68,41 +71,41 @@ struct ProxyBridgeGUIApp: App {
         .commands {
             CommandGroup(replacing: .newItem) { }
             
-            CommandMenu("Proxy") {
-                Button("Proxy Settings...") {
+            CommandMenu(L10n.t("Proxy")) {
+                Button(L10n.t("Proxy Settings...")) {
                     openProxySettingsWindow()
                 }
                 .keyboardShortcut(",", modifiers: .command)
                 
-                Button("Proxy Rules...") {
+                Button(L10n.t("Proxy Rules...")) {
                     openProxyRulesWindow()
                 }
                 .keyboardShortcut("r", modifiers: .command)
 
-                Button("Proxy Chains...") {
+                Button(L10n.t("Proxy Chains...")) {
                     openProxyChainsWindow()
                 }
 
-                Button("DNS Settings...") {
+                Button(L10n.t("DNS Settings...")) {
                     openDNSSettingsWindow()
                 }
 
                 Divider()
                 
-                Toggle("Enable Traffic Logging", isOn: Binding(
+                Toggle(L10n.t("Enable Traffic Logging"), isOn: Binding(
                     get: { viewModel.isTrafficLoggingEnabled },
                     set: { _ in viewModel.toggleTrafficLogging() }
                 ))
 
                 // saved in the profile. off: ProxyBridge does not use the system DNS proxy, so another
                 // tool can use it, and host name rules and send hostname stop working
-                Toggle("Enable DNS", isOn: Binding(
+                Toggle(L10n.t("Enable DNS"), isOn: Binding(
                     get: { viewModel.isDNSEnabled },
                     set: { _ in viewModel.toggleDNS() }
                 ))
             }
 
-            CommandMenu("Profile") {
+            CommandMenu(L10n.t("Profile")) {
                 ForEach(viewModel.profiles, id: \.self) { name in
                     Button(action: { viewModel.switchProfile(to: name) }) {
                         // checkmark marks the active profile
@@ -116,93 +119,115 @@ struct ProxyBridgeGUIApp: App {
 
                 Divider()
 
-                Button("New Profile...") {
-                    promptProfileName(title: "New Profile", message: "Enter a name for the new profile.") {
+                Button(L10n.t("New Profile...")) {
+                    promptProfileName(title: L10n.t("New Profile"), message: L10n.t("Enter a name for the new profile.")) {
                         viewModel.createProfile($0)
                     }
                 }
 
-                Button("Rename \"\(viewModel.activeProfile)\"...") {
-                    promptProfileName(title: "Rename Profile", message: "Enter a new name.", defaultText: viewModel.activeProfile) {
+                Button(L10n.f("Rename \"%@\"...", viewModel.activeProfile)) {
+                    promptProfileName(title: L10n.t("Rename Profile"), message: L10n.t("Enter a new name."), defaultText: viewModel.activeProfile) {
                         viewModel.renameProfile(viewModel.activeProfile, to: $0)
                     }
                 }
 
-                Button("Delete \"\(viewModel.activeProfile)\"") {
+                Button(L10n.f("Delete \"%@\"", viewModel.activeProfile)) {
                     viewModel.deleteProfile(viewModel.activeProfile)
                 }
                 .disabled(viewModel.profiles.count <= 1)
 
                 Divider()
 
-                Button("Export \"\(viewModel.activeProfile)\"...") {
+                Button(L10n.f("Export \"%@\"...", viewModel.activeProfile)) {
                     exportActiveProfile()
                 }
 
-                Button("Import Profile...") {
+                Button(L10n.t("Import Profile...")) {
                     importProfileFromFile()
                 }
             }
 
-            CommandMenu("Settings") {
-                Toggle("Close to Menu Bar", isOn: $closeToMenuBar)
+            CommandMenu(L10n.t("Settings")) {
+                Toggle(L10n.t("Close to Menu Bar"), isOn: $closeToMenuBar)
                 // closing the window does not stop the proxy. the app stays in
                 // the background and the tunnel keeps running until it is
                 // stopped in the window or the app is quit.
-                Toggle("Keep Proxy Running in Background", isOn: $keepProxyRunningInBackground)
-                Toggle("Run at Startup", isOn: Binding(
+                Toggle(L10n.t("Keep Proxy Running in Background"), isOn: $keepProxyRunningInBackground)
+                Toggle(L10n.t("Run at Startup"), isOn: Binding(
                     get: { LoginItem.isEnabled },
                     set: { LoginItem.setEnabled($0) }
                 ))
 
                 Divider()
 
-                Button("Approve ProxyBridge in System Settings...") {
+                // the language of the app. english and chinese for now
+                //
+                // a menu of buttons and not a picker: a picker in a menu bar
+                // menu opens a submenu of its own that the system draws, and it
+                // does not always open where the person expects it.
+                Menu(L10n.t("Language")) {
+                    ForEach(L10n.Language.allCases) { language in
+                        Button {
+                            localization.language = language
+                        } label: {
+                            // a checkmark marks the language the app is in
+                            if language == localization.language {
+                                Label(language.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(language.displayName)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button(L10n.t("Approve ProxyBridge in System Settings...")) {
                     openSystemSettingsForExtension()
                 }
 
-                Button("Take Out Older ProxyBridge Extensions...") {
+                Button(L10n.t("Take Out Older ProxyBridge Extensions...")) {
                     showRemoveOldExtensionsHint()
                 }
             }
 
             CommandGroup(replacing: .help) {
-                Button("Documentation") {
+                Button(L10n.t("Documentation")) {
                     if let url = URL(string: "https://interceptsuite.com/docs/proxybridge/") {
                         NSWorkspace.shared.open(url)
                     }
                 }
 
-                Button("Check for Updates...") {
+                Button(L10n.t("Check for Updates...")) {
                     openUpdateCheckWindow()
                 }
 
                 Divider()
 
-                Button("About ProxyBridge") {
+                Button(L10n.t("About ProxyBridge")) {
                     openAboutWindow()
                 }
             }
         }
         
-        Window("Proxy Settings", id: "proxy-settings") {
+        Window(L10n.t("Proxy Settings"), id: "proxy-settings") {
             ProxySettingsView(viewModel: viewModel)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
         
-        Window("Proxy Rules", id: "proxy-rules") {
+        Window(L10n.t("Proxy Rules"), id: "proxy-rules") {
             ProxyRulesView(viewModel: viewModel)
         }
         .defaultPosition(.center)
         
-        Window("About ProxyBridge", id: "about") {
+        Window(L10n.t("About ProxyBridge"), id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
         
-        Window("Check for Updates", id: "update-check") {
+        Window(L10n.t("Check for Updates"), id: "update-check") {
             UpdateCheckView()
         }
         .windowResizability(.contentSize)
@@ -237,7 +262,7 @@ struct ProxyBridgeGUIApp: App {
         let name = viewModel.activeProfile
         guard let data = viewModel.exportProfileData(name) else { return }
         let panel = NSSavePanel()
-        panel.title = "Export Profile"
+        panel.title = L10n.t("Export Profile")
         panel.nameFieldStringValue = "\(name).pbprofile"
         if let type = UTType(filenameExtension: "pbprofile") {
             panel.allowedContentTypes = [type]
@@ -249,7 +274,7 @@ struct ProxyBridgeGUIApp: App {
 
     private func importProfileFromFile() {
         let panel = NSOpenPanel()
-        panel.title = "Import Profile"
+        panel.title = L10n.t("Import Profile")
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         var types: [UTType] = [.json]
@@ -276,10 +301,10 @@ struct ProxyBridgeGUIApp: App {
         let chains = viewModel.chains.count
 
         let alert = NSAlert()
-        alert.messageText = "Imported '\(profileName)'"
-        alert.informativeText = "\(proxies) proxy server(s), \(rules) rule(s) and \(chains) chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxyBridge. Here is what was done with them:"
+        alert.messageText = L10n.f("Imported '%@'", profileName)
+        alert.informativeText = L10n.f("%@ proxy server(s), %@ rule(s) and %@ chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxyBridge. Here is what was done with them:", "\(proxies)", "\(rules)", "\(chains)")
         alert.accessoryView = makeNotesView(notes)
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L10n.t("OK"))
         alert.runModal()
     }
 
@@ -310,10 +335,10 @@ struct ProxyBridgeGUIApp: App {
     // pane for them.
     private func showExtensionApprovalAlert() {
         let alert = NSAlert()
-        alert.messageText = "ProxyBridge needs your approval"
-        alert.informativeText = "Open System Settings > General > Login Items & Extensions > Network Extensions, and switch ProxyBridge on.\n\nUntil that is done, no traffic can be proxied."
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
+        alert.messageText = L10n.t("ProxyBridge needs your approval")
+        alert.informativeText = L10n.t("Open System Settings > General > Login Items & Extensions > Network Extensions, and switch ProxyBridge on.\n\nUntil that is done, no traffic can be proxied.")
+        alert.addButton(withTitle: L10n.t("Open System Settings"))
+        alert.addButton(withTitle: L10n.t("Later"))
         if alert.runModal() == .alertFirstButtonReturn { openSystemSettingsForExtension() }
     }
 
@@ -332,8 +357,8 @@ struct ProxyBridgeGUIApp: App {
     private func showRemoveOldExtensionsHint() {
         let command = ExtensionDiagnosis.removeOldExtensionsCommand
         let alert = NSAlert()
-        alert.messageText = "Take the older ProxyBridge extensions out"
-        alert.informativeText = "Run this in the Terminal. It removes the ProxyBridge extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions."
+        alert.messageText = L10n.t("Take the older ProxyBridge extensions out")
+        alert.informativeText = L10n.t("Run this in the Terminal. It removes the ProxyBridge extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 44))
         field.stringValue = command
         field.isEditable = false
@@ -341,8 +366,8 @@ struct ProxyBridgeGUIApp: App {
         field.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         field.backgroundColor = NSColor.textBackgroundColor
         alert.accessoryView = field
-        alert.addButton(withTitle: "Copy Command")
-        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: L10n.t("Copy Command"))
+        alert.addButton(withTitle: L10n.t("Close"))
         if alert.runModal() == .alertFirstButtonReturn {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
@@ -354,8 +379,8 @@ struct ProxyBridgeGUIApp: App {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L10n.t("OK"))
+        alert.addButton(withTitle: L10n.t("Cancel"))
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.stringValue = defaultText
@@ -516,25 +541,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
     
     @objc func openProxySettings() {
-        openWindow(title: "Proxy Settings", size: NSSize(width: 600, height: 500)) {
+        openWindow(title: L10n.t("Proxy Settings"), size: NSSize(width: 600, height: 500)) {
             ProxySettingsView(viewModel: AppDelegate.viewModel!)
         }
     }
     
     @objc func openProxyRules() {
-        openWindow(title: "Proxy Rules", size: NSSize(width: 1200, height: 600), resizable: true) {
+        openWindow(title: L10n.t("Proxy Rules"), size: NSSize(width: 1200, height: 600), resizable: true) {
             ProxyRulesView(viewModel: AppDelegate.viewModel!)
         }
     }
 
     @objc func openProxyChains() {
-        openWindow(title: "Proxy Chains", size: NSSize(width: 720, height: 460)) {
+        openWindow(title: L10n.t("Proxy Chains"), size: NSSize(width: 720, height: 460)) {
             ProxyChainsView(viewModel: AppDelegate.viewModel!)
         }
     }
 
     @objc func openDNSSettings() {
-        openWindow(title: "DNS Settings", size: NSSize(width: 660, height: 660)) {
+        openWindow(title: L10n.t("DNS Settings"), size: NSSize(width: 660, height: 660)) {
             DNSSettingsView(viewModel: AppDelegate.viewModel!)
         }
         // the window is reused, so the view has to be told that it is opened
@@ -543,20 +568,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
     
     @objc func openAbout() {
-        openWindow(title: "About ProxyBridge", size: NSSize(width: 400, height: 350)) {
+        openWindow(title: L10n.t("About ProxyBridge"), size: NSSize(width: 400, height: 350)) {
             AboutView()
         }
     }
     
     @objc func openUpdateCheck() {
-        openWindow(title: "Check for Updates", size: NSSize(width: 450, height: 300)) {
+        openWindow(title: L10n.t("Check for Updates"), size: NSSize(width: 450, height: 300)) {
             UpdateCheckView()
         }
     }
     
     @objc func showUpdateNotification(_ sender: Any?) {
         if let versionInfo = AppDelegate.pendingUpdateInfo {
-            openWindow(title: "Update Available", size: NSSize(width: 450, height: 350)) {
+            openWindow(title: L10n.t("Update Available"), size: NSSize(width: 450, height: 350)) {
                 UpdateNotificationView(versionInfo: versionInfo)
             }
             AppDelegate.pendingUpdateInfo = nil

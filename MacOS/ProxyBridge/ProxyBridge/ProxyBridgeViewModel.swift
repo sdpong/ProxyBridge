@@ -1285,7 +1285,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // Only for an answer that says so.
     private func reportExtensionMismatch(api: Int? = nil) {
         let detail = api.map { " (it speaks protocol \($0))" } ?? ""
-        extensionProblem = "The system bound the tunnel to another, older ProxyBridge extension\(detail). That one does not understand this version's rules, so nothing is proxied. Take it out with the command below, then switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions."
+        extensionProblem = L10n.f("The system bound the tunnel to another, older ProxyBridge extension%@. That one does not understand this version's rules, so nothing is proxied. Take it out with the command below, then switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions.", detail)
         extensionProblemDetails = nil
         extensionProblemIsStanding = false
         extensionProblemAction = .copyRemoveCommand

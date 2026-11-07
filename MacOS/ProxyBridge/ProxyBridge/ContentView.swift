@@ -2,6 +2,9 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     @State private var selectedTab = 0
     @State private var activitySearchText = ""
@@ -80,7 +83,7 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if details != nil {
-                    Button(showNoticeDetails ? "Hide details" : "Details") {
+                    Button(showNoticeDetails ? L10n.t("Hide details") : L10n.t("Details")) {
                         showNoticeDetails.toggle()
                     }
                     .buttonStyle(.plain)
@@ -94,7 +97,7 @@ struct ContentView: View {
                         .foregroundColor(Color.orange)
                 }
                 .buttonStyle(.plain)
-                .help("Hide this notice for now")
+                .help(L10n.t("Hide this notice for now"))
             }
             if let details = details, showNoticeDetails {
                 Text(details)
@@ -118,13 +121,13 @@ struct ContentView: View {
 
     private var tabSelector: some View {
         HStack(spacing: 0) {
-            TabButton(title: "Statistics", isSelected: selectedTab == 0) {
+            TabButton(title: L10n.t("Statistics"), isSelected: selectedTab == 0) {
                 selectedTab = 0
             }
-            TabButton(title: "Live Connections", isSelected: selectedTab == 1) {
+            TabButton(title: L10n.t("Live Connections"), isSelected: selectedTab == 1) {
                 selectedTab = 1
             }
-            TabButton(title: "Activity Logs", isSelected: selectedTab == 2) {
+            TabButton(title: L10n.t("Activity Logs"), isSelected: selectedTab == 2) {
                 selectedTab = 2
             }
             Spacer()
@@ -169,6 +172,9 @@ struct ContentView: View {
 }
 
 struct TabButton: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     let title: String
     let isSelected: Bool
     let action: () -> Void
@@ -193,6 +199,9 @@ struct TabButton: View {
 // The bytes of a direct connection are not shown, because macOS hands those flows straight
 // back to the system and the extension never gets to see them.
 struct ProxyTrafficView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     let rows: [ProxyBridgeViewModel.ProxyTraffic]
 
     var body: some View {
@@ -207,31 +216,31 @@ struct ProxyTrafficView: View {
 
     private var table: some View {
         Table(rows) {
-            TableColumn("Proxy") { row in
+            TableColumn(L10n.t("Proxy")) { row in
                 Text(row.proxy)
                     .foregroundColor(row.proxy == "Direct" ? .secondary : .primary)
             }
             .width(min: 150, ideal: 260)
 
-            TableColumn("Connections") { row in
+            TableColumn(L10n.t("Connections")) { row in
                 Text("\(row.connections)")
             }
             .width(90)
 
-            TableColumn("Sent") { row in
-                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp) : "not seen")
+            TableColumn(L10n.t("Sent")) { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp) : L10n.t("not seen"))
                     .foregroundColor(row.bytesKnown ? .primary : .secondary)
             }
             .width(90)
 
-            TableColumn("Received") { row in
-                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesDown) : "not seen")
+            TableColumn(L10n.t("Received")) { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesDown) : L10n.t("not seen"))
                     .foregroundColor(row.bytesKnown ? .primary : .secondary)
             }
             .width(90)
 
-            TableColumn("Total") { row in
-                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp + row.bytesDown) : "not seen")
+            TableColumn(L10n.t("Total")) { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp + row.bytesDown) : L10n.t("not seen"))
                     .foregroundColor(row.bytesKnown ? .primary : .secondary)
             }
             .width(90)
@@ -243,10 +252,10 @@ struct ProxyTrafficView: View {
             Image(systemName: "chart.bar.doc.horizontal")
                 .font(.system(size: 44))
                 .foregroundColor(.gray)
-            Text("No traffic yet")
+            Text(L10n.t("No traffic yet"))
                 .font(.title3)
                 .foregroundColor(.gray)
-            Text("Every proxy the traffic goes through gets a line here")
+            Text(L10n.t("Every proxy the traffic goes through gets a line here"))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
@@ -283,6 +292,9 @@ enum TrafficFormat {
 // system checks that channel against the app's signature. A build that is not signed by a
 // developer can list the connections but not close them.
 struct LiveConnectionsView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     let flows: [ProxyBridgeViewModel.LiveFlow]
     let canTerminate: Bool
     let onKill: (UInt64) -> Void
@@ -301,49 +313,49 @@ struct LiveConnectionsView: View {
 
     private var table: some View {
         Table(flows, selection: $selection) {
-            TableColumn("Application") { flow in
+            TableColumn(L10n.t("Application")) { flow in
                 Text(flow.process.isEmpty ? "unknown" : flow.process)
             }
             .width(min: 110, ideal: 150)
 
-            TableColumn("Destination") { flow in
+            TableColumn(L10n.t("Destination")) { flow in
                 Text(flow.port > 0 ? "\(flow.destination):\(flow.port)" : flow.destination)
             }
             .width(min: 150, ideal: 220)
 
-            TableColumn("Proto") { flow in
+            TableColumn(L10n.t("Proto")) { flow in
                 Text(flow.protocolName)
             }
             .width(48)
 
-            TableColumn("Proxy") { flow in
+            TableColumn(L10n.t("Proxy")) { flow in
                 Text(flow.proxy)
             }
             .width(min: 130, ideal: 180)
 
-            TableColumn("Sent") { flow in
+            TableColumn(L10n.t("Sent")) { flow in
                 Text(TrafficFormat.bytes(flow.bytesUp))
             }
             .width(70)
 
-            TableColumn("Received") { flow in
+            TableColumn(L10n.t("Received")) { flow in
                 Text(TrafficFormat.bytes(flow.bytesDown))
             }
             .width(70)
 
-            TableColumn("Idle") { flow in
+            TableColumn(L10n.t("Idle")) { flow in
                 Text(TrafficFormat.duration(flow.idle))
                     .foregroundColor(flow.idle >= 30 ? .orange : .primary)
             }
             .width(60)
         }
         .contextMenu {
-            Button("Terminate connection") {
+            Button(L10n.t("Terminate connection")) {
                 if let id = selection { onKill(id) }
             }
             .disabled(selection == nil || !canTerminate)
 
-            Button("Terminate all connections of this process") {
+            Button(L10n.t("Terminate all connections of this process")) {
                 if let process = selectedProcess { onKillProcess(process) }
             }
             .disabled(selectedProcess == nil || !canTerminate)
@@ -355,10 +367,10 @@ struct LiveConnectionsView: View {
             Image(systemName: "point.3.connected.trianglepath.dotted")
                 .font(.system(size: 44))
                 .foregroundColor(.gray)
-            Text("No active connections")
+            Text(L10n.t("No active connections"))
                 .font(.title3)
                 .foregroundColor(.gray)
-            Text("Connections that are proxied show up here")
+            Text(L10n.t("Connections that are proxied show up here"))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
@@ -387,10 +399,10 @@ struct ActivityLogsView: View {    let logs: [ProxyBridgeViewModel.ActivityLog]
         HStack {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.gray)
-            TextField("Search logs...", text: $searchText)
+            TextField(L10n.t("Search logs..."), text: $searchText)
                 .textFieldStyle(.plain)
             Spacer()
-            Button("Clear", action: onClear)
+            Button(L10n.t("Clear"), action: onClear)
         }
         .padding()
         .background(Color(NSColor.controlBackgroundColor))

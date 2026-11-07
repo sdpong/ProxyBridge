@@ -4,6 +4,9 @@ import Darwin
 import Network
 
 struct ProxyCheckerView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     let config: ProxyBridgeViewModel.ProxyConfig
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: ProxyCheckerModel
@@ -16,18 +19,18 @@ struct ProxyCheckerView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text("Host:").fontWeight(.medium)
+                Text(L10n.t("Host:")).fontWeight(.medium)
                 TextField("www.google.com", text: $model.targetHost)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 180)
-                Text("Port:").fontWeight(.medium)
+                Text(L10n.t("Port:")).fontWeight(.medium)
                 TextField("80", text: $model.targetPort)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 70)
                 Spacer()
-                Button("Retest") { model.run() }
+                Button(L10n.t("Retest")) { model.run() }
                     .disabled(model.isRunning)
-                Button("Close") { dismiss() }
+                Button(L10n.t("Close")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
             .padding()

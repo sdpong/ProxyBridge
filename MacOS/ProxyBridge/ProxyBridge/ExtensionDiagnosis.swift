@@ -18,8 +18,7 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         return reason.contains("NEVPNConnectionErrorDomain 14")
     }
 
-    static let missingProviderAppExplanation =
-    "macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxyBridge is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Copy the command and run it in the Terminal to take the old extension out, then start the proxy again. macOS finishes the removal at the next restart."
+    static let missingProviderAppExplanation = L10n.t("macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxyBridge is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Copy the command and run it in the Terminal to take the old extension out, then start the proxy again. macOS finishes the removal at the next restart.")
 
     // The command that takes the old records out of the system.
     //
@@ -88,9 +87,9 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     // bar says what it is in one line and the rest is one click away.
     static func extensionUnreachableSummary(hasDeveloperSignature: Bool) -> String {
         if hasDeveloperSignature {
-            return "The extension does not answer. The tunnel is up, so the extension on the other end is not this build."
+            return L10n.t("The extension does not answer. The tunnel is up, so the extension on the other end is not this build.")
         }
-        return "This build is not signed by a developer, so the switches the extension reads while it runs are not available. The traffic is proxied all the same, and the connections and their traffic come from the system log."
+        return L10n.t("This build is not signed by a developer, so the switches the extension reads while it runs are not available. The traffic is proxied all the same, and the connections and their traffic come from the system log.")
     }
 
     // The extension does not answer at all.
@@ -119,13 +118,13 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     static func extensionUnreachableExplanation(hasDeveloperSignature: Bool) -> [String] {
         if hasDeveloperSignature {
             return [
-                "The extension does not answer. The tunnel is up, so the extension on the other end is not this build. Take the old record out with the command below, then start the proxy again."
+                L10n.t("The extension does not answer. The tunnel is up, so the extension on the other end is not this build. Take the old record out with the command below, then start the proxy again.")
             ]
         }
         return [
-            "The extension does not answer over the provider channel. macOS checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it.",
-            "What that costs: the switches the extension reads while it runs, and closing a connection by hand. Everything else is read from the unified log instead: the extension writes every decision it made there, and it writes the traffic of the open flows there as well, so the connections, their traffic and the activity log are all there. The traffic itself is proxied either way: the rules, the proxies and the passwords went with the start of the tunnel.",
-            "Sign the app with a Developer ID certificate to get the running switches and the hand-made disconnects as well."
+            L10n.t("The extension does not answer over the provider channel. macOS checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it."),
+            L10n.t("What that costs: the switches the extension reads while it runs, and closing a connection by hand. Everything else is read from the unified log instead: the extension writes every decision it made there, and it writes the traffic of the open flows there as well, so the connections, their traffic and the activity log are all there. The traffic itself is proxied either way: the rules, the proxies and the passwords went with the start of the tunnel."),
+            L10n.t("Sign the app with a Developer ID certificate to get the running switches and the hand-made disconnects as well.")
         ]
     }
 }

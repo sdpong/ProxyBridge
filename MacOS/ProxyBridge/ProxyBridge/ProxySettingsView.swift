@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct ProxySettingsView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     @Environment(\.dismiss) private var dismiss
 
@@ -19,20 +22,20 @@ struct ProxySettingsView: View {
             footerButtons
         }
         .frame(minWidth: 880, idealWidth: 880, maxWidth: .infinity, minHeight: 440, idealHeight: 480, maxHeight: .infinity)
-        .alert("Delete Proxy?", isPresented: Binding(
+        .alert(L10n.t("Delete Proxy?"), isPresented: Binding(
             get: { deletingConfig != nil },
             set: { if !$0 { deletingConfig = nil } }
         )) {
-            Button("Delete", role: .destructive) {
+            Button(L10n.t("Delete"), role: .destructive) {
                 if let c = deletingConfig { viewModel.removeProxyConfig(c) }
                 deletingConfig = nil
             }
-            Button("Cancel", role: .cancel) { deletingConfig = nil }
+            Button(L10n.t("Cancel"), role: .cancel) { deletingConfig = nil }
         } message: {
             if affectedRulesCount > 0 {
-                Text(verbatim: "\(affectedRulesCount) rule\(affectedRulesCount == 1 ? "" : "s") use this proxy and will be set to Direct.")
+                Text(L10n.f("%@ rule(s) use this proxy and will be set to Direct.", "\(affectedRulesCount)"))
             } else {
-                Text("This proxy will be permanently removed.")
+                Text(L10n.t("This proxy will be permanently removed."))
             }
         }
         .sheet(isPresented: $showAddProxy) {
@@ -51,14 +54,14 @@ struct ProxySettingsView: View {
             Image(systemName: "network")
                 .font(.title2)
                 .foregroundColor(.accentColor)
-            Text("Proxy Settings")
+            Text(L10n.t("Proxy Settings"))
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
             Button(action: { showAddProxy = true }) {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                    Text("Add")
+                    Text(L10n.t("Add"))
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -77,30 +80,30 @@ struct ProxySettingsView: View {
                 Image(systemName: "network.slash")
                     .font(.system(size: 48))
                     .foregroundColor(.gray)
-                Text("No proxy servers configured")
+                Text(L10n.t("No proxy servers configured"))
                     .font(.title3)
                     .foregroundColor(.gray)
-                Text("Click 'Add' to configure your first proxy server")
+                Text(L10n.t("Click 'Add' to configure your first proxy server"))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
             Spacer()
         } else {
             Table(viewModel.proxyConfigs) {
-                TableColumn("Name") { config in
+                TableColumn(L10n.t("Name")) { config in
                     Text(config.name.isEmpty ? "=" : config.name)
                         .foregroundColor(config.name.isEmpty ? .secondary : .primary)
                 }
                 .width(140)
 
-                TableColumn("Type") { config in
+                TableColumn(L10n.t("Type")) { config in
                     Text(config.type.uppercased())
                         .foregroundColor(typeColor(config.type))
                         .fontWeight(.semibold)
                 }
                 .width(70)
 
-                TableColumn("Server") { config in
+                TableColumn(L10n.t("Server")) { config in
                     // build the string first, interpolating an Int into a Text
                     // literal would add a locale grouping separator (1,080)
                     Text(verbatim: "\(config.host):\(String(config.port))")
@@ -108,7 +111,7 @@ struct ProxySettingsView: View {
                 }
                 .width(min: 180, ideal: 220, max: .infinity)
 
-                TableColumn("Auth") { config in
+                TableColumn(L10n.t("Auth")) { config in
                     if config.username != nil {
                         Image(systemName: "lock.fill").foregroundColor(.secondary)
                     } else {
@@ -117,9 +120,9 @@ struct ProxySettingsView: View {
                 }
                 .width(40)
 
-                TableColumn("Test") { config in
+                TableColumn(L10n.t("Test")) { config in
                     Button(action: { checkingConfig = config }) {
-                        Label("Test", systemImage: "bolt.horizontal")
+                        Label(L10n.t("Test"), systemImage: "bolt.horizontal")
                     }
                     .buttonStyle(.borderless)
                 }
@@ -132,14 +135,14 @@ struct ProxySettingsView: View {
                         }
                         .buttonStyle(.borderless)
                         .foregroundColor(.blue)
-                        .help("Edit")
+                        .help(L10n.t("Edit"))
 
                         Button(action: { confirmDelete(config) }) {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
                         .foregroundColor(.red)
-                        .help("Delete")
+                        .help(L10n.t("Delete"))
                     }
                 }
                 .width(60)
@@ -151,7 +154,7 @@ struct ProxySettingsView: View {
     private var footerButtons: some View {
         HStack {
             Spacer()
-            Button("Done") { dismiss() }
+            Button(L10n.t("Done")) { dismiss() }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
         }
@@ -170,6 +173,9 @@ struct ProxySettingsView: View {
 }
 
 struct ProxyConfigEditorView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     var existing: ProxyBridgeViewModel.ProxyConfig?
     @Environment(\.dismiss) private var dismiss
@@ -207,11 +213,11 @@ struct ProxyConfigEditorView: View {
 
             Form {
                 Section {
-                    formTextField(label: "Name", placeholder: "Optional, e.g. Home SOCKS", text: $configName)
+                    formTextField(label: L10n.t("Name"), placeholder: L10n.t("Optional, e.g. Home SOCKS"), text: $configName)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack { Text("Proxy Type").fontWeight(.medium); Text("*").foregroundColor(.red) }
-                        Picker("Select proxy type", selection: $proxyType) {
+                        HStack { Text(L10n.t("Proxy Type")).fontWeight(.medium); Text("*").foregroundColor(.red) }
+                        Picker(L10n.t("Select proxy type"), selection: $proxyType) {
                             ForEach(proxyTypes, id: \.self) { type in
                                 Text(type.uppercased()).tag(type)
                             }
@@ -220,35 +226,35 @@ struct ProxyConfigEditorView: View {
                     }
                     .padding(.vertical, 8)
 
-                    formTextField(label: "Proxy IP/Domain", placeholder: "127.0.0.1 or proxy.example.com", text: $proxyHost, required: true)
+                    formTextField(label: L10n.t("Proxy IP/Domain"), placeholder: "127.0.0.1 or proxy.example.com", text: $proxyHost, required: true)
                         .onChange(of: proxyHost) { _ in validateInputs() }
-                    formTextField(label: "Proxy Port", placeholder: "1080", text: $proxyPort, required: true)
+                    formTextField(label: L10n.t("Proxy Port"), placeholder: "1080", text: $proxyPort, required: true)
                         .onChange(of: proxyPort) { _ in validateInputs() }
-                    formTextField(label: "Username", placeholder: "Leave empty if no auth", text: $username)
+                    formTextField(label: L10n.t("Username"), placeholder: L10n.t("Leave empty if no auth"), text: $username)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Password").fontWeight(.medium)
-                        SecureField("Leave empty if no auth", text: $password)
+                        Text(L10n.t("Password")).fontWeight(.medium)
+                        SecureField(L10n.t("Leave empty if no auth"), text: $password)
                             .textFieldStyle(.roundedBorder)
                     }
                     .padding(.vertical, 8)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Let proxy resolve DNS (send hostname)", isOn: $sendDomain)
-                        Text("On: the proxy gets the host name the app looked up. Off: it gets the IP address. Turn it off for a proxy that can't resolve the names your Mac can.")
+                        Toggle(L10n.t("Let proxy resolve DNS (send hostname)"), isOn: $sendDomain)
+                        Text(L10n.t("On: the proxy gets the host name the app looked up. Off: it gets the IP address. Turn it off for a proxy that can't resolve the names your Mac can."))
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text("Host names are only sent when Enable DNS is on in the Proxy menu.")
+                        Text(L10n.t("Host names are only sent when Enable DNS is on in the Proxy menu."))
                             .font(.caption)
                             .foregroundColor(viewModel.isDNSEnabled ? .secondary : .orange)
                     }
                     .padding(.vertical, 8)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Send the application name to the proxy server", isOn: $sendAppId)
-                        Text("The proxy server is told which application the traffic comes from, so it can route by application. HTTP proxies get it in a header, SOCKS proxies in the user name field.")
+                        Toggle(L10n.t("Send the application name to the proxy server"), isOn: $sendAppId)
+                        Text(L10n.t("The proxy server is told which application the traffic comes from, so it can route by application. HTTP proxies get it in a header, SOCKS proxies in the user name field."))
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text("A SOCKS5 proxy that needs a user name of its own keeps it: there is only one user name field.")
+                        Text(L10n.t("A SOCKS5 proxy that needs a user name of its own keeps it: there is only one user name field."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -269,8 +275,8 @@ struct ProxyConfigEditorView: View {
 
             HStack(spacing: 12) {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(); dismiss() }
+                Button(L10n.t("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.t("Save")) { save(); dismiss() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isSaveDisabled)
@@ -278,7 +284,7 @@ struct ProxyConfigEditorView: View {
             .padding()
             .background(Color(NSColor.controlBackgroundColor))
         }
-        .frame(width: 500, height: 610)
+        .frame(width: 500, height: 700)
         .onAppear {
             if let e = existing {
                 configName = e.name
@@ -315,18 +321,18 @@ struct ProxyConfigEditorView: View {
             let domainPattern = "^([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)*[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?$"
             let isDomain = NSPredicate(format: "SELF MATCHES %@", domainPattern).evaluate(with: proxyHost) || proxyHost == "localhost"
             if !isIPv4 && !isIPv6 && !isDomain {
-                validationError = "Invalid proxy IP/domain"
+                validationError = L10n.t("Invalid proxy IP/domain")
                 return
             }
         }
         if !proxyPort.isEmpty {
             if let port = Int(proxyPort) {
                 if port < 1 || port > 65535 {
-                    validationError = "Port must be between 1 and 65535"
+                    validationError = L10n.t("Port must be between 1 and 65535")
                     return
                 }
             } else {
-                validationError = "Port must be a valid number"
+                validationError = L10n.t("Port must be a valid number")
                 return
             }
         }

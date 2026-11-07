@@ -11,6 +11,9 @@ import SwiftUI
 // The window also shows what the DNS proxy is doing right now. Without that,
 // a setting that changes nothing on screen looks like a setting that is broken.
 struct DNSSettingsView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
 
     @State private var mode: DNSPolicySettings.Mode = .system
@@ -30,7 +33,7 @@ struct DNSSettingsView: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Picker("Resolution", selection: $mode) {
+                        Picker(L10n.t("Resolution"), selection: $mode) {
                             ForEach(DNSPolicySettings.Mode.allCases) { option in
                                 Text(option.title).tag(option)
                             }
@@ -40,7 +43,7 @@ struct DNSSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Divider()
-                        Text("What the three settings mean")
+                        Text(L10n.t("What the three settings mean"))
                             .font(.caption)
                             .fontWeight(.medium)
                         modeList
@@ -49,16 +52,16 @@ struct DNSSettingsView: View {
                 }
 
                 Section {
-                    Toggle("Leak protection (proxy server always resolves)", isOn: $leakProtection)
-                    Text("The proxy server is always given the host name, whatever its own setting says. The address this Mac resolved can then never be the address the proxy connects to. The query itself still goes to the resolver of this Mac, so this is not a way to hide the names that are looked up.")
+                    Toggle(L10n.t("Leak protection (proxy server always resolves)"), isOn: $leakProtection)
+                    Text(L10n.t("The proxy server is always given the host name, whatever its own setting says. The address this Mac resolved can then never be the address the proxy connects to. The query itself still goes to the resolver of this Mac, so this is not a way to hide the names that are looked up."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Excluded domains").fontWeight(.medium)
-                        Text("One per line. An excluded name is answered by the resolver of this Mac and never becomes a proxy destination. Use *.example.com for everything below a domain.")
+                        Text(L10n.t("Excluded domains")).fontWeight(.medium)
+                        Text(L10n.t("One per line. An excluded name is answered by the resolver of this Mac and never becomes a proxy destination. Use *.example.com for everything below a domain."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         TextEditor(text: $excludedText)
@@ -74,8 +77,8 @@ struct DNSSettingsView: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Upstream resolvers").fontWeight(.medium)
-                        Text("One per line, for example 1.1.1.1 or 8.8.8.8:53. The first one that can be read answers every name that is not excluded.")
+                        Text(L10n.t("Upstream resolvers")).fontWeight(.medium)
+                        Text(L10n.t("One per line, for example 1.1.1.1 or 8.8.8.8:53. The first one that can be read answers every name that is not excluded."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         TextEditor(text: $resolversText)
@@ -88,8 +91,8 @@ struct DNSSettingsView: View {
                     }
                     .padding(.vertical, 4)
 
-                    Toggle("Detect the system resolver automatically", isOn: $autoDetect)
-                    Text("With this off and no resolver listed above, the resolver of this Mac answers. With this on, the resolver of this Mac is used when the list above is empty. It does not decide whether DNS is watched: the DNS proxy always takes the queries, so that the names of the addresses are known.")
+                    Toggle(L10n.t("Detect the system resolver automatically"), isOn: $autoDetect)
+                    Text(L10n.t("With this off and no resolver listed above, the resolver of this Mac answers. With this on, the resolver of this Mac is used when the list above is empty. It does not decide whether DNS is watched: the DNS proxy always takes the queries, so that the names of the addresses are known."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -119,10 +122,10 @@ struct DNSSettingsView: View {
                 .font(.title2)
                 .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 1) {
-                Text("DNS Settings")
+                Text(L10n.t("DNS Settings"))
                     .font(.title2)
                     .fontWeight(.semibold)
-                Text("Profile: \(viewModel.activeProfile)")
+                Text(L10n.f("Profile: %@", viewModel.activeProfile))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -160,14 +163,14 @@ struct DNSSettingsView: View {
                 Text(statusTitle)
                     .fontWeight(.medium)
                 Spacer()
-                Button("Refresh") { refreshStatus() }
+                Button(L10n.t("Refresh")) { refreshStatus() }
                     .buttonStyle(.link)
             }
             Text(statusDetail)
                 .font(.caption)
                 .foregroundColor(.secondary)
             if let entryEnabled, !entryEnabled {
-                Text("The DNS proxy entry is off in the system. ProxyBridge writes it again while the tunnel runs, but the names of the addresses are unknown until then.")
+                Text(L10n.t("The DNS proxy entry is off in the system. ProxyBridge writes it again while the tunnel runs, but the names of the addresses are unknown until then."))
                     .font(.caption)
                     .foregroundColor(.orange)
             }
@@ -208,9 +211,9 @@ struct DNSSettingsView: View {
                     .foregroundColor(.green)
             }
             Spacer()
-            Button("Cancel") { cancel() }
+            Button(L10n.t("Cancel")) { cancel() }
                 .keyboardShortcut(.cancelAction)
-            Button("Save") { save() }
+            Button(L10n.t("Save")) { save() }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
         }

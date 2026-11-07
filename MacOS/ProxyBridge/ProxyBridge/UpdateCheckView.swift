@@ -2,13 +2,16 @@ import SwiftUI
 import Combine
 
 struct UpdateCheckView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = UpdateCheckViewModel()
     
     var body: some View {
         VStack(spacing: 20) {
             // Header
-            Text("Check for Updates")
+            Text(L10n.t("Check for Updates"))
                 .font(.title2)
                 .fontWeight(.semibold)
             
@@ -17,7 +20,7 @@ struct UpdateCheckView: View {
             // Version Info
             VStack(spacing: 12) {
                 HStack {
-                    Text("Current Version:")
+                    Text(L10n.t("Current Version:"))
                         .fontWeight(.medium)
                     Spacer()
                     Text(viewModel.currentVersion)
@@ -25,7 +28,7 @@ struct UpdateCheckView: View {
                 }
                 
                 HStack {
-                    Text("Latest Version:")
+                    Text(L10n.t("Latest Version:"))
                         .fontWeight(.medium)
                     Spacer()
                     Text(viewModel.latestVersion)
@@ -50,7 +53,7 @@ struct UpdateCheckView: View {
                 Link(destination: url) {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.text")
-                        Text("View Release Notes")
+                        Text(L10n.t("View Release Notes"))
                     }
                 }
             }
@@ -84,7 +87,7 @@ struct UpdateCheckView: View {
             // Buttons
             HStack(spacing: 12) {
                 if viewModel.isUpdateAvailable && !viewModel.isDownloading {
-                    Button("Download Now") {
+                    Button(L10n.t("Download Now")) {
                         Task {
                             await viewModel.downloadAndInstall()
                         }
@@ -93,7 +96,7 @@ struct UpdateCheckView: View {
                 }
                 
                 if !viewModel.isChecking && !viewModel.isDownloading {
-                    Button("Check Again") {
+                    Button(L10n.t("Check Again")) {
                         Task {
                             await viewModel.checkForUpdates()
                         }

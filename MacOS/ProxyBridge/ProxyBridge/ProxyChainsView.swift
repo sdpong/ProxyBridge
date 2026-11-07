@@ -5,6 +5,9 @@ import SwiftUI
 // A chain lets a rule send its traffic through several proxies one after the
 // other, which is what Proxifier calls a proxy chain.
 struct ProxyChainsView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     @Environment(\.dismiss) private var dismiss
 
@@ -23,20 +26,20 @@ struct ProxyChainsView: View {
             footerButtons
         }
         .frame(minWidth: 720, idealWidth: 720, maxWidth: .infinity, minHeight: 420, idealHeight: 460, maxHeight: .infinity)
-        .alert("Delete Chain?", isPresented: Binding(
+        .alert(L10n.t("Delete Chain?"), isPresented: Binding(
             get: { deletingChain != nil },
             set: { if !$0 { deletingChain = nil } }
         )) {
-            Button("Delete", role: .destructive) {
+            Button(L10n.t("Delete"), role: .destructive) {
                 if let c = deletingChain { viewModel.removeChain(c) }
                 deletingChain = nil
             }
-            Button("Cancel", role: .cancel) { deletingChain = nil }
+            Button(L10n.t("Cancel"), role: .cancel) { deletingChain = nil }
         } message: {
             if affectedRulesCount > 0 {
-                Text(verbatim: "\(affectedRulesCount) rule\(affectedRulesCount == 1 ? "" : "s") use this chain and will be set to Direct.")
+                Text(L10n.f("%@ rule(s) use this chain and will be set to Direct.", "\(affectedRulesCount)"))
             } else {
-                Text("This chain will be permanently removed.")
+                Text(L10n.t("This chain will be permanently removed."))
             }
         }
         .sheet(isPresented: $showAddChain) {
@@ -55,14 +58,14 @@ struct ProxyChainsView: View {
             Image(systemName: "link")
                 .font(.title2)
                 .foregroundColor(.accentColor)
-            Text("Proxy Chains")
+            Text(L10n.t("Proxy Chains"))
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
             Button(action: { showAddChain = true }) {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                    Text("Add")
+                    Text(L10n.t("Add"))
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -80,9 +83,9 @@ struct ProxyChainsView: View {
                 Image(systemName: "link.circle")
                     .font(.system(size: 40))
                     .foregroundColor(.secondary)
-                Text("No proxy chains yet.")
+                Text(L10n.t("No proxy chains yet."))
                     .font(.headline)
-                Text("A chain sends a rule's traffic through several proxies, one after the other. Add one, then pick it as the action of a rule.")
+                Text(L10n.t("A chain sends a rule's traffic through several proxies, one after the other. Add one, then pick it as the action of a rule."))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -112,13 +115,13 @@ struct ProxyChainsView: View {
                         if !downHops(of: chain).isEmpty {
                             Image(systemName: "wifi.exclamationmark")
                                 .foregroundColor(.red)
-                                .help("Does not answer: " + downHops(of: chain).joined(separator: ", "))
+                                .help(L10n.t("Does not answer: ") + downHops(of: chain).joined(separator: ", "))
                         }
                         Button(action: { testingChain = chain }) {
                             Image(systemName: "bolt.horizontal")
                         }
                         .buttonStyle(.borderless)
-                        .help("Test the chain")
+                        .help(L10n.t("Test the chain"))
                         Button(action: { editingChain = chain }) {
                             Image(systemName: "pencil")
                         }
@@ -139,11 +142,11 @@ struct ProxyChainsView: View {
 
     private var footerButtons: some View {
         HStack {
-            Text("A rule that uses a chain sends its traffic through every proxy of the chain, in order.")
+            Text(L10n.t("A rule that uses a chain sends its traffic through every proxy of the chain, in order."))
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
-            Button("Done") { dismiss() }
+            Button(L10n.t("Done")) { dismiss() }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
         }
@@ -170,12 +173,15 @@ struct ProxyChainsView: View {
         let names = chain.proxyIds.compactMap { id in
             viewModel.proxyConfigs.first { $0.id == id }?.displayName
         }
-        return names.isEmpty ? "No proxy in this chain" : names.joined(separator: " -> ")
+        return names.isEmpty ? L10n.t("No proxy in this chain") : names.joined(separator: " -> ")
     }
 }
 
 // The chain editor: the name and the ordered list of proxies.
 struct ProxyChainEditorView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     var existing: ProxyChain?
 
@@ -214,8 +220,8 @@ struct ProxyChainEditorView: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Name").fontWeight(.medium)
-                        TextField("Optional, e.g. Home via work", text: $name)
+                        Text(L10n.t("Name")).fontWeight(.medium)
+                        TextField(L10n.t("Optional, e.g. Home via work"), text: $name)
                             .textFieldStyle(.roundedBorder)
                     }
                     .padding(.vertical, 8)
@@ -223,13 +229,13 @@ struct ProxyChainEditorView: View {
 
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Proxies, in order").fontWeight(.medium)
-                        Text("The first proxy is asked to open a tunnel to the second one, and so on. The last proxy is the one that reaches the destination.")
+                        Text(L10n.t("Proxies, in order")).fontWeight(.medium)
+                        Text(L10n.t("The first proxy is asked to open a tunnel to the second one, and so on. The last proxy is the one that reaches the destination."))
                             .font(.caption)
                             .foregroundColor(.secondary)
 
                         if proxyIds.isEmpty {
-                            Text("No proxy in this chain yet.")
+                            Text(L10n.t("No proxy in this chain yet."))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .padding(.vertical, 6)
@@ -275,13 +281,13 @@ struct ProxyChainEditorView: View {
 
                         HStack(spacing: 8) {
                             Picker("", selection: $pickerChoice) {
-                                Text("Add a proxy...").tag("")
+                                Text(L10n.t("Add a proxy...")).tag("")
                                 ForEach(viewModel.proxyConfigs) { config in
                                     Text(config.displayName).tag(config.id)
                                 }
                             }
                             .pickerStyle(.menu)
-                            Button("Add") {
+                            Button(L10n.t("Add")) {
                                 addPicked()
                             }
                             .disabled(pickerChoice.isEmpty)
@@ -304,9 +310,9 @@ struct ProxyChainEditorView: View {
             Divider()
 
             HStack(spacing: 12) {
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L10n.t("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Save") { save(); dismiss() }
+                Button(L10n.t("Save")) { save(); dismiss() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }

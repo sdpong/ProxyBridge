@@ -2,6 +2,9 @@ import SwiftUI
 import Combine
 
 struct UpdateNotificationView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @Environment(\.dismiss) private var dismiss
     let versionInfo: VersionInfo
     @StateObject private var viewModel: UpdateNotificationViewModel
@@ -19,7 +22,7 @@ struct UpdateNotificationView: View {
                     .font(.system(size: 50))
                     .foregroundColor(.blue)
                 
-                Text("Update Available")
+                Text(L10n.t("Update Available"))
                     .font(.title2)
                     .fontWeight(.bold)
             }
@@ -29,7 +32,7 @@ struct UpdateNotificationView: View {
             // Version Information
             VStack(spacing: 10) {
                 HStack {
-                    Text("Current Version:")
+                    Text(L10n.t("Current Version:"))
                         .fontWeight(.medium)
                     Spacer()
                     Text(versionInfo.currentVersion)
@@ -37,7 +40,7 @@ struct UpdateNotificationView: View {
                 }
                 
                 HStack {
-                    Text("New Version:")
+                    Text(L10n.t("New Version:"))
                         .fontWeight(.medium)
                     Spacer()
                     Text(versionInfo.latestVersion)
@@ -47,7 +50,7 @@ struct UpdateNotificationView: View {
             }
             .padding(.horizontal)
             
-            Text("A new version of ProxyBridge is available!")
+            Text(L10n.t("A new version of ProxyBridge is available!"))
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
 
@@ -55,7 +58,7 @@ struct UpdateNotificationView: View {
                 Link(destination: url) {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.text")
-                        Text("View Release Notes")
+                        Text(L10n.t("View Release Notes"))
                     }
                 }
             }
@@ -86,17 +89,17 @@ struct UpdateNotificationView: View {
             // Action Buttons
             if !viewModel.isDownloading {
                 HStack(spacing: 12) {
-                    Button("Don't Ask Again") {
+                    Button(L10n.t("Don't Ask Again")) {
                         viewModel.dontAskAgain()
                         dismiss()
                     }
                     
-                    Button("Later") {
+                    Button(L10n.t("Later")) {
                         dismiss()
                     }
                     .keyboardShortcut(.cancelAction)
                     
-                    Button("Update Now") {
+                    Button(L10n.t("Update Now")) {
                         Task {
                             await viewModel.downloadAndInstall()
                         }
@@ -105,7 +108,7 @@ struct UpdateNotificationView: View {
                     .controlSize(.large)
                 }
             } else {
-                Button("Cancel") {
+                Button(L10n.t("Cancel")) {
                     dismiss()
                 }
                 .disabled(true)

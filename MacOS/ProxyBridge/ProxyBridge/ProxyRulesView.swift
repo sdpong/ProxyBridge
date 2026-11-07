@@ -97,6 +97,9 @@ struct ProxyRule: Identifiable, Codable {
 }
 
 struct ProxyRulesView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     @State private var rules: [ProxyRule] = []
     @State private var selectedRuleIds: Set<String> = []
@@ -109,7 +112,7 @@ struct ProxyRulesView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Proxy Rules")
+                Text(L10n.t("Proxy Rules"))
                     .font(.title2)
                     .fontWeight(.semibold)
                 
@@ -134,7 +137,7 @@ struct ProxyRulesView: View {
                 Button(action: { exportSelectedRules() }) {
                     HStack {
                         Image(systemName: "square.and.arrow.up")
-                        Text("Export")
+                        Text(L10n.t("Export"))
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -144,7 +147,7 @@ struct ProxyRulesView: View {
                 Button(action: { importRulesFromFile() }) {
                     HStack {
                         Image(systemName: "square.and.arrow.down")
-                        Text("Import")
+                        Text(L10n.t("Import"))
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -153,7 +156,7 @@ struct ProxyRulesView: View {
                 Button(action: { showAddRule = true }) {
                     HStack {
                         Image(systemName: "plus")
-                        Text("Add Rule")
+                        Text(L10n.t("Add Rule"))
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -168,10 +171,10 @@ struct ProxyRulesView: View {
                     Image(systemName: "list.bullet.rectangle")
                         .font(.system(size: 48))
                         .foregroundColor(.gray)
-                    Text("No rules configured")
+                    Text(L10n.t("No rules configured"))
                         .font(.title3)
                         .foregroundColor(.gray)
-                    Text("Click 'Add Rule' to create your first rule")
+                    Text(L10n.t("Click 'Add Rule' to create your first rule"))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -194,7 +197,7 @@ struct ProxyRulesView: View {
                     }
                     .width(32)
 
-                    TableColumn("On") { rule in
+                    TableColumn(L10n.t("On")) { rule in
                         Toggle("", isOn: binding(for: rule))
                             .toggleStyle(.switch)
                             .labelsHidden()
@@ -208,14 +211,14 @@ struct ProxyRulesView: View {
                             }
                             .buttonStyle(.borderless)
                             .foregroundColor(.blue)
-                            .help("Edit")
+                            .help(L10n.t("Edit"))
 
                             Button(action: { deleteRule(rule) }) {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.borderless)
                             .foregroundColor(.red)
-                            .help("Delete")
+                            .help(L10n.t("Delete"))
                         }
                     }
                     .width(60)
@@ -226,36 +229,36 @@ struct ProxyRulesView: View {
                     }
                     .width(32)
 
-                    TableColumn("Name") { rule in
+                    TableColumn(L10n.t("Name")) { rule in
                         Text(rule.name.isEmpty ? "=" : rule.name)
                             .foregroundColor(rule.name.isEmpty ? .secondary : .primary)
                     }
                     .width(min: 90, ideal: 120)
 
-                    TableColumn("Bundle ID") { rule in
+                    TableColumn(L10n.t("Bundle ID")) { rule in
                         RuleEntryCell(stored: rule.processNames,
                                       separators: RulePatternValidator.programSeparators)
                     }
                     .width(min: 100, ideal: 140)
 
-                    TableColumn("Target Hosts") { rule in
+                    TableColumn(L10n.t("Target Hosts")) { rule in
                         RuleEntryCell(stored: rule.targetHosts,
                                       separators: RulePatternValidator.hostSeparators,
                                       keepRangesTogether: true)
                     }
                     .width(min: 100, ideal: 150)
 
-                    TableColumn("Target Ports") { rule in
+                    TableColumn(L10n.t("Target Ports")) { rule in
                         Text(rule.targetPorts.isEmpty ? "Any" : rule.targetPorts)
                     }
                     .width(min: 70, ideal: 100)
 
-                    TableColumn("Protocol") { rule in
+                    TableColumn(L10n.t("Protocol")) { rule in
                         Text(rule.ruleProtocol)
                     }
                     .width(64)
 
-                    TableColumn("Action") { rule in
+                    TableColumn(L10n.t("Action")) { rule in
                         Text(actionDisplayName(rule.action))
                             .foregroundColor(actionColor(rule.action))
                             .fontWeight(.semibold)
@@ -289,12 +292,12 @@ struct ProxyRulesView: View {
             get: { notice != nil },
             set: { if !$0 { notice = nil } }
         )) {
-            Button("Open") {
+            Button(L10n.t("Open")) {
                 if let rule = pendingEdit { editingRule = rule }
                 pendingEdit = nil
                 notice = nil
             }
-            Button("Cancel", role: .cancel) {
+            Button(L10n.t("Cancel"), role: .cancel) {
                 pendingEdit = nil
                 notice = nil
             }
@@ -483,6 +486,9 @@ struct ProxyRulesView: View {
 }
 
 struct RuleEditorView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     @ObservedObject var viewModel: ProxyBridgeViewModel
     var existingRule: ProxyRule?
     // the rules other than the one being edited. the rules list knows them,
@@ -538,20 +544,20 @@ struct RuleEditorView: View {
             Form {
                 Section {
                     formField(
-                        label: "Rule Name",
-                        placeholder: "Optional, e.g. Work traffic",
+                        label: L10n.t("Rule Name"),
+                        placeholder: L10n.t("Optional, e.g. Work traffic"),
                         text: $ruleName,
                         hint: "Shown in the rules list. Leave empty if you don't need one."
                     )
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Process / Bundle Identifier").fontWeight(.medium)
+                            Text(L10n.t("Process / Bundle Identifier")).fontWeight(.medium)
                             Spacer()
                             Button {
                                 showProcessPicker = true
                             } label: {
-                                Label("Choose...", systemImage: "app.badge")
+                                Label(L10n.t("Choose..."), systemImage: "app.badge")
                             }
                         }
                         PatternTextEditor(text: $processNames,
@@ -563,13 +569,13 @@ struct RuleEditorView: View {
                                           })
                             .frame(height: 96)
                         problemList(processEntries)
-                        Text("Matches the bundle id or the process name, one per line. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *")
+                        Text(L10n.t("Matches the bundle id or the process name, one per line. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Target hosts").fontWeight(.medium)
+                        Text(L10n.t("Target hosts")).fontWeight(.medium)
                         PatternTextEditor(text: $targetHosts,
                                           highlights: problemRanges(hostEntries),
                                           notes: usedRanges(hostEntries, names: usedHosts, isHost: true),
@@ -579,7 +585,7 @@ struct RuleEditorView: View {
                                           })
                             .frame(height: 96)
                         problemList(hostEntries)
-                        Text("One per line. IP: 127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1   Domain: github.com; *.github.com; *google*")
+                        Text(L10n.t("One per line. IP: 127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1   Domain: github.com; *.github.com; *google*"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -593,7 +599,7 @@ struct RuleEditorView: View {
                     }
                     
                     formField(
-                        label: "Target ports",
+                        label: L10n.t("Target ports"),
                         placeholder: "*",
                         text: $targetPorts,
                         hint: "Example: 80; 8000-9000; 3128"
@@ -601,12 +607,12 @@ struct RuleEditorView: View {
 
                     HStack(spacing: 4) {
                         Image(systemName: "info.circle").foregroundColor(.secondary)
-                        Text("Target hosts and ports only apply to TCP. UDP rules match on the app (bundle id) only.")
+                        Text(L10n.t("Target hosts and ports only apply to TCP. UDP rules match on the app (bundle id) only."))
                             .font(.caption).foregroundColor(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Protocol")
+                        Text(L10n.t("Protocol"))
                             .fontWeight(.medium)
                         Picker("", selection: $selectedProtocol) {
                             Text("TCP").tag("TCP")
@@ -617,14 +623,14 @@ struct RuleEditorView: View {
                         if selectedProtocol == "UDP" || selectedProtocol == "BOTH" {
                             HStack(alignment: .top, spacing: 4) {
                                 Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
-                                Text("UDP only works with a SOCKS5 proxy. Not all SOCKS5 proxies support UDP by default, and SOCKS5 UDP support does not guarantee QUIC or HTTP/3 works - verify your proxy supports these separately.")
+                                Text(L10n.t("UDP only works with a SOCKS5 proxy. Not all SOCKS5 proxies support UDP by default, and SOCKS5 UDP support does not guarantee QUIC or HTTP/3 works - verify your proxy supports these separately."))
                                     .font(.caption).foregroundColor(.secondary)
                             }
                         }
                     }
                     
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Action")
+                        Text(L10n.t("Action"))
                             .fontWeight(.medium)
                         Picker("", selection: $selectedAction) {
                             Text("DIRECT").tag("DIRECT")
@@ -648,7 +654,7 @@ struct RuleEditorView: View {
                             if isHttp {
                                 HStack(spacing: 4) {
                                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)
-                                    Text("UDP only works with SOCKS5 proxy. HTTP proxies do not support UDP.")
+                                    Text(L10n.t("UDP only works with SOCKS5 proxy. HTTP proxies do not support UDP."))
                                         .font(.caption).foregroundColor(.secondary)
                                 }
                             }
@@ -656,7 +662,7 @@ struct RuleEditorView: View {
                         if viewModel.proxyConfigs.isEmpty {
                             HStack(spacing: 4) {
                                 Image(systemName: "info.circle").foregroundColor(.secondary)
-                                Text("No proxy servers configured - add one in Proxy Settings.")
+                                Text(L10n.t("No proxy servers configured - add one in Proxy Settings."))
                                     .font(.caption).foregroundColor(.secondary)
                             }
                         }
@@ -665,7 +671,7 @@ struct RuleEditorView: View {
                         if let chain = viewModel.chains.first(where: { $0.action == selectedAction }) {
                             HStack(alignment: .top, spacing: 4) {
                                 Image(systemName: "info.circle").foregroundColor(.secondary)
-                                Text("This rule uses the chain \"\(chain.displayName)\". A chain carries TCP only, UDP traffic of this rule goes direct.")
+                                Text(L10n.f("This rule uses the chain \"%@\". A chain carries TCP only, UDP traffic of this rule goes direct.", chain.displayName))
                                     .font(.caption).foregroundColor(.secondary)
                             }
                         }
@@ -675,14 +681,14 @@ struct RuleEditorView: View {
             .formStyle(.grouped)
             
             HStack {
-                Button("Cancel") {
+                Button(L10n.t("Cancel")) {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
-                Button("Save Rule") {
+                Button(L10n.t("Save Rule")) {
                     saveRule()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -694,7 +700,7 @@ struct RuleEditorView: View {
             if hasProblems {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
-                    Text("The marked entries cannot work. Fix them before saving.")
+                    Text(L10n.t("The marked entries cannot work. Fix them before saving."))
                         .font(.caption)
                         .foregroundColor(.red)
                 }
@@ -711,7 +717,7 @@ struct RuleEditorView: View {
             get: { notice != nil },
             set: { if !$0 { notice = nil } }
         )) {
-            Button("OK", role: .cancel) { notice = nil }
+            Button(L10n.t("OK"), role: .cancel) { notice = nil }
         } message: {
             Text(notice?.message ?? "")
         }
@@ -851,6 +857,9 @@ struct RuleEditorView: View {
 // shows them one per line, the way Proxifier lists them, so a rule with four
 // hosts does not read as one long string the eye has to scan.
 struct RuleEntryCell: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
     let stored: String
     let separators: CharacterSet
     let keepRangesTogether: Bool
@@ -863,7 +872,7 @@ struct RuleEntryCell: View {
 
     var body: some View {
         if stored.isEmpty {
-            Text("Any")
+            Text(L10n.t("Any"))
         } else {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(Array(entries.enumerated()), id: \.offset) { pair in
