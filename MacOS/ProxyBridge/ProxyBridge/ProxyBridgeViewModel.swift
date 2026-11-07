@@ -52,7 +52,15 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         case copyRemoveCommand
     }
     @Published private(set) var extensionProblemAction: ExtensionProblemAction = .none
-    
+
+    // Whether the extension answers over the provider channel.
+    //
+    // The system checks that channel against the app's signature, so a build
+    // that is not signed by a developer gets no message through it. That decides
+    // how a change reaches the running extension: over the channel, or with a
+    // restart of the tunnel.
+    private var providerChannelAvailable = false
+
     // The version of the message protocol between the app and the extension. It has
     // to match AppProxyProvider.protocolAPI on the extension side.
     private let extensionProtocolAPI = ExtensionHandshake.protocolAPI
@@ -382,9 +390,8 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         loadDNSSetting()
         // window-close behaviour is read live from the key, only startup needs applying
         LoginItem.applyToSystem(UserDefaults.standard.bool(forKey: "runAtStartup"))
-        if let session = tunnelSession {
-            sendProxyConfigsToExtension(session: session)
-            RuleManager.resyncRules(session: session) { _, _ in }
+        if tunnelSession != nil {
+            deliverChangeToExtension()
             sendTrafficLoggingToExtension(isTrafficLoggingEnabled)
             sendDNSPolicyToExtension()
         }
@@ -550,18 +557,14 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     func addProxyConfig(_ config: ProxyConfig) {
         proxyConfigs.append(config)
         saveProxyConfigs()
-        if let session = tunnelSession {
-            sendProxyConfigsToExtension(session: session)
-        }
+        deliverChangeToExtension()
     }
 
     func updateProxyConfig(_ config: ProxyConfig) {
         if let index = proxyConfigs.firstIndex(where: { $0.id == config.id }) {
             proxyConfigs[index] = config
             saveProxyConfigs()
-            if let session = tunnelSession {
-                sendProxyConfigsToExtension(session: session)
-            }
+            deliverChangeToExtension()
         }
     }
 
@@ -598,9 +601,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             }
             if changed {
                 UserDefaults.standard.set(saved, forKey: "proxyRules")
-                if let session = tunnelSession {
-                    RuleManager.resyncRules(session: session) { _, _ in }
-                }
+                deliverChangeToExtension()
             }
         }
         chains.removeAll { $0.id == chain.id }
@@ -615,9 +616,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     }
 
     private func pushChainsToExtension() {
-        if let session = tunnelSession {
-            sendProxyConfigsToExtension(session: session)
-        }
+        deliverChangeToExtension()
     }
 
     func rulesUsingProxy(id: String) -> Int {
@@ -635,16 +634,12 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             }
             if changed {
                 UserDefaults.standard.set(saved, forKey: "proxyRules")
-                if let session = tunnelSession {
-                    RuleManager.resyncRules(session: session) { _, _ in }
-                }
+                deliverChangeToExtension()
             }
         }
         proxyConfigs.removeAll { $0.id == config.id }
         saveProxyConfigs()
-        if let session = tunnelSession {
-            sendProxyConfigsToExtension(session: session)
-        }
+        deliverChangeToExtension()
     }
     
     private func installAndStartProxy() {
@@ -1052,9 +1047,11 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         DispatchQueue.main.async {
             switch ExtensionHandshake.verdict(response: response) {
             case .ok(let api, let version):
+                self.providerChannelAvailable = true
                 self.extensionProblem = nil
                 self.addLog("INFO", "Extension handshake ok (protocol \(api), version \(version))")
             case .mismatch(let api):
+                self.providerChannelAvailable = false
                 self.reportExtensionMismatch(api: api)
             case .noAnswer:
                 // the extension may simply not be ready yet, so try a few more
@@ -1073,6 +1070,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             // app's signature, and a build that is not signed by a developer gets
             // no message through it. Saying "another extension answered" here
             // sends the person off to delete extensions that are not the problem.
+            providerChannelAvailable = false
             reportExtensionUnreachable()
             return
         }
@@ -1353,6 +1351,60 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             level: line.level,
             message: line.text
         )
+    }
+
+    // The tunnel that was restarted to pick up a change, and the work item that
+    // waits before it happens.
+    private var pendingRestart: DispatchWorkItem?
+
+    // A change to the rules, the proxies or the chains has to reach the running
+    // extension.
+    //
+    // The message channel is how that is done, and the system checks it against
+    // the app's signature: a build that is not signed by a developer gets no
+    // message through it, and the change the person made in the window would
+    // silently do nothing.
+    //
+    // The tunnel start options carry the same thing, and the system hands those
+    // over without the check. So when the channel is closed the tunnel is
+    // restarted instead: the change lands, and the open connections drop.
+    private func deliverChangeToExtension() {
+        guard let session = tunnelSession else { return }
+        if providerChannelAvailable {
+            sendProxyConfigsToExtension(session: session)
+            RuleManager.resyncRules(session: session) { _, _ in }
+            return
+        }
+        scheduleTunnelRestart()
+    }
+
+    // The restart is a moment of nothing, and a person who edits three rules in
+    // a row should not see three tunnels come and go. So the changes are gathered
+    // for a moment and the tunnel is restarted once, with all of them in it.
+    private func scheduleTunnelRestart() {
+        pendingRestart?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingRestart = nil
+            self.restartTunnelNow()
+        }
+        pendingRestart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
+    }
+
+    private func restartTunnelNow() {
+        addLog("INFO", "The extension did not answer, so the tunnel is restarted to pick up the change.")
+
+        // the same path the on/off switch uses: it stops the tunnel, clears what
+        // the extension has, and starts it again with the configuration of now.
+        // the start waits for the stop to be through: a tunnel that is started
+        // while the old one is still going down is a tunnel that stays down.
+        stopProxy { [weak self] in
+            guard let self = self else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.startProxy()
+            }
+        }
     }
 
     func sendProxyConfigsToExtension(session: NETunnelProviderSession) {
