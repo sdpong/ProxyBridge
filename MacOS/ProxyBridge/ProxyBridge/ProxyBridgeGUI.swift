@@ -32,6 +32,10 @@ struct ProxyBridgeGUIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     // when on, closing the window hides the app to the menu bar instead of quitting
     @AppStorage("closeToMenuBar") private var closeToMenuBar = false
+    // when on (the default), closing the window leaves the app and the proxy
+    // running in the background. the window comes back from the dock icon or
+    // from the menu bar item.
+    @AppStorage("keepProxyRunningInBackground") private var keepProxyRunningInBackground = true
 
     var body: some Scene {
         WindowGroup {
@@ -142,6 +146,10 @@ struct ProxyBridgeGUIApp: App {
 
             CommandMenu("Settings") {
                 Toggle("Close to Menu Bar", isOn: $closeToMenuBar)
+                // closing the window does not stop the proxy. the app stays in
+                // the background and the tunnel keeps running until it is
+                // stopped in the window or the app is quit.
+                Toggle("Keep Proxy Running in Background", isOn: $keepProxyRunningInBackground)
                 Toggle("Run at Startup", isOn: Binding(
                     get: { LoginItem.isEnabled },
                     set: { LoginItem.setEnabled($0) }
@@ -378,17 +386,28 @@ struct ProxyBridgeGUIApp: App {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     static var viewModel: ProxyBridgeViewModel?
     static var pendingUpdateInfo: VersionInfo?
     static weak var shared: AppDelegate?
-    static weak var mainWindow: NSWindow?
+    // the main window is kept on purpose: when the window is closed and the
+    // proxy keeps running, this is how the window comes back. a weak
+    // reference would be gone by then, and swiftui has no way to open the
+    // window of a group without an id.
+    static var mainWindow: NSWindow?
     // set at launch, tells WindowAccessor to keep the first window hidden
     static var startHidden = false
 
     private var statusItem: NSStatusItem?
 
     private var closeToMenuBar: Bool { UserDefaults.standard.bool(forKey: "closeToMenuBar") }
+
+    // closing the window leaves the app and the proxy running. this is on
+    // unless the user says otherwise: a proxy that stops when the window is
+    // closed is a proxy that stops in the middle of something.
+    private var keepProxyRunningInBackground: Bool {
+        UserDefaults.standard.object(forKey: "keepProxyRunningInBackground") as? Bool ?? true
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -413,13 +432,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
-    // close-to-menu-bar off: closing the main window quits, matching the windows
-    // "close = exit" behavior. when on, windowShouldClose hides the window instead
+    // close-to-menu-bar off: the window closes. whether the app quits with it
+    // is the "keep the proxy running in the background" setting: on (the
+    // default) the app stays and the tunnel keeps running, off quits.
+    // when close-to-menu-bar is on, windowShouldClose hides the window instead
     // so this never fires.
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               window === AppDelegate.mainWindow,
               !closeToMenuBar else { return }
+        if keepProxyRunningInBackground {
+            // the app stays alive, so the tunnel stays up. the window comes back
+            // from the dock icon or from the menu bar item.
+            return
+        }
         NSApp.terminate(nil)
     }
 
@@ -438,13 +464,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Open ProxyBridge", action: #selector(showMainWindow), keyEquivalent: ""))
         menu.addItem(.separator())
+        // the same setting as in the Settings menu, so that it can be reached
+        // when the window is closed and the app only lives in the menu bar
+        let keepItem = NSMenuItem(title: "Keep Proxy Running in Background",
+                                  action: #selector(toggleKeepProxyRunning),
+                                  keyEquivalent: "")
+        keepItem.target = self
+        keepItem.state = keepProxyRunningInBackground ? .on : .off
+        menu.addItem(keepItem)
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ProxyBridge", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.delegate = self
         item.menu = menu
         statusItem = item
     }
 
+    // the checkmark of the menu item follows the setting, also when it is
+    // changed in the Settings menu of the app
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for item in menu.items where item.action == #selector(toggleKeepProxyRunning) {
+            item.state = keepProxyRunningInBackground ? .on : .off
+        }
+    }
+
+    @objc private func toggleKeepProxyRunning() {
+        UserDefaults.standard.set(!keepProxyRunningInBackground, forKey: "keepProxyRunningInBackground")
+    }
+
     @objc private func showMainWindow() {
         NSApp.setActivationPolicy(.regular)
+        // the window is still there, it was only closed. bringing it back is
+        // enough, swiftui does not make a second one.
         AppDelegate.mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
