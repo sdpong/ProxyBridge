@@ -79,6 +79,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
     private let trimToEntries = 400
+    // How often the extension is asked for its log over the message channel.
+    // That is the way a build that is signed by a developer reads it; a build
+    // that is not signed follows the unified log instead.
     private let logPollingInterval = 1.0
     private let flowPollingInterval = 1.0
     private let extensionIdentifier = "com.sdpong.proxybridge.extension"
@@ -1536,6 +1539,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         NotificationCenter.default.removeObserver(self)
         logTimer?.invalidate()
         stopApprovalWatch()
+        // the tool that follows the log is a process of its own: it goes when
+        // the app goes
+        unifiedLogTail?.stop()
         stopProxy()
     }
 }
