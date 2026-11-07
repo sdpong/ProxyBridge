@@ -29,6 +29,9 @@ struct ProcessPickerView: View {
 
     @Environment(\.dismiss) private var dismiss
     var onAdd: ([String]) -> Void
+    // the programs the other rules already name. they are shown in yellow and
+    // cannot be picked, so that a program does not end up in two rules.
+    var used: UsedProcessPatterns = UsedProcessPatterns()
 
     @State private var processes: [RunningProcess] = []
     @State private var search = ""
@@ -110,7 +113,7 @@ struct ProcessPickerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(filtered, selection: $selection) { process in
+                List(filtered, selection: selectionBinding) { process in
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(process.name)
@@ -129,11 +132,21 @@ struct ProcessPickerView: View {
                             }
                         }
                         Spacer()
+                        if let owner = usedOwner(for: process) {
+                            // the rule that already names this program
+                            Label(owner, systemImage: "exclamationmark.triangle.fill")
+                                .labelStyle(.titleAndIcon)
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                        }
                         Text("\(process.pid)")
                             .font(.caption.monospacedDigit())
                             .foregroundColor(.secondary)
                     }
                     .tag(process.pid)
+                    .listRowBackground(isUsed(process) ? Color.yellow.opacity(0.22) : Color.clear)
+                    .help(isUsed(process) ? "Already named by \"\(usedOwner(for: process) ?? "another rule")\"" : "")
                 }
             }
         }
@@ -141,16 +154,14 @@ struct ProcessPickerView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text(selection.isEmpty
-                 ? "Pick one or more programs. A rule matches a program by its name or its bundle id."
-                 : "\(selection.count) program(s) picked.")
+            Text(footerText)
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
             Button("Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
             Button("Add to Rule") {
-                let picked = filtered.filter { selection.contains($0.pid) }
+                let picked = filtered.filter { selection.contains($0.pid) && !isUsed($0) }
                 let values = picked.map { valueMode.value(for: $0) }.filter { !$0.isEmpty }
                 // keep the order of the list and drop duplicates
                 var seen = Set<String>()
@@ -162,6 +173,42 @@ struct ProcessPickerView: View {
             .disabled(selection.isEmpty)
         }
         .padding()
+    }
+
+    private var footerText: String {
+        if !used.isEmpty {
+            return "Programs in yellow are already named by another rule and cannot be picked."
+        }
+        return selection.isEmpty
+            ? "Pick one or more programs. A rule matches a program by its name or its bundle id."
+            : "\(selection.count) program(s) picked."
+    }
+
+    // a program that another rule already names
+    private func isUsed(_ process: RunningProcess) -> Bool {
+        return RuleProgramUsage.isUsed(processName: process.name, bundleId: process.bundleId, used: used)
+    }
+
+    // the rule that already names this program
+    private func usedOwner(for process: RunningProcess) -> String? {
+        guard let pattern = RuleProgramUsage.matchingPattern(processName: process.name, bundleId: process.bundleId, used: used) else {
+            return nil
+        }
+        return used.ownerByPattern[pattern]
+    }
+
+    // a program that is already named by another rule cannot be picked, so it
+    // is taken out of the selection as soon as it is made
+    private var selectionBinding: Binding<Set<Int32>> {
+        Binding(
+            get: { selection },
+            set: { newValue in
+                selection = newValue.filter { pid in
+                    guard let process = processes.first(where: { $0.pid == pid }) else { return false }
+                    return !isUsed(process)
+                }
+            }
+        )
     }
 
     private var filtered: [RunningProcess] {

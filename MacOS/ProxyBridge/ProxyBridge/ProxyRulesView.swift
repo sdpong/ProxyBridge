@@ -590,7 +590,7 @@ struct RuleEditorView: View {
             }
         }
         .sheet(isPresented: $showProcessPicker) {
-            ProcessPickerView { values in
+            ProcessPickerView(used: usedProcessPatterns) { values in
                 addProcesses(values)
             }
         }
@@ -635,6 +635,15 @@ struct RuleEditorView: View {
                 }
             }
         }
+    }
+
+    // the programs the other rules already name. the picker shows them, so
+    // that a program does not end up in two rules by accident.
+    private var usedProcessPatterns: UsedProcessPatterns {
+        let dicts = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
+        let rules = dicts.map { ProxyRule(dict: $0) }
+        let plain = rules.map { (id: $0.localId, name: $0.name, processNames: $0.processNames) }
+        return RuleProgramUsage.usedPatterns(rules: plain, excluding: existingRule?.localId ?? "")
     }
 
     @ViewBuilder
