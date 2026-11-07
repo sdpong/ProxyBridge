@@ -963,17 +963,23 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
     }
     
-    func stopProxy() {
+    // The completion is called when the tunnel is down. A caller that starts a
+    // tunnel again waits for it, so the two do not run into each other.
+    func stopProxy(completion: (() -> Void)? = nil) {
         guard let session = tunnelSession else {
             isProxyActive = false
             logTimer?.invalidate()
             logTimer = nil
+            completion?()
             return
         }
-        
+
         clearExtensionMemory(session: session) { [weak self] in
-            guard let self = self else { return }
-            
+            guard let self = self else {
+                completion?()
+                return
+            }
+
             NETransparentProxyManager.loadAllFromPreferences { managers, error in
                 if let manager = managers?.first {
                     (manager.connection as? NETunnelProviderSession)?.stopTunnel()
@@ -983,6 +989,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                     self.tunnelSession = nil
                     self.addLog("INFO", "Proxy stopped and extension memory cleared")
                 }
+                completion?()
             }
         }
     }
@@ -993,13 +1000,21 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             let clearConfigMessage: [String: Any] = [
                 "action": "clearConfig"
             ]
-            
+
             guard let data = try? JSONSerialization.data(withJSONObject: clearConfigMessage) else {
                 completion()
                 return
             }
-            
-            try? session.sendProviderMessage(data) { _ in
+
+            do {
+                try session.sendProviderMessage(data) { _ in
+                    completion()
+                }
+            } catch {
+                // The message could not be sent at all: the system checks this
+                // channel against the app's signature, and a build that is not
+                // signed by a developer is refused. The tunnel still has to be
+                // stopped, so the caller is called either way.
                 completion()
             }
         }

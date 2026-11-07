@@ -59,16 +59,25 @@ struct RuleManager {
             completion(false, nil)
             return
         }
-        
-        try? session.sendProviderMessage(data) { response in
-            guard let responseData = response,
-                  let result = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-                  let status = result["status"] as? String else {
-                completion(false, nil)
-                return
+
+        do {
+            try session.sendProviderMessage(data) { response in
+                guard let responseData = response,
+                      let result = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                      let status = result["status"] as? String else {
+                    completion(false, nil)
+                    return
+                }
+
+                completion(status == "ok", result)
             }
-            
-            completion(status == "ok", result)
+        } catch {
+            // The message could not even be sent. The system checks this channel
+            // against the app's signature, and a build that is not signed by a
+            // developer is refused - so the answer will never come. The caller
+            // must not wait for it: this is what stops the tunnel, and a tunnel
+            // that cannot be stopped is worse than one that is not cleared.
+            completion(false, nil)
         }
     }
     
