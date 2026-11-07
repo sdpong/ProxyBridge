@@ -28,16 +28,20 @@ struct ProcessPickerView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+    // what the other rules name. the rules that are in effect take a program
+    // away, the rules that are switched off only bring a warning.
+    var used: RuleNameIndex = RuleNameIndex()
+    // the entries of the rule being edited. a program that is already in it is
+    // not shown at all, there is nothing to add.
+    var currentEntries: Set<String> = []
     var onAdd: ([String]) -> Void
-    // the programs the other rules already name. they are shown in yellow and
-    // cannot be picked, so that a program does not end up in two rules.
-    var used: UsedProcessPatterns = UsedProcessPatterns()
 
     @State private var processes: [RunningProcess] = []
     @State private var search = ""
     @State private var selection: Set<Int32> = []
     @State private var valueMode: ValueMode = .name
     @State private var onlyMine = true
+    @State private var notice: RuleNotice?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +55,14 @@ struct ProcessPickerView: View {
         }
         .frame(minWidth: 760, idealWidth: 760, maxWidth: .infinity, minHeight: 520, idealHeight: 560, maxHeight: .infinity)
         .onAppear(perform: reload)
+        .alert(notice?.title ?? "", isPresented: Binding(
+            get: { notice != nil },
+            set: { if !$0 { notice = nil } }
+        )) {
+            Button("OK", role: .cancel) { notice = nil }
+        } message: {
+            Text(notice?.message ?? "")
+        }
     }
 
     private var header: some View {
@@ -108,7 +120,7 @@ struct ProcessPickerView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.largeTitle)
                         .foregroundColor(.secondary)
-                    Text(search.isEmpty ? "No programs found." : "Nothing matches \"\(search)\".")
+                    Text(emptyText)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -116,28 +128,32 @@ struct ProcessPickerView: View {
                 List(filtered, selection: selectionBinding) { process in
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(process.name)
-                                .font(.body)
-                            if let bundleId = process.bundleId, !bundleId.isEmpty {
-                                Text(bundleId)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            if !process.path.isEmpty {
-                                Text(process.path)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                            // the field that will be added comes first and in
+                            // full size, the other two are context
+                            ForEach(Array(fields(for: process).enumerated()), id: \.offset) { _, field in
+                                Text(field.text)
+                                    .font(field.primary ? .body : .caption)
+                                    .fontWeight(field.primary ? .medium : .regular)
+                                    .foregroundColor(field.primary ? .primary : .secondary)
                                     .lineLimit(1)
                                     .truncationMode(.head)
                             }
                         }
                         Spacer()
-                        if let owner = usedOwner(for: process) {
+                        if let owner = enabledOwner(for: process) {
                             // the rule that already names this program
                             Label(owner, systemImage: "exclamationmark.triangle.fill")
                                 .labelStyle(.titleAndIcon)
                                 .font(.caption)
                                 .foregroundColor(.orange)
+                                .lineLimit(1)
+                        } else if let owner = disabledOwner(for: process) {
+                            // the rule names it too, but it is switched off, so
+                            // it takes nothing away
+                            Label("\(owner) (off)", systemImage: "pause.circle")
+                                .labelStyle(.titleAndIcon)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                         Text("\(process.pid)")
@@ -145,8 +161,8 @@ struct ProcessPickerView: View {
                             .foregroundColor(.secondary)
                     }
                     .tag(process.pid)
-                    .listRowBackground(isUsed(process) ? Color.yellow.opacity(0.22) : Color.clear)
-                    .help(isUsed(process) ? "Already named by \"\(usedOwner(for: process) ?? "another rule")\"" : "")
+                    .listRowBackground(isTaken(process) ? Color.yellow.opacity(0.22) : Color.clear)
+                    .help(rowHelp(for: process))
                 }
             }
         }
@@ -161,7 +177,7 @@ struct ProcessPickerView: View {
             Button("Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
             Button("Add to Rule") {
-                let picked = filtered.filter { selection.contains($0.pid) && !isUsed($0) }
+                let picked = filtered.filter { selection.contains($0.pid) && !isTaken($0) }
                 let values = picked.map { valueMode.value(for: $0) }.filter { !$0.isEmpty }
                 // keep the order of the list and drop duplicates
                 var seen = Set<String>()
@@ -175,40 +191,94 @@ struct ProcessPickerView: View {
         .padding()
     }
 
+    // the fields of a program, the one that will be added first
+    private func fields(for process: RunningProcess) -> [(text: String, primary: Bool)] {
+        let name = process.name
+        let bundleId = process.bundleId ?? ""
+        let path = process.path
+        let byMode: [ValueMode: String] = [.name: name, .bundleId: bundleId, .path: path]
+        var out: [(text: String, primary: Bool)] = []
+        for mode in ValueMode.allCases {
+            guard let text = byMode[mode], !text.isEmpty else { continue }
+            out.append((text, mode == valueMode))
+        }
+        return out
+    }
+
+    private var emptyText: String {
+        if !search.isEmpty { return "Nothing matches \"\(search)\"." }
+        if !currentEntries.isEmpty {
+            return "Every program that matches is already in this rule."
+        }
+        return "No programs found."
+    }
+
     private var footerText: String {
-        if !used.isEmpty {
-            return "Programs in yellow are already named by another rule and cannot be picked."
+        if !used.enabledEntries.isEmpty {
+            return "Programs in yellow are named by a rule that is in effect and cannot be picked."
         }
-        return selection.isEmpty
-            ? "Pick one or more programs. A rule matches a program by its name or its bundle id."
-            : "\(selection.count) program(s) picked."
-    }
-
-    // a program that another rule already names
-    private func isUsed(_ process: RunningProcess) -> Bool {
-        return RuleProgramUsage.isUsed(processName: process.name, bundleId: process.bundleId, used: used)
-    }
-
-    // the rule that already names this program
-    private func usedOwner(for process: RunningProcess) -> String? {
-        guard let pattern = RuleProgramUsage.matchingPattern(processName: process.name, bundleId: process.bundleId, used: used) else {
-            return nil
+        if selection.isEmpty {
+            return "Pick one or more programs. A rule matches a program by its name or its bundle id."
         }
-        return used.ownerByPattern[pattern]
+        return "\(selection.count) program(s) picked."
     }
 
-    // a program that is already named by another rule cannot be picked, so it
-    // is taken out of the selection as soon as it is made
+    private func rowHelp(for process: RunningProcess) -> String {
+        if let owner = enabledOwner(for: process) {
+            return "Already named by \"\(owner)\", which is in effect"
+        }
+        if let owner = disabledOwner(for: process) {
+            return "Also named by \"\(owner)\", which is switched off"
+        }
+        return ""
+    }
+
+    // a program that a rule that is in effect already names
+    private func isTaken(_ process: RunningProcess) -> Bool {
+        return enabledOwner(for: process) != nil
+    }
+
+    // the rule that is in effect that already names this program
+    private func enabledOwner(for process: RunningProcess) -> String? {
+        guard let pattern = RuleProgramUsage.enabledPattern(process, index: used) else { return nil }
+        return RuleProgramUsage.owner(of: pattern, index: used, enabled: true)
+    }
+
+    // the rule that is switched off that names this program
+    private func disabledOwner(for process: RunningProcess) -> String? {
+        guard let pattern = RuleProgramUsage.disabledPattern(process, index: used) else { return nil }
+        return RuleProgramUsage.owner(of: pattern, index: used, enabled: false)
+    }
+
+    // a program that another rule already names cannot be picked, so it is
+    // taken out of the selection as soon as it is made
     private var selectionBinding: Binding<Set<Int32>> {
         Binding(
             get: { selection },
             set: { newValue in
+                let added = newValue.subtracting(selection)
                 selection = newValue.filter { pid in
                     guard let process = processes.first(where: { $0.pid == pid }) else { return false }
-                    return !isUsed(process)
+                    return !isTaken(process)
                 }
+                // a program a rule that is switched off names is free to pick,
+                // but the user should know that it is named twice
+                if let notice = noticeFor(added) { self.notice = notice }
             }
         )
+    }
+
+    // the warning for the programs that were picked just now
+    private func noticeFor(_ pids: Set<Int32>) -> RuleNotice? {
+        var lines: [String] = []
+        for pid in pids.sorted() {
+            guard let process = processes.first(where: { $0.pid == pid }) else { continue }
+            guard let owner = disabledOwner(for: process) else { continue }
+            lines.append("\"\(process.name)\" is also named by the rule \"\(owner)\", which is switched off. It can still be added.")
+        }
+        guard !lines.isEmpty else { return nil }
+        return RuleNotice(title: "Also named by a rule that is off",
+                          message: lines.joined(separator: "\n\n"))
     }
 
     private var filtered: [RunningProcess] {
@@ -217,6 +287,9 @@ struct ProcessPickerView: View {
             let mine = getuid()
             list = list.filter { $0.uid == mine }
         }
+        // a program the rule being edited already names is not shown: there is
+        // nothing to add and it only takes up room
+        list = list.filter { !RuleProgramUsage.isInCurrentRule($0, current: currentEntries) }
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !needle.isEmpty {
             list = list.filter { process in

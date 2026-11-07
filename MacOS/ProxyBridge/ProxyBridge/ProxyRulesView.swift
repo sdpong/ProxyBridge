@@ -3,6 +3,14 @@ import NetworkExtension
 import UniformTypeIdentifiers
 import AppKit
 
+// A message that pops up over the rules list or the rule editor. It only
+// tells the user something, it never stops them.
+struct RuleNotice: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
 struct ProxyRule: Identifiable, Codable {
     var localId: String
     var name: String
@@ -94,6 +102,9 @@ struct ProxyRulesView: View {
     @State private var selectedRuleIds: Set<String> = []
     @State private var showAddRule = false
     @State private var editingRule: ProxyRule?
+    // a rule that was opened after a warning, and the warning itself
+    @State private var pendingEdit: ProxyRule?
+    @State private var notice: RuleNotice?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -192,7 +203,7 @@ struct ProxyRulesView: View {
 
                     TableColumn("") { rule in
                         HStack(spacing: 12) {
-                            Button(action: { editingRule = rule }) {
+                            Button(action: { editRule(rule) }) {
                                 Image(systemName: "pencil")
                             }
                             .buttonStyle(.borderless)
@@ -271,6 +282,85 @@ struct ProxyRulesView: View {
         .sheet(item: $editingRule) { rule in
             RuleEditorView(viewModel: viewModel, existingRule: rule, onCommit: { commitRule($0) })
         }
+        .alert(notice?.title ?? "", isPresented: Binding(
+            get: { notice != nil },
+            set: { if !$0 { notice = nil } }
+        )) {
+            Button("Open") {
+                if let rule = pendingEdit { editingRule = rule }
+                pendingEdit = nil
+                notice = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingEdit = nil
+                notice = nil
+            }
+        } message: {
+            Text(notice?.message ?? "")
+        }
+    }
+
+    // A rule that is switched off and names the same thing as another rule is
+    // worth a warning when it is opened, because the day it is switched on the
+    // two rules fight over the same traffic. The warning does not stop the
+    // user, the rule still opens.
+    private func editRule(_ rule: ProxyRule) {
+        guard !rule.enabled else {
+            editingRule = rule
+            return
+        }
+        let clashes = clashSummary(for: rule)
+        guard !clashes.isEmpty else {
+            editingRule = rule
+            return
+        }
+        pendingEdit = rule
+        notice = RuleNotice(title: "Named twice", message: clashes)
+    }
+
+    // what this rule names that another rule names as well
+    private func clashSummary(for rule: ProxyRule) -> String {
+        var parts: [String] = []
+        for other in rules where other.id != rule.id {
+            let programs = sharedEntries(rule.processNames,
+                                         other.processNames,
+                                         separators: RulePatternValidator.programSeparators,
+                                         keepRangesTogether: false,
+                                         isHost: false)
+            let hosts = sharedEntries(rule.targetHosts,
+                                      other.targetHosts,
+                                      separators: RulePatternValidator.hostSeparators,
+                                      keepRangesTogether: true,
+                                      isHost: true)
+            if programs.isEmpty && hosts.isEmpty { continue }
+            var lines: [String] = []
+            if !programs.isEmpty { lines.append("program(s): " + programs.joined(separator: ", ")) }
+            if !hosts.isEmpty { lines.append("host(s): " + hosts.joined(separator: ", ")) }
+            let name = other.name.isEmpty ? "another rule" : other.name
+            let state = other.enabled ? "is in effect" : "is switched off too"
+            parts.append("The rule \"\(name)\" \(state) and names the same:\n\(lines.joined(separator: "\n"))")
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    // the entries of a and b that name the same thing
+    private func sharedEntries(_ a: String,
+                                _ b: String,
+                                separators: CharacterSet,
+                                keepRangesTogether: Bool,
+                                isHost: Bool) -> [String] {
+        let left = RulePatternValidator.entries(a, separators: separators, keepRangesTogether: keepRangesTogether)
+        let right = RulePatternValidator.entries(b, separators: separators, keepRangesTogether: keepRangesTogether)
+        var out: [String] = []
+        for one in left {
+            for two in right {
+                let same = isHost
+                    ? RulePatternMatch.sameHost(pattern: two.text, entry: one.text)
+                    : RulePatternMatch.sameProgram(pattern: two.text, entry: one.text)
+                if same && !out.contains(one.text) { out.append(one.text) }
+            }
+        }
+        return out
     }
     
     private func binding(for rule: ProxyRule) -> Binding<Bool> {
@@ -403,6 +493,7 @@ struct RuleEditorView: View {
     @State private var selectedProtocol: String
     @State private var selectedAction: String
     @State private var showProcessPicker = false
+    @State private var notice: RuleNotice?
 
     private var isEditMode: Bool { existingRule != nil }
 
@@ -455,7 +546,11 @@ struct RuleEditorView: View {
                         }
                         PatternTextEditor(text: $processNames,
                                           highlights: problemRanges(processEntries),
-                                          isInvalid: !processEntries.filter({ $0.hasProblem }).isEmpty)
+                                          notes: usedRanges(processEntries, names: usedPrograms, isHost: false),
+                                          isInvalid: !processEntries.filter({ $0.hasProblem }).isEmpty,
+                                          onTextClick: { index in
+                                              handleClick(index, entries: processEntries, names: usedPrograms, isHost: false)
+                                          })
                             .frame(height: 96)
                         problemList(processEntries)
                         Text("Matches the bundle id or the process name, one per line. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *")
@@ -467,7 +562,11 @@ struct RuleEditorView: View {
                         Text("Target hosts").fontWeight(.medium)
                         PatternTextEditor(text: $targetHosts,
                                           highlights: problemRanges(hostEntries),
-                                          isInvalid: !hostEntries.filter({ $0.hasProblem }).isEmpty)
+                                          notes: usedRanges(hostEntries, names: usedHosts, isHost: true),
+                                          isInvalid: !hostEntries.filter({ $0.hasProblem }).isEmpty,
+                                          onTextClick: { index in
+                                              handleClick(index, entries: hostEntries, names: usedHosts, isHost: true)
+                                          })
                             .frame(height: 96)
                         problemList(hostEntries)
                         Text("One per line. IP: 127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1   Domain: github.com; *.github.com; *google*")
@@ -593,9 +692,18 @@ struct RuleEditorView: View {
             }
         }
         .sheet(isPresented: $showProcessPicker) {
-            ProcessPickerView(used: usedProcessPatterns) { values in
+            ProcessPickerView(used: usedPrograms,
+                               currentEntries: RuleProgramUsage.exactEntries(processNames)) { values in
                 addProcesses(values)
             }
+        }
+        .alert(notice?.title ?? "", isPresented: Binding(
+            get: { notice != nil },
+            set: { if !$0 { notice = nil } }
+        )) {
+            Button("OK", role: .cancel) { notice = nil }
+        } message: {
+            Text(notice?.message ?? "")
         }
         .padding()
         .frame(width: 600, height: 720)
@@ -640,13 +748,58 @@ struct RuleEditorView: View {
         }
     }
 
-    // the programs the other rules already name. the picker shows them, so
-    // that a program does not end up in two rules by accident.
-    private var usedProcessPatterns: UsedProcessPatterns {
+    // the programs the other rules name, split by whether the rule is in
+    // effect. the picker shows the ones in effect in yellow and warns about
+    // the ones that are switched off.
+    private var usedPrograms: RuleNameIndex {
+        RuleNameIndexBuilder.build(otherRuleSources { $0.processNames },
+                                   separators: RulePatternValidator.programSeparators,
+                                   excluding: existingRule?.localId ?? "")
+    }
+
+    // the hosts the other rules name, the same way
+    private var usedHosts: RuleNameIndex {
+        RuleNameIndexBuilder.build(otherRuleSources { $0.targetHosts },
+                                   separators: RulePatternValidator.hostSeparators,
+                                   keepRangesTogether: true,
+                                   excluding: existingRule?.localId ?? "")
+    }
+
+    // every rule but the one being edited
+    private func otherRuleSources(_ entries: (ProxyRule) -> String) -> [RuleNameSource] {
         let dicts = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
-        let rules = dicts.map { ProxyRule(dict: $0) }
-        let plain = rules.map { (id: $0.localId, name: $0.name, processNames: $0.processNames) }
-        return RuleProgramUsage.usedPatterns(rules: plain, excluding: existingRule?.localId ?? "")
+        return dicts.map { ProxyRule(dict: $0) }
+            .map {
+                RuleNameSource(id: $0.localId, name: $0.name, entries: entries($0), enabled: $0.enabled)
+            }
+    }
+
+    // the entries another rule that is in effect names. they are marked in
+    // yellow: they are not wrong, but they are named twice.
+    private func usedRanges(_ entries: [RulePatternEntry], names: RuleNameIndex, isHost: Bool) -> [NSRange] {
+        var ranges: [NSRange] = []
+        for entry in entries where !entry.hasProblem {
+            let pattern = isHost
+                ? RulePatternMatch.hostPattern(host: entry.text, entries: names.enabledEntries)
+                : RulePatternMatch.programEntryPattern(entry: entry.text, entries: names.enabledEntries)
+            if pattern != nil { ranges.append(entry.range) }
+        }
+        return ranges
+    }
+
+    // the user clicked in the box. an entry that a rule which is switched off
+    // names is worth a word about, but it can still be used here.
+    private func handleClick(_ index: Int, entries: [RulePatternEntry], names: RuleNameIndex, isHost: Bool) {
+        for entry in entries {
+            guard NSLocationInRange(index, entry.range) else { continue }
+            let pattern = isHost
+                ? RulePatternMatch.hostPattern(host: entry.text, entries: names.disabledEntries)
+                : RulePatternMatch.programEntryPattern(entry: entry.text, entries: names.disabledEntries)
+            guard let pattern = pattern, let owner = names.disabledOwner[pattern] else { return }
+            notice = RuleNotice(title: "Also named by a rule that is off",
+                                message: "\"\(entry.text)\" is also named by the rule \"\(owner)\", which is switched off. It can still be used here.")
+            return
+        }
     }
 
     @ViewBuilder
