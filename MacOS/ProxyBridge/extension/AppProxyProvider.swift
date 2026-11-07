@@ -559,6 +559,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         settings.includedNetworkRules = [allTrafficRule]
 
         startUDPSweepTimer()
+        startFlowReportTimer()
         diag("Tunnel starting")
         // the rules and the proxy list can come with the configuration itself. they
         // do when the provider channel does not open, which is what happens on a
@@ -579,6 +580,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         diag("Tunnel stopping: \(ProviderDiagnostics.text(for: reason))")
         udpSweepTimer?.cancel()
         udpSweepTimer = nil
+        stopFlowReportTimer()
         sweepHandshakes(all: true)
         udpLock.lock()
         let all = Array(udpAssociations.values)
@@ -588,7 +590,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             a.release()
         }
         // nothing is proxied any more, so nothing is a live flow
-        liveFlows.removeAll()
+        for flow in liveFlows.removeAll() { reportFlowEnd(flow) }
         liveMapLock.lock()
         tcpFlowIds.removeAll()
         flowDescriptors.removeAll()
@@ -708,6 +710,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             self?.closeRelay(clientFlow, proxyConnection, error: FlowFailure.terminated)
         }
         setTCPFlowId(id, for: proxyConnection)
+        if let flow = liveFlows.snapshot(id: id) { reportFlowOpen(flow) }
     }
 
     private func noteFlowBytes(_ connection: NWTCPConnection, up: Int64, down: Int64) {
@@ -784,12 +787,175 @@ class AppProxyProvider: NETransparentProxyProvider {
         flow.closeReadWithError(error)
         flow.closeWriteWithError(error)
         // the relay is gone, so the flow is no longer live
-        if let id = takeTCPFlowId(for: connection) { liveFlows.remove(id: id) }
+        if let id = takeTCPFlowId(for: connection), let flow = liveFlows.remove(id: id) { reportFlowEnd(flow) }
         // and whatever was remembered about it goes with it, so a later connection that happens to
         // reuse the same address does not inherit the wrong process or destination
         takeFlowDescriptor(for: connection)
     }
     
+    // The traffic of the open flows goes to the unified log, so the app can show it without the
+    // message channel. The channel is checked against the app's signature, and a build that is not
+    // signed by a developer gets nothing through it - so for those builds the log is the only way
+    // the traffic can be shown at all.
+    //
+    // Five kinds of line:
+    //   FlowOpen <id> <proto> <process> -> <host>:<port> via <proxy>   a flow was opened
+    //   Flows <id>:<sent>:<received> ...                               the flows that are open
+    //   FlowLive <id> <proto> <process> -> <host>:<port> via <proxy> <sent> <received>
+    //   FlowEnd <id> <sent> <received>                                 a flow was closed
+    //   ProxyTotals <name>|<sent>|<received>|<connections>;...        the totals of every proxy
+    //
+    // They go to the unified log only: the activity log the app shows is for what the extension has
+    // to say, and a line a second would bury it.
+    private func reportFlowOpen(_ flow: LiveFlowRegistry.Snapshot) {
+        ProviderDiagnostics.note("FlowOpen \(flow.id) \(flow.proto) \(flow.process) -> \(flow.destination):\(flow.port) via \(flow.proxy)")
+    }
+
+    private func reportFlowEnd(_ flow: LiveFlowRegistry.Snapshot) {
+        // the bytes of the flow go into the total of its proxy, so the number in the app does not
+        // depend on the app having seen the flow
+        countFinishedBytes(proxy: flow.proxy, up: flow.bytesUp, down: flow.bytesDown)
+        ProviderDiagnostics.note("FlowEnd \(flow.id) \(flow.bytesUp) \(flow.bytesDown)")
+    }
+
+    // The flows that are open right now, with the bytes each one carried.
+    //
+    // The line is only written when something changed: a flow that opened or closed says so
+    // on its own line, so a line that repeats the same numbers says nothing new.
+    private func reportOpenFlows() {
+        let flows = liveFlows.snapshot()
+        guard !flows.isEmpty else { return }
+        let rows = flows.map { "\($0.id):\($0.bytesUp):\($0.bytesDown)" }.joined(separator: " ")
+        reportLock.lock()
+        let unchanged = rows == lastFlowReport
+        if !unchanged { lastFlowReport = rows }
+        reportLock.unlock()
+        guard !unchanged else { return }
+        ProviderDiagnostics.note("Flows \(rows)")
+    }
+
+    // Every open flow gets a line of its own, with the bytes it has carried.
+    //
+    // The line a flow gets when it opens is not enough on its own: an app that starts
+    // later never sees it, and a flow that was already open when the app started would
+    // stay invisible to it forever. So the line is written again for every open flow,
+    // and the app takes what it needs from whichever line it saw last.
+    //
+    // A flow that carries nothing is written every tenth round only: it says the same
+    // thing every time, and it is still there when the app that missed it starts.
+    private func reportLiveFlows(writeEveryFlow: Bool) {
+        for flow in liveFlows.snapshot() {
+            reportLock.lock()
+            let last = lastReportedBytes[flow.id]
+            let unchanged = !writeEveryFlow && last?.up == flow.bytesUp && last?.down == flow.bytesDown
+            if !unchanged { lastReportedBytes[flow.id] = (up: flow.bytesUp, down: flow.bytesDown) }
+            reportLock.unlock()
+            if unchanged { continue }
+            ProviderDiagnostics.note("FlowLive \(flow.id) \(flow.proto) \(flow.process) -> \(flow.destination):\(flow.port) via \(flow.proxy) \(flow.bytesUp) \(flow.bytesDown)")
+        }
+    }
+
+    // The totals of every proxy, counted by the extension itself.
+    //
+    // The app cannot count them: it only sees what the unified log hands it, and a flow
+    // that opened and closed before the app started is gone from the log by the time the
+    // app looks. The extension keeps the numbers, so the table in the app is right from
+    // the first second and does not lose a connection when the window is closed.
+    private func reportProxyTotals() {
+        counterLock.lock()
+        let counters = proxyCounters
+        counterLock.unlock()
+        guard !counters.isEmpty else { return }
+
+        // the flows that are open right now still have to be counted: their bytes have not
+        // been added to the total yet, they only go there when they end
+        let open = liveFlows.snapshot()
+        var records: [String] = []
+        for (name, counter) in counters {
+            var up = counter.finishedUp
+            var down = counter.finishedDown
+            for flow in open where flow.proxy == name {
+                up += flow.bytesUp
+                down += flow.bytesDown
+            }
+            records.append("\(name)|\(up)|\(down)|\(counter.connections)")
+        }
+        ProviderDiagnostics.note("ProxyTotals \(records.joined(separator: ";"))")
+    }
+
+    // ---- what the extension counted ----
+    //
+    // The connections that went through a proxy and the bytes they carried. The bytes of a
+    // direct connection are not in here: macOS hands those flows back to the system, so the
+    // extension never carries them and never sees them.
+    private struct ProxyCounter {
+        var connections: Int = 0
+        var finishedUp: Int64 = 0
+        var finishedDown: Int64 = 0
+    }
+    private var proxyCounters: [String: ProxyCounter] = [:]
+    private let counterLock = NSLock()
+
+    // Counts a connection that was decided.
+    private func countConnection(proxy: String) {
+        counterLock.lock()
+        proxyCounters[proxy, default: ProxyCounter()].connections += 1
+        counterLock.unlock()
+    }
+
+    // Adds the bytes of a flow that ended to the total of its proxy.
+    private func countFinishedBytes(proxy: String, up: Int64, down: Int64) {
+        guard up > 0 || down > 0 else { return }
+        counterLock.lock()
+        var counter = proxyCounters[proxy, default: ProxyCounter()]
+        counter.finishedUp += up
+        counter.finishedDown += down
+        proxyCounters[proxy] = counter
+        counterLock.unlock()
+    }
+
+    // One line a second. The app reads the traffic from it, so this interval is how fresh the
+    // numbers in the window are.
+    private var flowReportTimer: DispatchSourceTimer?
+    // The numbers of the last line about the open flows, so a line that says the same thing
+    // again is not written again.
+    private var lastFlowReport: String?
+    // The bytes of every flow as they were written the last time, so a flow that carried
+    // nothing is not written again.
+    private var lastReportedBytes: [UInt64: (up: Int64, down: Int64)] = [:]
+    // how many rounds of reports have gone by. every tenth round every open flow is written.
+    private var reportRound = 0
+    // the timer writes the report from its own queue and the tunnel is started and stopped from
+    // another one, so the two do not touch the same state at the same time
+    private let reportLock = NSLock()
+
+    private func startFlowReportTimer() {
+        stopFlowReportTimer()
+        // the flow ids start over with every tunnel, so the last line says nothing about
+        // the one that is starting
+        reportLock.lock()
+        lastFlowReport = nil
+        lastReportedBytes.removeAll()
+        reportRound = 0
+        reportLock.unlock()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            self.reportRound += 1
+            self.reportOpenFlows()
+            self.reportLiveFlows(writeEveryFlow: self.reportRound % 10 == 0)
+            self.reportProxyTotals()
+        }
+        timer.resume()
+        flowReportTimer = timer
+    }
+
+    private func stopFlowReportTimer() {
+        flowReportTimer?.cancel()
+        flowReportTimer = nil
+    }
+
     // ---- the rules and the proxy list ----
     //
     // They reach the extension in two ways: in a message over the provider channel,
@@ -1043,7 +1209,11 @@ class AppProxyProvider: NETransparentProxyProvider {
             // connection die instead of waiting for a proxy that stopped answering
             var killed = false
             if let id = (message["id"] as? NSNumber)?.uint64Value {
+                // the flow is taken out of the registry by the teardown below, so the bytes it
+                // carried are read before that happens
+                let flow = liveFlows.snapshot(id: id)
                 killed = liveFlows.terminate(id: id)
+                if killed, let flow { reportFlowEnd(flow) }
             }
             completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok", "killed": killed]))
 
@@ -1533,6 +1703,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             self?.teardownUDP(clientFlow)
         }
         association.liveFlowId = liveId
+        if let flow = liveFlows.snapshot(id: liveId) { reportFlowOpen(flow) }
 
         readAndForwardClientUDP(association)
         readAndForwardRelayUDP(association)
@@ -1555,7 +1726,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         flow.closeReadWithError(nil)
         flow.closeWriteWithError(nil)
         // the channel is gone, so it is no longer a live flow
-        if let liveId = assoc.liveFlowId { liveFlows.remove(id: liveId) }
+        if let liveId = assoc.liveFlowId, let flow = liveFlows.remove(id: liveId) { reportFlowEnd(flow) }
     }
 
     private func readAndForwardClientUDP(_ association: UDPAssociation) {
@@ -2224,6 +2395,9 @@ class AppProxyProvider: NETransparentProxyProvider {
     // asks "why did this go direct" needs the number of the rule, not the name of
     // the proxy alone
     private func sendLogToApp(protocol: String, process: String, destination: String, port: String, proxy: String, rule: UInt32? = nil) {
+        // the connection is counted before the switch is looked at: the traffic log can be off
+        // while the connection is still made, and the table in the app has to show it either way
+        countConnection(proxy: proxy)
         guard trafficLoggingEnabled else { return }
         appendLog(.connection(proto: `protocol`, process: process, destination: destination, port: port, proxy: proxy))
         // the same line in the unified log. the app reads the activity log over the

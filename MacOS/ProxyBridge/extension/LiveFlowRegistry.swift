@@ -116,19 +116,39 @@ final class LiveFlowRegistry {
         return true
     }
 
-    // Drops a flow that ended on its own.
-    func remove(id: UInt64) {
+    // Drops a flow that ended on its own. The snapshot it had is returned so the caller can
+    // report how many bytes the flow carried before it went.
+    @discardableResult
+    func remove(id: UInt64) -> Snapshot? {
         lock.lock()
-        entries.removeValue(forKey: id)
+        let entry = entries.removeValue(forKey: id)
         teardowns.removeValue(forKey: id)
         lock.unlock()
+        return entry.map { snapshot(of: $0) }
     }
 
-    func removeAll() {
+    @discardableResult
+    func removeAll() -> [Snapshot] {
         lock.lock()
+        let all = entries.values.map { snapshot(of: $0) }
         entries.removeAll()
         teardowns.removeAll()
         lock.unlock()
+        return all
+    }
+
+    // The flow as it is right now, with the bytes it carried so far.
+    func snapshot(id: UInt64) -> Snapshot? {
+        lock.lock()
+        let entry = entries[id]
+        lock.unlock()
+        return entry.map { snapshot(of: $0) }
+    }
+
+    private func snapshot(of entry: Entry) -> Snapshot {
+        Snapshot(id: entry.id, proto: entry.proto, process: entry.process, destination: entry.destination,
+                 port: entry.port, proxy: entry.proxy, startedAt: entry.startedAt,
+                 bytesUp: entry.bytesUp, bytesDown: entry.bytesDown, lastActivity: entry.lastActivity)
     }
 
     func count() -> Int {
