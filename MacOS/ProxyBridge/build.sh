@@ -25,6 +25,13 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
+# An unsigned app has no entitlements, and macOS refuses to install a system extension
+# without them ("Missing entitlement com.apple.developer.system-extension.install").
+# An ad-hoc signature carries them. A build signed with a real Developer ID is left
+# alone. The script says what it did, so the log says where the entitlements came from.
+echo "Signing the app for installation..."
+bash "$SCRIPT_DIR/scripts/adhoc-sign.sh" "$APP_PATH"
+
 verify_universal() {
     local binary="$1"
     local archs

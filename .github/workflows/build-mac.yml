@@ -181,6 +181,17 @@ jobs:
         # Verify notarization
         spctl -a -vvv -t install "$APP_PATH"
 
+    - name: Sign the app (ad-hoc, with entitlements)
+      run: |
+        cd MacOS/ProxyBridge
+        # The CI build is unsigned, and macOS refuses to install a system extension from
+        # an app without the com.apple.developer.system-extension.install entitlement.
+        # An ad-hoc signature carries it. A build signed with a real Developer ID is
+        # left alone by the script.
+        chmod +x scripts/adhoc-sign.sh
+        bash scripts/adhoc-sign.sh build/DerivedData/Build/Products/Release/ProxyBridge.app
+        codesign -d --entitlements - build/DerivedData/Build/Products/Release/ProxyBridge.app
+
     - name: Package App Bundle
       run: |
         cd MacOS/ProxyBridge
