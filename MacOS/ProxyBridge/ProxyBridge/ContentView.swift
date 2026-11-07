@@ -4,7 +4,6 @@ import AppKit
 struct ContentView: View {
     @ObservedObject var viewModel: ProxyBridgeViewModel
     @State private var selectedTab = 0
-    @State private var connectionSearchText = ""
     @State private var activitySearchText = ""
     // whether the long form of the notice is shown
     @State private var showNoticeDetails = false
@@ -119,7 +118,7 @@ struct ContentView: View {
 
     private var tabSelector: some View {
         HStack(spacing: 0) {
-            TabButton(title: "Connections", isSelected: selectedTab == 0) {
+            TabButton(title: "Statistics", isSelected: selectedTab == 0) {
                 selectedTab = 0
             }
             TabButton(title: "Live Connections", isSelected: selectedTab == 1) {
@@ -138,14 +137,11 @@ struct ContentView: View {
         Group {
             switch selectedTab {
             case 0:
-                ConnectionsView(
-                    connections: filteredConnections,
-                    searchText: $connectionSearchText,
-                    onClear: viewModel.clearConnections
-                )
+                ProxyTrafficView(rows: viewModel.proxyTraffic)
             case 1:
                 LiveConnectionsView(
                     flows: viewModel.liveFlows,
+                    canTerminate: viewModel.canTerminateFlows,
                     onKill: viewModel.killFlow,
                     onKillProcess: viewModel.killFlows
                 )
@@ -156,22 +152,6 @@ struct ContentView: View {
                     onClear: viewModel.clearActivityLogs
                 )
             }
-        }
-    }
-    
-    private var filteredConnections: [ProxyBridgeViewModel.ConnectionLog] {
-        let q = connectionSearchText
-        if q.isEmpty {
-            return viewModel.connections
-        }
-        // match against every field so a search finds protocol, ip, port, process, proxy or time
-        return viewModel.connections.filter {
-            $0.timestamp.localizedCaseInsensitiveContains(q) ||
-            $0.connectionProtocol.localizedCaseInsensitiveContains(q) ||
-            $0.process.localizedCaseInsensitiveContains(q) ||
-            $0.destination.localizedCaseInsensitiveContains(q) ||
-            $0.port.localizedCaseInsensitiveContains(q) ||
-            $0.proxy.localizedCaseInsensitiveContains(q)
         }
     }
 
@@ -205,53 +185,103 @@ struct TabButton: View {
     }
 }
 
-struct ConnectionsView: View {
-    let connections: [ProxyBridgeViewModel.ConnectionLog]
-    @Binding var searchText: String
-    let onClear: () -> Void
-    
+// The traffic of every proxy the traffic went through: one row for each, the way Proxifier
+// shows what a proxy carried.
+//
+// One row per proxy and not one row per connection: a program that opens a hundred
+// connections goes out as a single line, and the direct connections are one line as well.
+// The bytes of a direct connection are not shown, because macOS hands those flows straight
+// back to the system and the extension never gets to see them.
+struct ProxyTrafficView: View {
+    let rows: [ProxyBridgeViewModel.ProxyTraffic]
+
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-            Divider()
-            LogTextView(text: connectionsText)
+        Group {
+            if rows.isEmpty {
+                emptyState
+            } else {
+                table
+            }
         }
     }
 
-    private var searchBar: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
+    private var table: some View {
+        Table(rows) {
+            TableColumn("Proxy") { row in
+                Text(row.proxy)
+                    .foregroundColor(row.proxy == "Direct" ? .secondary : .primary)
+            }
+            .width(min: 150, ideal: 260)
+
+            TableColumn("Connections") { row in
+                Text("\(row.connections)")
+            }
+            .width(90)
+
+            TableColumn("Sent") { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp) : "not seen")
+                    .foregroundColor(row.bytesKnown ? .primary : .secondary)
+            }
+            .width(90)
+
+            TableColumn("Received") { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesDown) : "not seen")
+                    .foregroundColor(row.bytesKnown ? .primary : .secondary)
+            }
+            .width(90)
+
+            TableColumn("Total") { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp + row.bytesDown) : "not seen")
+                    .foregroundColor(row.bytesKnown ? .primary : .secondary)
+            }
+            .width(90)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "chart.bar.doc.horizontal")
+                .font(.system(size: 44))
                 .foregroundColor(.gray)
-            TextField("Search connections...", text: $searchText)
-                .textFieldStyle(.plain)
-            Spacer()
-            Button("Clear", action: onClear)
+            Text("No traffic yet")
+                .font(.title3)
+                .foregroundColor(.gray)
+            Text("Every proxy the traffic goes through gets a line here")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
         }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// The numbers in the tables, the way the system writes them.
+enum TrafficFormat {
+    static func bytes(_ count: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f.string(fromByteCount: count)
     }
 
-    private var connectionsText: NSAttributedString {
-        let out = NSMutableAttributedString()
-        for c in connections {
-            out.append(LogText.seg("[\(c.timestamp)] ", .secondaryLabelColor))
-            out.append(LogText.seg("[\(c.connectionProtocol)] ", .systemBlue))
-            out.append(LogText.seg(c.process, .systemGreen))
-            out.append(LogText.seg(" → ", .secondaryLabelColor))
-            out.append(LogText.seg("\(c.destination):\(c.port)", .systemOrange))
-            out.append(LogText.seg(" → ", .secondaryLabelColor))
-            out.append(LogText.seg(c.proxy, c.proxy == "Direct" ? .secondaryLabelColor : .systemPurple))
-            out.append(LogText.seg("\n", .labelColor))
+    // m:ss, or h:mm:ss once it runs past an hour
+    static func duration(_ seconds: TimeInterval) -> String {
+        let s = Int(max(0, seconds))
+        if s >= 3600 {
+            return String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
         }
-        return out
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 
 // The connections that are proxied right now. A channel that stops carrying traffic is a
 // channel that hangs, so the list shows how long each one has been quiet and lets the user
 // close it by hand instead of waiting for the proxy to time out.
+//
+// Closing one by hand needs the message channel between the app and the extension, and the
+// system checks that channel against the app's signature. A build that is not signed by a
+// developer can list the connections but not close them.
 struct LiveConnectionsView: View {
     let flows: [ProxyBridgeViewModel.LiveFlow]
+    let canTerminate: Bool
     let onKill: (UInt64) -> Void
     let onKillProcess: (String) -> Void
     @State private var selection: UInt64?
@@ -289,17 +319,17 @@ struct LiveConnectionsView: View {
             .width(min: 130, ideal: 180)
 
             TableColumn("Sent") { flow in
-                Text(LiveConnectionsView.byteText(flow.bytesUp))
+                Text(TrafficFormat.bytes(flow.bytesUp))
             }
             .width(70)
 
             TableColumn("Received") { flow in
-                Text(LiveConnectionsView.byteText(flow.bytesDown))
+                Text(TrafficFormat.bytes(flow.bytesDown))
             }
             .width(70)
 
             TableColumn("Idle") { flow in
-                Text(LiveConnectionsView.durationText(flow.idle))
+                Text(TrafficFormat.duration(flow.idle))
                     .foregroundColor(flow.idle >= 30 ? .orange : .primary)
             }
             .width(60)
@@ -308,12 +338,12 @@ struct LiveConnectionsView: View {
             Button("Terminate connection") {
                 if let id = selection { onKill(id) }
             }
-            .disabled(selection == nil)
+            .disabled(selection == nil || !canTerminate)
 
             Button("Terminate all connections of this process") {
                 if let process = selectedProcess { onKillProcess(process) }
             }
-            .disabled(selectedProcess == nil)
+            .disabled(selectedProcess == nil || !canTerminate)
         }
     }
 
@@ -335,21 +365,6 @@ struct LiveConnectionsView: View {
     private var selectedProcess: String? {
         guard let id = selection else { return nil }
         return flows.first(where: { $0.id == id })?.process
-    }
-
-    static func byteText(_ bytes: Int64) -> String {
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        return f.string(fromByteCount: bytes)
-    }
-
-    // m:ss, or h:mm:ss once it runs past an hour
-    static func durationText(_ seconds: TimeInterval) -> String {
-        let s = Int(max(0, seconds))
-        if s >= 3600 {
-            return String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
-        }
-        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 

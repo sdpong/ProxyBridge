@@ -49,8 +49,8 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     // The system checks the provider channel against the app's signature. A build
     // that is not signed by a developer - an ad-hoc signature has no team id - is
     // refused by the system, and then the app hears nothing back: the tunnel is
-    // up, the extension runs and proxies the traffic, but the window cannot show
-    // the connections.
+    // up, the extension runs and proxies the traffic, but the app cannot change
+    // anything while the tunnel runs.
     //
     // These two probes say which of the doors is shut, so the reason can be said
     // out loud instead of leaving the person with an empty window.
@@ -90,7 +90,7 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         if hasDeveloperSignature {
             return "The extension does not answer. The tunnel is up, so the extension on the other end is not this build."
         }
-        return "This build is not signed by a developer, so the open connections and the switches the extension reads while it runs are not available. The traffic is proxied all the same, and the connection list comes from the system log."
+        return "This build is not signed by a developer, so the switches the extension reads while it runs are not available. The traffic is proxied all the same, and the connections and their traffic come from the system log."
     }
 
     // The extension does not answer at all.
@@ -102,11 +102,12 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     //
     // What still works: the rules and the proxy list went with the start of the
     // tunnel, so the traffic is proxied - including the proxies that need a
-    // password. The connection list and the activity log are read from the
-    // unified log, where the extension writes every decision it made.
+    // password. The connections, their traffic and the activity log are read from
+    // the unified log, where the extension writes every decision it made and the
+    // traffic of the open flows.
     //
-    // What does not work: the list of open connections with their traffic, and
-    // the switches the extension reads while it runs.
+    // What does not work: the switches the extension reads while it runs, and
+    // closing a connection by hand.
     //
     // A build that IS signed by a developer is a different case: the tunnel is
     // up, so something is on the other end of it, and it does not answer, which
@@ -123,8 +124,8 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         }
         return [
             "The extension does not answer over the provider channel. macOS checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it.",
-            "What that costs: the list of open connections with their traffic, and the switches the extension reads while it runs. The connection list and the activity log are read from the unified log instead, where the extension writes every decision it made, so they are there. The traffic itself is proxied either way: the rules, the proxies and the passwords went with the start of the tunnel.",
-            "Sign the app with a Developer ID certificate to get the open connections and the running switches as well."
+            "What that costs: the switches the extension reads while it runs, and closing a connection by hand. Everything else is read from the unified log instead: the extension writes every decision it made there, and it writes the traffic of the open flows there as well, so the connections, their traffic and the activity log are all there. The traffic itself is proxied either way: the rules, the proxies and the passwords went with the start of the tunnel.",
+            "Sign the app with a Developer ID certificate to get the running switches and the hand-made disconnects as well."
         ]
     }
 }

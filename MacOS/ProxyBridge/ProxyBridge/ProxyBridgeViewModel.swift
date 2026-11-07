@@ -31,6 +31,11 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // user terminates a hanging connection from
     private var flowTimer: Timer?
     @Published private(set) var liveFlows: [LiveFlow] = []
+    // The traffic per proxy: one row for every proxy the traffic went through.
+    @Published private(set) var proxyTraffic: [ProxyTraffic] = []
+    // Whether a connection can be closed by hand. It needs the message channel, which is closed
+    // for a build that is not signed by a developer.
+    @Published private(set) var canTerminateFlows = false
     @Published private(set) var proxyConfigs: [ProxyConfig] = []
     @Published private(set) var profiles: [String] = []
     @Published private(set) var activeProfile: String = "Default"
@@ -71,6 +76,22 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // how a change reaches the running extension: over the channel, or with a
     // restart of the tunnel.
     private var providerChannelAvailable = false
+
+    // The flows the extension reported in the unified log, by id.
+    private var loggedFlows: [UInt64: LoggedFlow] = [:]
+    // The ids of the flows that are open right now.
+    private var liveFlowIds: Set<UInt64> = []
+    // How many connections went through each proxy.
+    private var proxyConnections: [String: Int] = [:]
+    // The flows the extension reported over the message channel. They say more than the ones
+    // from the log, so they win when they are there.
+    private var providerFlows: [LiveFlow] = []
+    // The totals the extension counted itself, by proxy.
+    //
+    // They are the numbers the table shows. The app cannot count them on its own: it only
+    // sees what the unified log hands it, and a flow that opened and closed before the app
+    // started is gone from the log by the time the app looks.
+    private var extensionTotals: [(proxy: String, up: Int64, down: Int64, connections: Int)] = []
 
     // The version of the message protocol between the app and the extension. It has
     // to match AppProxyProvider.protocolAPI on the extension side.
@@ -166,6 +187,37 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         let bytesDown: Int64
         let age: TimeInterval
         let idle: TimeInterval
+    }
+
+    // What one proxy carried: how many connections went through it and how many bytes it carried.
+    // One row for every proxy the traffic went through, the way Proxifier shows what a proxy did.
+    struct ProxyTraffic: Identifiable {
+        let id: String
+        let proxy: String
+        let connections: Int
+        let bytesUp: Int64
+        let bytesDown: Int64
+        // Whether the bytes are known at all. The bytes of a direct connection are not: macOS
+        // hands those flows straight back to the system, so the extension never sees them.
+        let bytesKnown: Bool
+    }
+
+    // A flow the extension reported in the unified log.
+    private struct LoggedFlow {
+        let id: UInt64
+        let proto: String
+        let process: String
+        let destination: String
+        let port: Int
+        let proxy: String
+        let startedAt: Date
+        var lastActivity: Date
+        var bytesUp: Int64 = 0
+        var bytesDown: Int64 = 0
+        // whether the flow has ended. an ended flow is only kept until the totals of the
+        // extension have arrived: after that they are the numbers that are shown, and a
+        // flow that is over has no reason to be held on to.
+        var ended = false
     }
 
     // when every window is hidden or minimized there's no point polling logs
@@ -1067,12 +1119,14 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             switch ExtensionHandshake.verdict(response: response) {
             case .ok(let api, let version):
                 self.providerChannelAvailable = true
+                self.canTerminateFlows = true
                 self.extensionProblem = nil
                 self.extensionProblemDetails = nil
                 self.extensionProblemIsStanding = false
                 self.addLog("INFO", "Extension handshake ok (protocol \(api), version \(version))")
             case .mismatch(let api):
                 self.providerChannelAvailable = false
+                self.canTerminateFlows = false
                 self.reportExtensionMismatch(api: api)
             case .noAnswer:
                 // the extension may simply not be ready yet, so try a few more
@@ -1092,6 +1146,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             // no message through it. Saying "another extension answered" here
             // sends the person off to delete extensions that are not the problem.
             providerChannelAvailable = false
+            canTerminateFlows = false
             reportExtensionUnreachable()
             return
         }
@@ -1139,7 +1194,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             } else {
                 extensionProblem = ExtensionDiagnosis.extensionUnreachableSummary(hasDeveloperSignature: false)
             }
-            addLog("ERROR", "The extension does not answer over the provider channel: this build is not signed by a developer, and macOS does not let it talk to its own system extension. The traffic is proxied (the rules went with the start of the tunnel), but this window cannot read the connection list back.")
+            addLog("ERROR", "The extension does not answer over the provider channel: this build is not signed by a developer, and macOS does not let it talk to its own system extension. The traffic is proxied all the same, and the connections and their traffic are read from the system log. What is lost: the switches the extension reads while it runs, and closing a connection by hand.")
         }
     }
     
@@ -1207,9 +1262,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private func startUnifiedLogTail() {
         guard unifiedLogTail == nil else { return }
         let tail = UnifiedLogTail()
-        tail.onLine = { [weak self] line in
+        tail.onLines = { [weak self] lines in
             DispatchQueue.main.async {
-                self?.append([line])
+                self?.append(lines)
             }
         }
         tail.onFailure = { [weak self] reason in
@@ -1234,15 +1289,212 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         guard !lines.isEmpty else { return }
         var newConnections: [ConnectionLog] = []
         var newActivity: [ActivityLog] = []
+        var trafficChanged = false
         for line in lines {
             if let connection = line.connection {
                 if let c = makeConnectionLog(connection, date: line.date) { newConnections.append(c) }
+                // every connection that was decided counts towards the proxy it went through
+                proxyConnections[connection.proxy, default: 0] += 1
+                trafficChanged = true
+            } else if let flow = line.flowEvent {
+                // the traffic of the open flows. the extension counts the bytes of every flow it
+                // proxies and writes them to the log, because the channel that used to carry them
+                // is closed for a build that is not signed by a developer
+                apply(flow, date: line.date)
+                trafficChanged = true
+            } else if let totals = line.proxyTotals {
+                // the totals the extension counted itself. they are the numbers the table shows
+                extensionTotals = totals
+                trafficChanged = true
             } else {
                 if let a = makeActivityLog(line) { newActivity.append(a) }
             }
         }
         appendConnections(newConnections)
         appendActivity(newActivity)
+        if trafficChanged { publishTraffic() }
+    }
+
+    // Takes one line about the traffic of the flows into the books.
+    private func apply(_ event: ExtensionLogReader.FlowEvent, date: Date) {
+        switch event {
+        case .open(let id, let proto, let process, let destination, let port, let proxy):
+            // the flow may already be known from the log that was read when the window opened
+            let flow = freshFlow(id: id, proto: proto, process: process, destination: destination,
+                                 port: port, proxy: proxy, known: loggedFlows[id], date: date)
+            loggedFlows[id] = flow
+            liveFlowIds.insert(id)
+        case .bytes(let rows):
+            // the extension writes the flows that are open, so this line replaces the list of
+            // them: a flow that is not in it any more is gone
+            liveFlowIds = Set(rows.map { $0.id })
+            for row in rows {
+                guard var flow = loggedFlows[row.id] else { continue }
+                if row.up != flow.bytesUp || row.down != flow.bytesDown { flow.lastActivity = date }
+                flow.bytesUp = row.up
+                flow.bytesDown = row.down
+                loggedFlows[row.id] = flow
+            }
+        case .live(let id, let proto, let process, let destination, let port, let proxy, let up, let down):
+            // a flow that is open right now, with everything about it.
+            //
+            // This is the line that makes a flow that was already open when the window was
+            // opened show up: the line about the flow opening is long gone from the log by
+            // then, and without this one the flow would have no name, no destination and no
+            // proxy, and nothing could be shown for it.
+            var flow = freshFlow(id: id, proto: proto, process: process, destination: destination,
+                                 port: port, proxy: proxy, known: loggedFlows[id], date: date)
+            if up != flow.bytesUp || down != flow.bytesDown { flow.lastActivity = date }
+            flow.bytesUp = up
+            flow.bytesDown = down
+            loggedFlows[id] = flow
+            liveFlowIds.insert(id)
+        case .end(let id, let up, let down):
+            liveFlowIds.remove(id)
+            guard var flow = loggedFlows[id] else { return }
+            // the last line of a flow carries the bytes it really moved
+            flow.bytesUp = up
+            flow.bytesDown = down
+            flow.ended = true
+            loggedFlows[id] = flow
+        }
+    }
+
+    // The flow a line is about, with what is known about it.
+    //
+    // A flow that ended and is back is a new one: the ids start over with every
+    // tunnel, so the log can hold a line about an old flow and a line about a new
+    // one with the same id. The old one is dropped then, or the new flow would
+    // carry the age and the bytes of the old one.
+    private func freshFlow(id: UInt64, proto: String, process: String, destination: String,
+                           port: String, proxy: String, known: LoggedFlow?, date: Date) -> LoggedFlow {
+        if let known, !known.ended { return known }
+        return LoggedFlow(id: id, proto: proto, process: process, destination: destination,
+                          port: Int(port) ?? 0, proxy: proxy, startedAt: date, lastActivity: date)
+    }
+
+    // Builds the table: one row for every proxy the traffic went through.
+    private func publishTraffic() {
+        // The window is redrawn from what is published, and the log brings several
+        // lines a second. Putting them out as they come would redraw the window
+        // for every line of them.
+        let now = Date()
+        if now.timeIntervalSince(lastTrafficPublish) < Self.trafficPublishInterval {
+            // too soon: the numbers go out with the next round
+            trafficPublishPending = true
+            scheduleTrafficPublish()
+            return
+        }
+        lastTrafficPublish = now
+        trafficPublishPending = false
+
+        var rows: [ProxyTraffic] = []
+
+        if !extensionTotals.isEmpty {
+            // the numbers the extension counted itself. they are the ones that are right: the
+            // app only knows the flows that were in the log, and a flow that ended before the
+            // app started is not in it any more
+            for total in extensionTotals {
+                // a blocked connection moves no traffic and is not a proxy, so it has no row
+                guard total.proxy != "BLOCK" else { continue }
+                rows.append(ProxyTraffic(
+                    id: total.proxy,
+                    proxy: total.proxy,
+                    connections: total.connections,
+                    bytesUp: total.up,
+                    bytesDown: total.down,
+                    // the bytes of a direct connection are never seen: macOS hands those flows back
+                    // to the system, so the extension is not the one carrying them
+                    bytesKnown: total.proxy != "Direct"
+                ))
+            }
+            // the flows that are over are not needed any more: the totals above hold what they
+            // carried, and a window that is open for days would otherwise hold every flow that
+            // ever went through the machine
+            loggedFlows = loggedFlows.filter { !$0.value.ended || liveFlowIds.contains($0.key) }
+        } else {
+            // nothing came from the extension yet: the numbers the app counted itself are
+            // shown until they do
+            var up: [String: Int64] = [:]
+            var down: [String: Int64] = [:]
+            for flow in loggedFlows.values {
+                up[flow.proxy, default: 0] += flow.bytesUp
+                down[flow.proxy, default: 0] += flow.bytesDown
+            }
+
+            var names = Set(proxyConnections.keys)
+            names.formUnion(up.keys)
+            for name in names {
+                guard name != "BLOCK" else { continue }
+                rows.append(ProxyTraffic(
+                    id: name,
+                    proxy: name,
+                    connections: proxyConnections[name] ?? 0,
+                    bytesUp: up[name] ?? 0,
+                    bytesDown: down[name] ?? 0,
+                    bytesKnown: name != "Direct"
+                ))
+            }
+        }
+        // the busiest proxy first, the same way Proxifier puts the traffic it moved on top
+        rows.sort { lhs, rhs in
+            if lhs.connections != rhs.connections { return lhs.connections > rhs.connections }
+            let left = lhs.bytesUp + lhs.bytesDown
+            let right = rhs.bytesUp + rhs.bytesDown
+            if left != right { return left > right }
+            return lhs.proxy < rhs.proxy
+        }
+        proxyTraffic = rows
+        publishLiveFlows()
+    }
+
+    // How often the numbers of the window are put out at the earliest. The log
+    // brings lines every second, and a window that is redrawn for every one of
+    // them costs more than the reading of the log does.
+    private static let trafficPublishInterval: TimeInterval = 0.5
+    private var lastTrafficPublish = Date.distantPast
+    // whether numbers that came in while the window was redrawing are still to go out
+    private var trafficPublishPending = false
+    // whether the numbers that are waiting are already booked to go out
+    private var trafficPublishScheduled = false
+
+    // Puts out the numbers that had to wait.
+    private func scheduleTrafficPublish() {
+        guard !trafficPublishScheduled else { return }
+        trafficPublishScheduled = true
+        let wait = max(0.05, Self.trafficPublishInterval - Date().timeIntervalSince(lastTrafficPublish))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self = self else { return }
+            self.trafficPublishScheduled = false
+            guard self.trafficPublishPending else { return }
+            self.trafficPublishPending = false
+            self.publishTraffic()
+        }
+    }
+
+    // The flows that are open right now.
+    private func publishLiveFlows() {
+        guard providerFlows.isEmpty else {
+            liveFlows = providerFlows
+            return
+        }
+        let now = Date()
+        liveFlows = liveFlowIds.compactMap { id -> LiveFlow? in
+            guard let flow = loggedFlows[id] else { return nil }
+            return LiveFlow(
+                id: flow.id,
+                protocolName: flow.proto,
+                process: flow.process,
+                destination: flow.destination,
+                port: flow.port,
+                proxy: flow.proxy,
+                bytesUp: flow.bytesUp,
+                bytesDown: flow.bytesDown,
+                age: now.timeIntervalSince(flow.startedAt),
+                idle: now.timeIntervalSince(flow.lastActivity)
+            )
+        }
+        .sorted { $0.id > $1.id }
     }
 
     private func startFlowPollingTimer() {
@@ -1296,7 +1548,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             }
 
             DispatchQueue.main.async {
-                self.liveFlows = flows
+                // the flows from the channel are the better ones, so they are kept apart and
+                // used as soon as there are any
+                self.providerFlows = flows
+                self.publishLiveFlows()
             }
         }
     }
