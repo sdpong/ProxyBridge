@@ -1347,7 +1347,19 @@ class AppProxyProvider: NETransparentProxyProvider {
 
     // human readable label for the connection log, e.g. SOCKS5 127.0.0.1:1080
     private func proxyLabel(_ config: StoredProxyConfig) -> String {
-        return "\(config.type.uppercased()) \(config.host):\(config.port)"
+        return "\(config.type.uppercased()) \(sanitize(config.host)):\(config.port)"
+    }
+
+    // The name of a proxy goes into a line of the log where a "|" and a ";" separate
+    // the fields, so a host that has one of them in it would break the reading of the
+    // line - and the numbers of that proxy would end up on another one.
+    //
+    // A host name does not have those in it, but nothing stops a person from typing
+    // them, so they are put to "_" instead.
+    private func sanitize(_ host: String) -> String {
+        return host
+            .replacingOccurrences(of: "|", with: "_")
+            .replacingOccurrences(of: ";", with: "_")
     }
 
     // the label of a chain: every proxy it walks through, in order
