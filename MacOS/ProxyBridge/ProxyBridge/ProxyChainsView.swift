@@ -11,6 +11,7 @@ struct ProxyChainsView: View {
     @State private var showAddChain = false
     @State private var editingChain: ProxyChain?
     @State private var deletingChain: ProxyChain?
+    @State private var testingChain: ProxyChain?
     @State private var affectedRulesCount = 0
 
     var body: some View {
@@ -43,6 +44,9 @@ struct ProxyChainsView: View {
         }
         .sheet(item: $editingChain) { chain in
             ProxyChainEditorView(viewModel: viewModel, existing: chain)
+        }
+        .sheet(item: $testingChain) { chain in
+            ProxyChainTesterView(chain: chain, hops: hopConfigs(of: chain))
         }
     }
 
@@ -105,6 +109,16 @@ struct ProxyChainsView: View {
                                 .foregroundColor(.orange)
                                 .help(chain.problems(proxyTypes: viewModel.proxyTypesById).joined(separator: " "))
                         }
+                        if !downHops(of: chain).isEmpty {
+                            Image(systemName: "wifi.exclamationmark")
+                                .foregroundColor(.red)
+                                .help("Does not answer: " + downHops(of: chain).joined(separator: ", "))
+                        }
+                        Button(action: { testingChain = chain }) {
+                            Image(systemName: "bolt.horizontal")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Test the chain")
                         Button(action: { editingChain = chain }) {
                             Image(systemName: "pencil")
                         }
@@ -134,6 +148,22 @@ struct ProxyChainsView: View {
                 .buttonStyle(.borderedProminent)
         }
         .padding()
+    }
+
+    // The proxies of a chain, in the order the chain walks through them.
+    private func hopConfigs(of chain: ProxyChain) -> [ProxyBridgeViewModel.ProxyConfig] {
+        return chain.proxyIds.compactMap { id in
+            viewModel.proxyConfigs.first { $0.id == id }
+        }
+    }
+
+    // The hops of a chain the extension found to be down.
+    private func downHops(of chain: ProxyChain) -> [String] {
+        return hopConfigs(of: chain).compactMap { config in
+            let label = "\(config.type.uppercased()) \(config.host):\(config.port)"
+            if viewModel.chainHealth[label] == false { return label }
+            return nil
+        }
     }
 
     private func proxySummary(_ chain: ProxyChain) -> String {
@@ -214,6 +244,11 @@ struct ProxyChainEditorView: View {
                                 Text(proxyName(id))
                                     .font(.body)
                                 Spacer()
+                                if let alive = health(of: id) {
+                                    Image(systemName: alive ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .foregroundColor(alive ? .green : .red)
+                                        .help(alive ? "The proxy answers" : "The proxy does not answer, the chain is walked without it")
+                                }
                                 Button {
                                     move(index, to: index - 1)
                                 } label: {
@@ -283,6 +318,14 @@ struct ProxyChainEditorView: View {
 
     private func proxyName(_ id: String) -> String {
         return viewModel.proxyConfigs.first { $0.id == id }?.displayName ?? "a proxy that no longer exists"
+    }
+
+    // What the extension last heard about a proxy: nil when it has not heard
+    // anything yet.
+    private func health(of id: String) -> Bool? {
+        guard let config = viewModel.proxyConfigs.first(where: { $0.id == id }) else { return nil }
+        let label = "\(config.type.uppercased()) \(config.host):\(config.port)"
+        return viewModel.chainHealth[label]
     }
 
     private func addPicked() {

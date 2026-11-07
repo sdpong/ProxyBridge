@@ -507,6 +507,14 @@ class AppProxyProvider: NETransparentProxyProvider {
     // a chain is a list of proxy ids, walked through in order
     private var storedChains: [String: [String]] = [:]
     private let proxyLock = NSLock()
+    // The health of the proxies the chains walk through. a hop that does not
+    // answer is skipped, until a probe says it answers again.
+    private var chainHealth: [String: ChainHealth.State] = [:]
+    // when each hop was probed the last time
+    private var chainHealthProbedAt: [String: Date] = [:]
+    private let chainHealthLock = NSLock()
+    // the timer that probes the hops
+    private var chainHealthTimer: DispatchSourceTimer?
     // problems that would repeat on every connection are reported once per proxy list
     private var warnedKeys = Set<String>()
 
@@ -573,6 +581,7 @@ class AppProxyProvider: NETransparentProxyProvider {
 
         startUDPSweepTimer()
         startFlowReportTimer()
+        startChainHealthTimer()
         diag("Tunnel starting")
         // the rules and the proxy list can come with the configuration itself. they
         // do when the provider channel does not open, which is what happens on a
@@ -594,6 +603,8 @@ class AppProxyProvider: NETransparentProxyProvider {
         udpSweepTimer?.cancel()
         udpSweepTimer = nil
         stopFlowReportTimer()
+        chainHealthTimer?.cancel()
+        chainHealthTimer = nil
         sweepHandshakes(all: true)
         udpLock.lock()
         let all = Array(udpAssociations.values)
@@ -795,6 +806,126 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
 
+    // The hops of the chains are probed from time to time.
+    //
+    // A chain is only as good as its weakest hop, and a hop that is down takes
+    // the whole chain with it. The probe answers whether the hop is there, and
+    // the answer decides whether the hop is walked through or skipped.
+    private func startChainHealthTimer() {
+        chainHealthTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        // the timer wakes up every minute and asks which hops are due. the hops
+        // themselves are probed every ten minutes, so a chain that was just set
+        // up is not left waiting for the first answer
+        timer.schedule(deadline: .now() + 15, repeating: 60, leeway: .seconds(10))
+        timer.setEventHandler { [weak self] in
+            self?.probeChainHops()
+        }
+        timer.resume()
+        chainHealthTimer = timer
+    }
+
+    // The hops of every chain, with the proxy each of them names.
+    private func chainHops() -> [ChainHealth.Hop] {
+        proxyLock.lock()
+        let chains = storedChains
+        let configs = storedProxyConfigs
+        proxyLock.unlock()
+
+        var hops: [ChainHealth.Hop] = []
+        var seen = Set<String>()
+        for proxyIds in chains.values {
+            for id in proxyIds {
+                // the same proxy can be in several chains: it is probed once
+                guard !seen.contains(id), let config = configs[id] else { continue }
+                seen.insert(id)
+                hops.append(ChainHealth.Hop(id: id, host: config.host, port: config.port, type: config.type))
+            }
+        }
+        return hops
+    }
+
+    // The hops whose turn it is to be probed.
+    private func probeChainHops() {
+        let hops = chainHops()
+        guard !hops.isEmpty else { return }
+        chainHealthLock.lock()
+        let lastProbe = chainHealthProbedAt
+        chainHealthLock.unlock()
+        for hop in ChainHealth.due(hops, lastProbe: lastProbe, now: Date()) {
+            probeChainHop(hop)
+        }
+    }
+
+    // One hop is asked whether it is there.
+    //
+    // The connection is enough for most proxies: a port that accepts a
+    // connection belongs to something that is listening. A socks5 proxy is asked
+    // one step further, because a port that is open but nothing behind it is not
+    // a proxy that works.
+    private func probeChainHop(_ hop: ChainHealth.Hop) {
+        ChainHealthProbe.probe(hop) { [weak self] alive in
+            self?.recordChainHealth(of: hop, alive: alive)
+        }
+    }
+
+    // The answer of a probe is remembered, and a change is written to the log:
+    // a hop that stops answering is skipped, and one that answers again is put
+    // back into its chain.
+    private func recordChainHealth(of hop: ChainHealth.Hop, alive: Bool) {
+        let state = ChainHealth.state(alive: alive)
+        chainHealthLock.lock()
+        let previous = chainHealth[hop.id] ?? .unknown
+        chainHealth[hop.id] = state
+        chainHealthProbedAt[hop.id] = Date()
+        chainHealthLock.unlock()
+
+        let label = hop.label
+        // the state is written every time a hop is probed, so the app knows it
+        // even when it was not there when the state changed
+        if previous == state {
+            diag(alive ? "Chain health: \(label) answers" : "Chain health: \(label) does not answer")
+            return
+        }
+        // a change is said in words: the hop is skipped, or it is back
+        if alive {
+            diag("Chain health: \(label) answers, it is back in its chain")
+        } else {
+            diag("Chain health: \(label) does not answer, it is skipped until it does", level: "WARN")
+        }
+    }
+
+    // The health of every hop, written when the app asks for the configuration.
+    // The app shows it next to the chains, and it would otherwise only learn
+    // about a hop when the state changes.
+    private func writeChainHealth() {
+        let hops = chainHops()
+        guard !hops.isEmpty else { return }
+        chainHealthLock.lock()
+        let state = chainHealth
+        chainHealthLock.unlock()
+        for hop in hops {
+            switch state[hop.id] ?? .unknown {
+            case .healthy:
+                diag("Chain health: \(hop.label) answers")
+            case .unreachable:
+                diag("Chain health: \(hop.label) does not answer", level: "WARN")
+            case .unknown:
+                diag("Chain health: \(hop.label) has not been probed yet")
+            }
+        }
+    }
+
+    // The hops a chain walks through, minus the ones that are known to be down.
+    private func usableChainHops(_ hops: [ChainHop]) -> [ChainHop] {
+        chainHealthLock.lock()
+        let state = chainHealth
+        chainHealthLock.unlock()
+        let probeHops = hops.map { ChainHealth.Hop(id: $0.id, host: $0.config.host, port: $0.config.port, type: $0.config.type) }
+        let usableIds = Set(ChainHealth.usable(probeHops, state: state).map { $0.id })
+        return hops.filter { usableIds.contains($0.id) }
+    }
+
     private func closeRelay(_ flow: NEAppProxyTCPFlow, _ connection: NWTCPConnection, error: Error? = nil) {
         connection.cancel()
         flow.closeReadWithError(error)
@@ -987,6 +1118,7 @@ class AppProxyProvider: NETransparentProxyProvider {
 
     private func applyProxyConfigs(_ configs: [[String: Any]], chains: [[String: Any]]) {
         proxyLock.lock()
+        let previousConfigs = storedProxyConfigs
         storedProxyConfigs = [:]
         warnedKeys.removeAll()
         for configDict in configs {
@@ -1015,8 +1147,33 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
         let configCount = storedProxyConfigs.count
         let chainCount = storedChains.count
+        // a proxy that was pointed somewhere else is probed again right away: the
+        // old answer says nothing about the new place
+        let moved = movedProxies(previous: previousConfigs)
         proxyLock.unlock()
+        if !moved.isEmpty {
+            chainHealthLock.lock()
+            for id in moved {
+                chainHealth.removeValue(forKey: id)
+                chainHealthProbedAt.removeValue(forKey: id)
+            }
+            chainHealthLock.unlock()
+        }
         diag("Proxy configs updated: \(configCount) config(s), \(chainCount) chain(s)")
+        writeChainHealth()
+    }
+
+    // The proxies whose address or type changed. the health of those is unknown
+    // again: the answer that was given was about another place.
+    private func movedProxies(previous: [String: StoredProxyConfig]) -> [String] {
+        var moved: [String] = []
+        for (id, config) in storedProxyConfigs {
+            guard let old = previous[id] else { continue }
+            if old.host != config.host || old.port != config.port || old.type.lowercased() != config.type.lowercased() {
+                moved.append(id)
+            }
+        }
+        return moved
     }
 
     // replaces the rule list. returns how many rules were applied, how many were
@@ -1346,8 +1503,17 @@ class AppProxyProvider: NETransparentProxyProvider {
                         sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
                         return false
                     }
-                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(hops), rule: matchedRule?.ruleId)
-                    proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: hops, appIdentity: appIdentity)
+                    // a hop that the probe found down is skipped, the rest of the
+                    // chain is walked through as it is
+                    let walk = usableChainHops(hops)
+                    if walk.count != hops.count {
+                        let skipped = hops.filter { hop in !walk.contains { $0.id == hop.id } }
+                            .map { $0.config.type.uppercased() + " " + $0.config.host + ":" + String($0.config.port) }
+                            .joined(separator: ", ")
+                        diag("Chain \(rule.action): \(skipped) does not answer, the chain is walked without it", level: "WARN")
+                    }
+                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(walk), rule: matchedRule?.ruleId)
+                    proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: walk, appIdentity: appIdentity)
                     return true
                 }
 

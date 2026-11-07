@@ -210,6 +210,23 @@ if case .bytes(let rows)? = flowLine?.flowEvent {
 }
 check(flowLine?.connection == nil, "a traffic line is not a connection")
 
+// the health of a proxy of a chain is read out of the line of the tool
+let downHealth = ExtensionLogReader.parseChainHealth("Chain health: SOCKS5 127.0.0.1:9991 does not answer, it is skipped until it does")
+check(downHealth?.label == "SOCKS5 127.0.0.1:9991", "the proxy of a health line is read")
+check(downHealth?.alive == false, "a proxy that does not answer is read")
+let upHealth = ExtensionLogReader.parseChainHealth("Chain health: SOCKS5 127.0.0.1:9991 answers, it is back in its chain")
+check(upHealth?.label == "SOCKS5 127.0.0.1:9991", "the proxy of a health line is read")
+check(upHealth?.alive == true, "a proxy that answers is read")
+let steadyHealth = ExtensionLogReader.parseChainHealth("Chain health: HTTP proxy.example.com:8080 does not answer")
+check(steadyHealth?.label == "HTTP proxy.example.com:8080", "the proxy of a steady health line is read")
+check(steadyHealth?.alive == false, "a steady proxy that does not answer is read")
+let steadyUp = ExtensionLogReader.parseChainHealth("Chain health: HTTP proxy.example.com:8080 answers")
+check(steadyUp?.alive == true, "a steady proxy that answers is read")
+check(ExtensionLogReader.parseChainHealth("Chain health: SOCKS5 1.2.3.4:1080 has not been probed yet") == nil,
+      "a proxy that was not probed is not read")
+check(ExtensionLogReader.parseChainHealth("Connection TCP curl -> host:443 via Direct") == nil,
+      "a connection is not a health line")
+
 if failures > 0 {
     print("extension log tests: \(failures) FAILED")
     exit(1)

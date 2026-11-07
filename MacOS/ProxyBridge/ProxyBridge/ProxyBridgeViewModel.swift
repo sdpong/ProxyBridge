@@ -41,6 +41,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     @Published private(set) var activeProfile: String = "Default"
     // what the last import had to leave out, shown to the user once
     @Published var lastImportNotes: [String] = []
+    // The health of the proxies the chains walk through, as the extension
+    // reported it. The key is the label of the proxy, e.g. "SOCKS5 127.0.0.1:9991":
+    // false means the proxy does not answer and is skipped.
+    @Published private(set) var chainHealth: [String: Bool] = [:]
     // Bumped every time the DNS settings window is opened.
     //
     // The window is reused when it is opened again, and a SwiftUI view that
@@ -1424,6 +1428,10 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 // is closed for a build that is not signed by a developer
                 apply(flow, date: line.date)
                 trafficChanged = true
+            } else if let health = line.chainHealth {
+                // the extension says which hop of a chain does not answer, and
+                // when it answers again
+                chainHealth[health.label] = health.alive
             } else if let totals = line.proxyTotals {
                 // the totals the extension counted itself. they are the numbers the table shows
                 extensionTotals = totals

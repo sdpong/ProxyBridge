@@ -80,8 +80,21 @@ enum ExtensionLogReader {
         let flowEvent: FlowEvent?
         /// The totals of every proxy, when the line carries them.
         let proxyTotals: [(proxy: String, up: Int64, down: Int64, connections: Int)]?
+        /// What the extension said about the health of a proxy of a chain, when it says anything.
+        var chainHealth: ChainHealthEvent? = nil
         /// "ERROR" when the extension wrote it as an error, "INFO" otherwise.
         let level: String
+    }
+
+    /// What the extension said about the health of a proxy of a chain.
+    ///
+    /// The extension probes the hops of the chains every ten minutes and writes
+    /// a line when the answer of a hop changes.
+    struct ChainHealthEvent {
+        /// the proxy the line is about, e.g. "SOCKS5 127.0.0.1:9991"
+        let label: String
+        /// whether the proxy answers
+        let alive: Bool
     }
 
     /// A connection the extension reported.
@@ -304,7 +317,34 @@ enum ExtensionLogReader {
         let level = parts[2] == "Ee" ? "ERROR" : "INFO"
         let text = String(parts[5])
         return Line(date: date, text: text, connection: parse(text), flowEvent: parseFlow(text),
-                    proxyTotals: parseProxyTotals(text), level: level)
+                    proxyTotals: parseProxyTotals(text), chainHealth: parseChainHealth(text), level: level)
+    }
+
+    // Reads the health of a proxy of a chain out of one of the extension's lines.
+    //
+    //   Chain health: SOCKS5 127.0.0.1:9991 does not answer, it is skipped until it does
+    //   Chain health: SOCKS5 127.0.0.1:9991 answers again, it is back in its chain
+    static func parseChainHealth(_ text: String) -> ChainHealthEvent? {
+        guard text.hasPrefix("Chain health: ") else { return nil }
+        var body = String(text.dropFirst("Chain health: ".count))
+        // a change is said in words, a steady state is not
+        let downChange = ", it is skipped until it does"
+        if body.hasSuffix(downChange) {
+            body = String(body.dropLast(downChange.count))
+            return ChainHealthEvent(label: String(body.dropLast(" does not answer".count)), alive: false)
+        }
+        let upChange = ", it is back in its chain"
+        if body.hasSuffix(upChange) {
+            body = String(body.dropLast(upChange.count))
+            return ChainHealthEvent(label: String(body.dropLast(" answers".count)), alive: true)
+        }
+        if body.hasSuffix(" does not answer") {
+            return ChainHealthEvent(label: String(body.dropLast(" does not answer".count)), alive: false)
+        }
+        if body.hasSuffix(" answers") {
+            return ChainHealthEvent(label: String(body.dropLast(" answers".count)), alive: true)
+        }
+        return nil
     }
 
     // The stamp of a compact line. It is read on one thread at a time - the
