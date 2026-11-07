@@ -87,9 +87,13 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     // extension against the app's signature, and a build that is not signed by a
     // developer gets no message through it.
     //
-    // The important part is what still works: the rules and the proxy list went
-    // with the start of the tunnel, so the traffic is proxied. Only this window
-    // cannot read the connection list back.
+    // What still works: the rules and the proxy list went with the start of the
+    // tunnel, so the traffic is proxied. The connection list and the activity
+    // log are read from the unified log, where the extension writes every
+    // decision it made.
+    //
+    // What does not work: the list of open connections with their traffic, and
+    // the proxies that need a password. Both need the provider channel.
     //
     // A build that IS signed by a developer is a different case: the tunnel is
     // up, so something is on the other end of it, and it does not answer, which
@@ -105,9 +109,9 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
             ]
         }
         return [
-            "The tunnel is up and the extension runs, but macOS does not let the app talk to its own system extension: the system checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it.",
-            "The proxy itself works. The rules and the proxy list go with the start of the tunnel, which the system does not check, so your traffic is proxied. What does not work is the app reading the connection list back.",
-            "Sign the app with a Developer ID certificate (and notarize it) to get the connection list back."
+            "The extension does not answer over the provider channel. macOS checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it.",
+            "What that costs: the list of open connections with their traffic, and the proxies that need a password. The connection list and the activity log are read from the unified log instead, where the extension writes every decision it made, so they are there. The traffic itself is proxied either way: the rules and the proxy list went with the start of the tunnel.",
+            "Sign the app with a Developer ID certificate to get the open connections and the proxies with a password as well."
         ]
     }
 }
