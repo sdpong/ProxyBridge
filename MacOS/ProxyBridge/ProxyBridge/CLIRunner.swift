@@ -33,6 +33,44 @@ enum CLI {
         exit(code)
     }
 
+    // Prints what the system extension writes, and keeps printing the new lines.
+    //
+    // The extension writes its decisions to the unified log. Reading them back
+    // needs a build that is not sandboxed: logd does not serve the system scope
+    // to a sandboxed process, and the /usr/bin/log tool refuses to run in one
+    // at all ("Cannot run while sandboxed").
+    private static func followExtensionLog() -> Never {
+        guard ExtensionLogReader.isReadable() else {
+            fail("""
+            This build cannot read the unified log.
+              The App Sandbox is what stops it: logd does not serve the system scope to a
+              sandboxed process, and /usr/bin/log refuses to run in one at all. A build
+              that is not sandboxed reads it without trouble.
+            """)
+        }
+        say("Reading what the system extension writes (\(ExtensionLogReader.subsystem)). Press Ctrl+C to stop.")
+        say("")
+        // the last minute, so a run that starts while traffic is flowing shows something
+        var cursor = Date(timeIntervalSinceNow: -60)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        while true {
+            // the reader hands them back newest first, and a terminal wants the
+            // other way round
+            let fresh = ExtensionLogReader.lines(since: cursor)
+            for line in fresh.reversed() {
+                say("[\(formatter.string(from: line.date))] \(CLIText.safe(line.text))")
+            }
+            if let newest = fresh.first?.date {
+                // a hair past the newest line, so a line with the same timestamp is
+                // not read twice and one with the same timestamp is not lost
+                cursor = newest.addingTimeInterval(0.001)
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+    }
+
     // the version of the app this executable belongs to. falls back to the bundle that
     // holds the real executable in case the process was started through a link
     static func version() -> String {
@@ -58,6 +96,12 @@ enum CLI {
         if options.version { say("ProxyBridge CLI \(version())"); exit(0) }
         if options.listProfiles { listProfiles(); exit(0) }
         if options.update { checkForUpdates() }
+
+        // the log view only reads: it does not control the extension, so it does
+        // not have to wait for the app to be closed
+        if options.followLog {
+            followExtensionLog()
+        }
 
         // only one controller at a time: the GUI and the CLI would fight over the same tunnel
         if guiIsRunning() { fail("The ProxyBridge app is running. Quit it first, only one of them can control the extension at a time.") }
@@ -409,6 +453,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         CLI.say("  shared container: " + (ExtensionDiagnosis.sharedContainerReachable()
             ? "reachable"
             : "refused by the system (the app group needs the team id of the signature)"))
+        CLI.say("  unified log: " + (ExtensionLogReader.isReadable()
+            ? "readable (the extension's decisions are read from there)"
+            : "refused by the system (the app sandbox keeps logd from serving it)"))
 
         guard let session = session else {
             CLI.say("  extension channel: no tunnel to talk over")

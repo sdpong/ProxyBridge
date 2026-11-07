@@ -8,6 +8,7 @@ struct CLIOptions: Equatable {
     var update = false
     var listProfiles = false
     var diagnose = false
+    var followLog = false
     var profile: String?    // a saved profile name, or "-" for standard input
     var verbose = 0         // 0 silent, 1 log messages, 2 connections, 3 both
 }
@@ -18,7 +19,7 @@ enum CLIParseResult: Equatable {
 }
 
 enum CLIArguments {
-    static let triggers: Set<String> = ["--cli", "--profile", "--verbose", "--version", "--update", "--list-profiles", "--diagnose", "--help", "-h", "-?"]
+    static let triggers: Set<String> = ["--cli", "--profile", "--verbose", "--version", "--update", "--list-profiles", "--diagnose", "--log", "--help", "-h", "-?"]
 
     // true when the process was started for the command line. a normal launch from
     // Finder or the Dock passes none of these, so it stays the GUI
@@ -45,6 +46,7 @@ enum CLIArguments {
             case "--update": o.update = true
             case "--list-profiles": o.listProfiles = true
             case "--diagnose": o.diagnose = true
+            case "--log": o.followLog = true
             case "--profile", "--verbose":
                 let value: String
                 if let inline = inline {
@@ -68,7 +70,7 @@ enum CLIArguments {
             i += 1
         }
         // running needs a profile, the other options stand on their own
-        if !(o.help || o.version || o.update || o.listProfiles || o.diagnose) && o.profile == nil {
+        if !(o.help || o.version || o.update || o.listProfiles || o.diagnose || o.followLog) && o.profile == nil {
             return .failure("--profile is required. Use --help.")
         }
         return .run(o)
@@ -87,6 +89,8 @@ enum CLIArguments {
       --list-profiles    List the saved profiles and exit
       --diagnose         Say whether the app can reach the extension, and why not
                          when it cannot. No profile is needed.
+      --log              Print what the system extension writes, and keep printing the
+                         new lines. Press Ctrl+C to stop. No profile is needed.
       --verbose <0-3>    Logging: 0 silent (default), 1 log messages, 2 connections, 3 both
       --update           Check for updates
       --version          Show the version
@@ -96,13 +100,14 @@ enum CLIArguments {
       proxybridge --list-profiles
       proxybridge --profile Default --verbose 2
       cat ~/work.pbprofile | proxybridge --profile - --verbose 3
+      proxybridge --log
 
     NOTES:
       - Press Ctrl+C to stop. The rules are cleared and the tunnel is stopped.
       - The system extension has to be approved once (System Settings > Privacy & Security).
         The first run waits for that approval.
       - Quit the ProxyBridge app first: only one of them can control the extension.
-      - The app is sandboxed, so a file path cannot be read. Use a saved profile name,
+      - The app is not sandboxed, so a file path cannot be read. Use a saved profile name,
         or pipe the file in with --profile -
     """
 }

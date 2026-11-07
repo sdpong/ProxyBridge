@@ -1110,6 +1110,15 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private func pollLogs() {
         guard let session = tunnelSession else { return }
 
+        // The unified log is where the system extension writes every decision it
+        // made. A build that is not sandboxed reads it back, and it says the
+        // same thing the message channel says - so it is the channel a build
+        // without a developer signature can use.
+        if ExtensionLogReader.isReadable() {
+            pollLogsFromUnifiedLog()
+            return
+        }
+
         let message = ["action": "getLogs"]
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
 
@@ -1136,6 +1145,42 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 self.appendConnections(newConnections)
                 self.appendActivity(newActivity)
             }
+        }
+    }
+
+    // The lines of the unified log that were read already. The log keeps every
+    // line, so the window needs to know where it stopped the last time.
+    private var unifiedLogCursor: Date? = nil
+
+    // Reads the connection list out of the unified log.
+    private func pollLogsFromUnifiedLog() {
+        // the first read starts a minute back, so a window that opens while
+        // traffic is flowing has something to show
+        if unifiedLogCursor == nil {
+            unifiedLogCursor = Date(timeIntervalSinceNow: -60)
+        }
+        let lines = ExtensionLogReader.lines(since: unifiedLogCursor)
+        guard !lines.isEmpty else { return }
+
+        // the reader hands them back newest first, the lists want the oldest first
+        var newConnections: [ConnectionLog] = []
+        var newActivity: [ActivityLog] = []
+        for line in lines.reversed() {
+            if let connection = line.connection {
+                if let c = makeConnectionLog(connection) { newConnections.append(c) }
+            } else {
+                if let a = makeActivityLog(line) { newActivity.append(a) }
+            }
+        }
+        // a hair past the newest line, so a line with the same timestamp is not
+        // read twice
+        if let newest = lines.first?.date {
+            unifiedLogCursor = newest.addingTimeInterval(0.001)
+        }
+
+        DispatchQueue.main.async {
+            self.appendConnections(newConnections)
+            self.appendActivity(newActivity)
         }
     }
 
@@ -1265,6 +1310,33 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             timestamp: timestamp,
             level: level,
             message: message
+        )
+    }
+
+    // The same, for a line that came out of the unified log.
+    private func makeConnectionLog(_ connection: ExtensionLogReader.Connection) -> ConnectionLog? {
+        guard isTrafficLoggingEnabled else { return nil }
+
+        connectionIdCounter &+= 1
+        return ConnectionLog(
+            id: connectionIdCounter,
+            timestamp: getCurrentTimestamp(),
+            connectionProtocol: connection.proto,
+            process: connection.process,
+            destination: connection.destination,
+            port: connection.port,
+            proxy: connection.proxy
+        )
+    }
+
+    // The same, for a line that came out of the unified log.
+    private func makeActivityLog(_ line: ExtensionLogReader.Line) -> ActivityLog? {
+        activityIdCounter &+= 1
+        return ActivityLog(
+            id: activityIdCounter,
+            timestamp: getCurrentTimestamp(),
+            level: line.level,
+            message: line.text
         )
     }
 

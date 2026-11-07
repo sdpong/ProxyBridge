@@ -7,7 +7,6 @@ EXT="$HERE/../../ProxyBridge/extension"
 APP="$HERE/../../ProxyBridge/ProxyBridge"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-
 run_test() {   # <test file> <extension sources...>
     local test="$1"; shift
     cp "$HERE/$test" "$TMP/main.swift"
@@ -29,3 +28,4 @@ run_test chain_tests.swift "$EXT/ChainAction.swift" "$APP/ProxyChain.swift"
 run_test ppx_tests.swift "$APP/PPXImporter.swift" "$APP/ProxyChain.swift"
 run_test socks4_tests.swift "$EXT/Socks4Request.swift"
 run_test handshake_tests.swift "$APP/ExtensionHandshake.swift" "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift"
+run_test extensionlog_tests.swift "$APP/ExtensionLogReader.swift"
