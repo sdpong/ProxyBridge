@@ -665,6 +665,84 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
   它数的是**所有**窗口（包括菜单栏那个），macOS 26 上点开菜单再点外面
   看起来就像「最后一个窗口关了」，app 会自己退出（#233）。
 
+### 多语言：中文 / 英文（自己写的字典，不用 .lproj）
+
+- **两种语言**：中文（简体）和英文。**第一次启动跟随系统语言**，
+  之后记住用户的选择（UserDefaults 里的 `appLanguage` 键）。
+- **在 Settings 菜单里切换**，切换后**所有打开的窗口立刻重绘**，不用关窗重开。
+- **翻译表在 `MacOS/ProxyBridge/ProxyBridge/L10n.swift`**，不是 `.lproj` / `.xcstrings`：
+  - 字典表**可以编进 ad-hoc 签名的二进制**，也可以在不改资源流程的前提下增删；
+  - **key 就是英文原文本身**，没翻译的句子直接显示英文，不会露出一个 key；
+  - `L10n.f(_:_:)` 处理带 `%@` 的插值句，`L10n.t(_:)` 处理整句。
+- **视图持有 `@ObservedObject private var loc = LocalizationManager.shared`**，
+  `LocalizationManager` 是 `ObservableObject`，`@Published language` 一变，视图就重画。
+- **菜单里用 `Menu` + `Button`，不用 `Picker`**：系统菜单里的 `Picker` 子菜单
+  在自动化点击下很难点开，`Menu` + `Button`（带 checkmark）更可靠，也更好点。
+- **逻辑测试 `l10n_tests.swift` 会扫 app 源码**：把每个 `L10n.t(` / `L10n.f(` 用到的 key
+  收集起来，核对翻译表里都有。漏一条不会让 app 崩（会退回英文），
+  但会让翻译悄悄破个洞，测试就是堵这个洞的地方。
+
+### 代理链的健康检查（断则跳过，好则接回）
+
+- **扩展每 10 分钟探一次链上每一跳**（`ChainHealth.probeInterval = 600`），
+  定时器每 60 秒醒一次，只探到期的跳；**没探过的跳立刻探一次**，
+  所以刚建好的链不用等十分钟才有第一个答案。
+- **探的是跳本身**：TCP 连上就算活着；**SOCKS5 还要再问一声握手**，
+  因为「端口开着但后面没东西」不是一个能用的代理。
+- **不通的跳被跳过**，日志写 `Chain health: <跳> does not answer, it is skipped until it does`；
+  **恢复了就接回链里**，日志写 `Chain health: <跳> answers, it is back in its chain`。
+- **全链都不通时仍然整条尝试**，不静默直连——用户看到的是代理失败，不是流量跑掉了。
+- **只由周期探测决定跳不跳**，不做「每条连接失败就临时跳一跳」：
+  中间跳的 CONNECT 失败和「最后一跳连不上目标」在扩展看来是一样的，
+  贸然跳过会把流量送到用户没要求的地方。
+- **健康状态只在扩展的内存里**，跨进程只能靠统一日志——
+  ad-hoc 签名下 provider 消息通道不可用（见上面「扩展 → app 的回读通道」）。
+  app 侧靠解析 `Chain health: ` 开头的行来显示红标。
+- **app 侧另有「测试链」按钮**（`ProxyChainTesterView`）：逐跳测一次，给出 ✓/✗ 和延迟。
+  这一条走 app 自己的 socket（`ProxySocket.swift`），和扩展的周期探测互不干扰。
+
+### 把包名送给代理服务器（可行，已实现）
+
+- **这是 Proxifier 的能力**（按应用决定走哪个代理），本轮把它落到了协议层：
+  **代理服务器知道这条流量来自哪个程序**，服务端就能按程序分流。
+- **做法是按代理配置开关的**（`sendAppIdToProxy`，默认关）：
+  - **HTTP**：加两个头 `ProxyBridge-App-Id` 和 `ProxyBridge-Process`。标准代理会忽略不认识的。
+  - **SOCKS5**：用 RFC1929 的**用户名字段**。**必须只提供 method `0x02`**，
+    否则服务端会挑 `0x00`（不要求认证），包名永远到不了。
+  - **SOCKS4**：用 USERID 字段。
+- **已经配了凭据时凭据优先**：用户名字段只有一个，给了包名就没地方放凭据。
+- **服务端拒绝认证时，不带包名重走一次链**（只重试一次，第二次失败就结束这条连接），
+  这样「服务端不认这个用户名」不会变成「连不上」。
+- **纯逻辑在 `extension/ProxyAppIdentity.swift`**，`appid_tests.swift` 覆盖握手字节。
+
+### 链的存盘格式：跳板走的是 `proxies`，不是 `proxyIds`
+
+- **这是本轮挖出来的一个真 bug**：扩展日志一直写 `27 config(s), 0 chain(s)`——
+  **链根本没送到扩展**，规则里指向链的流量等于没走链，链健康检查也没有目标可探。
+- **原因是两边对同一个词的理解不一样**：
+  - **链的跳板在 json 里的键是 `proxies`**——Proxifier 的 `.ppx` 导入写的是它，
+    命令行读的是它，扩展读的也是它（`extension/AppProxyProvider.swift` 里
+    `chainDict["proxies"]`）。
+  - **app 的 `ProxyChain` 却写 `proxyIds`**。于是**从导入进来的链**（带 `proxies`）
+    被 app 读成「一条没有跳板的链」，而空链会被扩展直接丢掉 → `0 chain(s)`。
+- **现在两种键都读，写的是 `proxies`**（`ProxyChain.CodingKeys`），
+  所以 app、命令行、扩展说的是同一个词，旧配置也不会丢跳板。
+- **导出和导入都走同一个解码器**，出来的形状两边都认。
+- **逻辑测试 `chainstorage_tests.swift`**：两种形状各读一次、写一次再读回来。
+
+### 改偏好设置要用 CFPreferences，`defaults import` 靠不住
+
+- **本机有两份 `com.interceptsuite.ProxyBridge` 的偏好**：
+  `~/Library/Preferences/` 下的一份，和
+  `~/Library/Containers/com.interceptsuite.ProxyBridge/Data/Library/Preferences/` 下的一份。
+- **`defaults import` / `defaults export` 读写的是容器那一份**，
+  而 **app 读的是另一份**。用 `defaults import` 改完，**app 看到的还是旧值**——
+  扩展日志里拿到的仍是改之前的地址，很容易误判成「改了没生效」。
+- **可靠的办法**：用 `CFPreferencesSetAppValue` + `CFPreferencesAppSynchronize`
+  （`CFPreferencesCopyAppValue` 读回来验证），它写的就是 app 读的那一份。
+- **改完要用 `defaults export` 核对两份是否一致**——两份不一致时，
+  哪一份被 app 读到取决于进程上下文，不能靠猜。
+
 ## 已知限制
 
 - **本机（macOS）没有 MSVC / mingw 交叉编译器**，Windows 侧改动只能逐行人工复核 +
