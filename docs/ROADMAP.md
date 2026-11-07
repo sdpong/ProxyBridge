@@ -226,6 +226,25 @@ Proxifier 把配置存成一个 XML 文件 `.ppx`。从 Proxifier 换过来的�
    逐代理的位掩码**不猜**——公开资料查不到位定义，实测值只有 0/4，宁可原样忽略。
 5. **CLI 同样能用**：macOS 的 `--profile x.ppx` 与标准输入都能读；
    Windows GUI 菜单「Profile → Import Proxifier Profile (.ppx)...」。
+6. **导入结果的呈现**：macOS 导入后弹一个对话框，说明导入了多少代理 / 规则 / 链，
+   映射不上的部分列在**可滚动的框里**（`NSAlert` 的 informativeText 会把长文本塞进
+   一个看着像禁用状态的灰框，而且放不下）。Windows 侧走消息框 + 文本。
+
+---
+
+## 安装与授权（macOS 打包）
+
+「装了能用」是路线图之外的一道关：macOS 的系统扩展装不上，app 界面照常打开，
+但**什么都不会被代理**，用户看不出发生了什么。
+
+| 环节 | 本 fork 的做法 |
+|---|---|
+| 产物签名 | 没有 Developer ID 证书就 **ad-hoc 签名**（`codesign --sign -`）并带上 entitlement；已经是 Developer ID 签名的构建不动 |
+| entitlement | app 带 `com.apple.developer.system-extension.install`，扩展带 `com.apple.developer.networking.networkextension` |
+| 脚本 | `MacOS/ProxyBridge/scripts/adhoc-sign.sh`，`build.sh` 与 macOS CI 打包前都调它 |
+| 用户授权 | macOS 规定所有网络扩展都要用户手动开一次：**系统设置 → 通用 → 登录项与扩展 → 网络扩展**。app 会提示位置，并能一键打开该面板 |
+
+> 细节与踩过的坑见 `FORK-NOTES.md` 的「macOS 系统扩展」一节。
 
 ---
 

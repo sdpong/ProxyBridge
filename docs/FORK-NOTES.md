@@ -68,7 +68,7 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 | 工作流 | 状态 | 说明 |
 |---|---|---|
 | Build Windows | ✅ 绿 | 跑全部测试（含 GUI 测试）、编译并用 NSIS 生成安装包，产物是 workflow artifact |
-| Build macOS | ✅ 绿 | 本 fork 没有签名证书时构建**未签名**的通用二进制 App 与 pkg，产物是 workflow artifact |
+| Build macOS | ✅ 绿 | 本 fork 没有签名证书时构建通用二进制 App 与 pkg，产物是 workflow artifact |
 | Build Linux | ❌ 红 | runner 镜像缺 `bpftool`（eBPF 工具链），与本 fork 的改动无关 |
 | SonarQube / CodeQL | ❌ 红 | 需要上游的 Sonar 服务端令牌 / 授权，fork 里没有 |
 
@@ -84,6 +84,10 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
 
 **注意：未签名构建不能留下 `DEVELOPMENT_TEAM` 和 `PROVISIONING_PROFILE_SPECIFIER`**，
 否则 xcode 会去找那个描述文件并直接失败，即使签名已经关掉。
+
+**注意：没有证书也要 ad-hoc 签一次**。macOS 不许从没有 entitlement 的 app 里装系统扩展，
+所以 CI 在打包前跑 `scripts/adhoc-sign.sh`（详见「macOS 系统扩展」一节）。
+装了之后仍然需要用户在系统设置里开一次开关，这是 macOS 的规矩，构建替不了。
 
 ### 发一个 release
 
@@ -141,6 +145,26 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
   要给 DNS provider 送东西，只能走 **App Group 共享容器**（本 fork 用 `dns_policy.json`）。
 - **透明代理与 DNS provider 可能是两个进程**：不要假设同进程内的单例会共享，
   共享容器才可靠。
+- **没签名的 app 装不上系统扩展**：macOS 要求 app 带着
+  `com.apple.developer.system-extension.install` entitlement 才肯装它的系统扩展，
+  没带就直接报 `Missing entitlement com.apple.developer.system-extension.install`，
+  app 能打开、能显示界面，但**什么都不会被代理**。
+  - 本 fork 的 CI 把 `CODE_SIGNING_ALLOWED = NO` 写进了 xcconfig，
+    所以**产物从来没有 entitlement**——这就是本机装完「没起作用」的原因。
+  - **ad-hoc 签名就够用**：`codesign --force --sign - --entitlements <file> --options runtime`
+    能带上 entitlement，sysextd 接受（`teamID: none` 照样装），
+    扩展会走到 `activated_waiting_for_user`。
+    实测脚本：`MacOS/ProxyBridge/scripts/adhoc-sign.sh`，
+    `build.sh` 与 macOS CI 打包前都会调它；已经是 Developer ID 签名的构建不动。
+  - **顺序：先签扩展，再签 app**。签 app 不会重签 bundle 里的代码，
+    两部分各要各的 entitlement。
+  - **entitlement 文件只有 Release 版本有**：`ProxyBridgeRelease.entitlements` 与
+    `extensionRelease.entitlements` 是 Release 配置指向的那两个；
+    Debug 变体的 `ProxyBridge.entitlements` / `extension.entitlements` **不存在**。
+  - **批准这一步谁来都替不了**：macOS 要求所有网络扩展都让用户在
+    「系统设置 → 通用 → 登录项与扩展 → 网络扩展」里开一次开关。
+    深链 `x-apple.systempreferences:com.apple.LoginItems-Settings.extension` 实测能打开该面板，
+    app 里已经有这个按钮。
 
 ### 代理链
 
