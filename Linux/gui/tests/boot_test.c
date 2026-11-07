@@ -48,17 +48,20 @@ int main(void)
     g_free(why); why = NULL;
     CHECK(!boot_path_trusted("relative/ProxyBridge", &why) && why); g_free(why); why = NULL;
     CHECK(!boot_path_trusted("/nonexistent/ProxyBridge", &why) && why); g_free(why); why = NULL;
-    // "/" is a root-owned directory on every Linux, so it has to be trusted.
-    { bool trusted = boot_path_trusted("/", &why); CHECK(trusted && (why == NULL)); g_free(why); why = NULL; }
-    if (access("/usr/bin/true", X_OK) == 0) {
-        // /usr/bin/true is not a safe choice for the trusted case: on some images it is a symlink, and
-        // refusing a symlink is exactly what this function is for. Take the answer the machine gives
-        // and only require that a refusal carries a reason, and that the reason is not left behind.
-        bool trusted = boot_path_trusted("/usr/bin/true", &why);
-        if (trusted) CHECK(why == NULL);
-        else CHECK(why != NULL);
+    // A root-owned regular file has to be trusted, or the GUI could never start at boot. Which file that
+    // is depends on the image: on some of them the path is not a plain root-owned file, and the function
+    // is right to refuse it. Try a few and say what the machine answered.
+    static const char *candidates[] = { "/usr/bin/true", "/bin/true", "/etc/passwd", "/usr/bin/cat" };
+    bool trusted_found = false;
+    for (size_t i = 0; i < sizeof candidates / sizeof *candidates; i++) {
+        if (access(candidates[i], F_OK) != 0) continue;
+        bool trusted = boot_path_trusted(candidates[i], &why);
+        if (trusted) { CHECK(why == NULL); trusted_found = true; break; }
+        CHECK(why != NULL);                                                        // a refusal always says why
+        printf("  note: %s is not trusted here: %s\n", candidates[i], why ? why : "?");
         g_free(why); why = NULL;
     }
+    CHECK(trusted_found);
     char *lnk = g_build_filename(dir, "lnk", NULL);
     CHECK(symlink("/usr/bin/true", lnk) == 0 && !boot_path_trusted(lnk, &why)); g_free(why); why = NULL; g_free(lnk);
 
