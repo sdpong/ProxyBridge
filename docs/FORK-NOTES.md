@@ -276,6 +276,18 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
   - 直接读 `/var/log/system.log`、`/Library/Preferences/com.apple.networkextension.plist` → 权限拒绝
 
   **去掉 App Sandbox 之后三条全通**：同一个进程读同一份日志，读到 1 万 9 千条扩展写的记录。
+- **但 `OSLogStore` 是快照，不是活的水龙头**——这一点踩过坑：
+  - `OSLogStore(scope: .system)` **是创建那一刻的快照**。
+    一直留着它，它就一直显示「创建那一刻的日志」，之后发生的连接一条都不出现。
+  - 实测：同一个 store，隔几秒再读，新 store 读到最新条目，
+    旧 store 仍停在快照末尾。
+  - **游标救不了**：日期落在最后一条之后时，`position(date:)` 指向的是**日志末尾**，
+    后面的新条目全在游标后面——越走越读不到东西。
+  - **每轮重建 store 也救不了**：建一个要 **670 ms**，读一遍要 **490 ms**，
+    在主线程上做就是**每秒堵 2 秒**——窗口点不动，拖不动（拖动也是主线程事件）。
+  - **所以改成跟随**：macOS 自带的 `/usr/bin/log stream` 常驻跟随，
+    条目来了就送到，**CPU 约 0.0%–0.1%**，主线程完全空闲。
+    实测命令行连续刷 59 秒（16:09:19 → 16:10:18）。
 - **统一日志里有什么**：扩展把**每一条连接判定**都写在那儿，格式固定——
   ```
   Connection TCP MiniMax Code Helper -> agent.minimax.cn:443 via Direct (rule 26)
@@ -283,6 +295,9 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
   Flow #2300 from com.openai.codex.helper
   ```
   所以**连接列表与 Activity Log 都能从日志读回来**。
+- **窗口要能拖**：`.windowStyle(.hiddenTitleBar)` 之后**窗口没有自己的标题栏**，
+  自己画的那条「ProxyBridge」**只是一张标题栏的画**——没有可以抓住的地方。
+  名字要放进**窗口自己的标题栏**（`.toolbar` 的 principal item），窗口才拖得动。
 - **带密码的代理不需要 provider 通道**——这一条以前写错了。
   用户名和密码跟着隧道启动参数一起下去，那条路系统不查签名。
   实测（本地 RFC1929 认证的 SOCKS5 服务端）：正确密码 `AUTH OK` 并连上，
