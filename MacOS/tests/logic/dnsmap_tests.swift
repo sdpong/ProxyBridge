@@ -31,6 +31,19 @@ s.record(domain: "a.example.com", ips: ["1.1.1.1"], now: 500)
 t("a fresh answer refreshes the age", s.latestDomain(forIP: "1.1.1.1", maxAge: 300, now: 600) == "a.example.com")
 t("unknown address gives nil so the caller sends the ip", s.latestDomain(forIP: "8.8.4.4", maxAge: 300, now: 600) == nil)
 
+// the same address can be written in more than one way. the dns answer spells
+// an ipv6 address out in full, the flow spells it the short way, and both have
+// to become the same key or the map is never found again
+t("an ipv6 address is written the short way", DNSMapStore.canonicalAddress("fd00:696e:0:0:0:ffff:0:38") == "fd00:696e::ffff:0:38")
+t("an ipv6 address stays the same when it is already short", DNSMapStore.canonicalAddress("fd00:696e::ffff:0:38") == "fd00:696e::ffff:0:38")
+t("an ipv4 address is left alone", DNSMapStore.canonicalAddress("0.0.0.56") == "0.0.0.56")
+t("an empty address is left alone", DNSMapStore.canonicalAddress("  ") == "")
+s.record(domain: "api.dia.es", ips: ["fd00:696e:0:0:0:ffff:0:38"], now: 2000)
+t("the map is found with the short form", s.latestDomain(forIP: "fd00:696e::ffff:0:38", maxAge: 300, now: 2000) == "api.dia.es")
+t("the map is found with the long form", s.latestDomain(forIP: "fd00:696e:0:0:0:ffff:0:38", maxAge: 300, now: 2000) == "api.dia.es")
+s.record(domain: "api.dia.es", ips: ["0.0.0.56"], now: 2000)
+t("a fake ipv4 address is found", s.latestDomain(forIP: "0.0.0.56", maxAge: 300, now: 2000) == "api.dia.es")
+
 // names come out of DNS packets, only plain host names may reach a proxy
 let good = ["example.com", "a-b.c_d.example.org", "xn--bcher-kva.example", "localhost", "a"]
 let bad = ["", "exa mple.com", "example.com\r\nHost: evil", "exam\u{0}ple.com", "ex\u{e9}ample.com", ".example.com", "example.com.",

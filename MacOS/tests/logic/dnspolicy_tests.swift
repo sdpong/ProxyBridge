@@ -33,6 +33,12 @@ default: t("remote mode asks the configured resolver", false)
 }
 t("remote mode hands the name to the proxy", policy.addressing(for: "example.com") == .hostname)
 
+// a resolver that cannot be read is skipped, the next one is used
+policy.upstreamResolvers = ["1.1.1.1:abc", "8.8.8.8"]
+t("a broken resolver is skipped", policy.preferredResolver == "8.8.8.8")
+policy.upstreamResolvers = ["1.1.1.1:abc"]
+t("a list of broken resolvers has none", policy.preferredResolver == nil)
+
 // what the transparent proxy gets differs per mode
 policy.mode = .local
 t("local mode hands the address to the proxy", policy.addressing(for: "example.com") == .address)
@@ -77,12 +83,14 @@ policy = DNSPolicy()
 policy.excludedDomains = ["", "   "]
 t("an empty pattern excludes nothing", !policy.isExcluded("example.com"))
 
-// the leak protection switch sends the query through the proxy
+// the leak protection switch makes the proxy server resolve the name. it does
+// not change where the query goes: the query is still answered by the resolver
+// of this mac
 policy = DNSPolicy()
 policy.leakProtection = true
 switch policy.decision(for: "example.com") {
-case .forwardThroughProxy: t("leak protection tunnels the query", true)
-default: t("leak protection tunnels the query", false)
+case .forward: t("leak protection does not change where the query goes", true)
+default: t("leak protection does not change where the query goes", false)
 }
 policy.excludedDomains = ["example.com"]
 switch policy.decision(for: "example.com") {

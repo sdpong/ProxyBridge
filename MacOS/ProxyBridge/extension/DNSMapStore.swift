@@ -39,7 +39,7 @@ final class DNSMapStore {
         guard !name.isEmpty, !ips.isEmpty else { return }
 
         lock.lock()
-        for ip in ips {
+        for ip in ips.map({ DNSMapStore.canonicalAddress($0) }) {
             if map[ip] == nil {
                 map[ip] = []
                 order.append(ip)
@@ -67,7 +67,7 @@ final class DNSMapStore {
     func domains(forIP ip: String) -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        guard let domains = map[ip] else { return [] }
+        guard let domains = map[DNSMapStore.canonicalAddress(ip)] else { return [] }
         return domains.reversed().map { $0.name }
     }
 
@@ -78,9 +78,23 @@ final class DNSMapStore {
     func latestDomain(forIP ip: String, maxAge: TimeInterval, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String? {
         lock.lock()
         defer { lock.unlock() }
-        guard let newest = map[ip]?.last, now - newest.seen <= maxAge,
+        guard let newest = map[DNSMapStore.canonicalAddress(ip)]?.last, now - newest.seen <= maxAge,
               DNSMapStore.isSafeHostname(newest.name) else { return nil }
         return newest.name
+    }
+
+    // The same address can be written in more than one way.
+    //
+    // A DNS answer spells an IPv6 address out in full ("fd00:696e:0:0:0:ffff:0:38")
+    // while the flow that goes to it spells it the short way ("fd00:696e::ffff:0:38").
+    // They are the same address, but as text they are two different keys, and the
+    // map is then never found again: the proxy server is given the address where
+    // the name was meant, and a site that only answers to a name cannot be reached.
+    static func canonicalAddress(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return trimmed }
+        if let six = IPv6Address(trimmed) { return "\(six)" }
+        return trimmed
     }
 
     // names come straight out of DNS packets, so they can hold any byte. only

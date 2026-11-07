@@ -33,26 +33,58 @@ class DNSProxyProvider: NEDNSProxyProvider {
 
         func closeAll() {
             lock.lock()
-            closed = true
             let all = sessions.values
             sessions.removeAll()
+            closed = true
             lock.unlock()
             all.forEach { $0.cancel() }
         }
     }
 
+    // what the provider has done so far. the app reads this back from the log,
+    // which is the only channel a build that is not signed by a developer has.
+    private final class Counters {
+        private let lock = NSLock()
+        private var queries = 0
+        private var answers = 0
+        private var namesSeen = Set<String>()
+        private var lastName = ""
+        private var lastAddresses = ""
+
+        func countQuery() {
+            lock.lock(); queries += 1; lock.unlock()
+        }
+
+        func countAnswer(name: String, addresses: [String]) {
+            lock.lock()
+            answers += 1
+            namesSeen.insert(name)
+            lastName = name
+            lastAddresses = addresses.joined(separator: ", ")
+            lock.unlock()
+        }
+
+        func snapshot() -> (queries: Int, answers: Int, names: Int, lastName: String, lastAddresses: String) {
+            lock.lock(); defer { lock.unlock() }
+            return (queries, answers, namesSeen.count, lastName, lastAddresses)
+        }
+    }
+
     private var flowStates: [ObjectIdentifier: FlowSessions] = [:]
     private let statesLock = NSLock()
+    private let counters = Counters()
 
     override func startProxy(options: [String: Any]?, completionHandler: @escaping (Error?) -> Void) {
         // start with a clean map so old browsing domains don't linger on disk
         DNSMapStore.shared.clear()
         ProviderDiagnostics.note("DNS proxy starting")
+        writeStatus(running: true)
         completionHandler(nil)
     }
 
     override func stopProxy(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         ProviderDiagnostics.note("DNS proxy stopping: \(ProviderDiagnostics.text(for: reason))")
+        writeStatus(running: false)
         statesLock.lock()
         let all = Array(flowStates.values)
         flowStates.removeAll()
@@ -68,12 +100,22 @@ class DNSProxyProvider: NEDNSProxyProvider {
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
         // only proxy udp dns, let tcp dns (large responses) pass through untouched
         guard let udp = flow as? NEAppProxyUDPFlow else { return false }
-        // with auto detect switched off and no resolver configured there is
-        // nowhere to send the query, so leave dns alone and let macOS resolve it
-        let policy = DNSPolicyStore.shared.policy
-        if !policy.autoDetectUpstream && policy.upstreamResolvers.isEmpty {
-            return false
-        }
+
+        // The DNS proxy takes every query.
+        //
+        // What it builds while it does is the ip -> name map, and that map is the
+        // only place a host name is known. Without it two things break: a rule
+        // that names a host never matches, and the proxy server is given the
+        // address instead of the name. An address that only means something on
+        // this machine - a local address, or a fake address from a transparent
+        // proxy on the network - cannot be used by a server on the other side,
+        // so the connection simply fails.
+        //
+        // The policy says where a query goes, not whether the proxy takes it.
+        // Letting the query through used to be the behaviour when no upstream
+        // resolver was configured, and it turned every host name rule off
+        // without saying anything.
+
         // the map is what host name rules are matched against, so it has to be
         // filled. the first answers are written to the log, otherwise an empty
         // map looks the same as a provider that never started at all
@@ -99,6 +141,25 @@ class DNSProxyProvider: NEDNSProxyProvider {
     // how many dns answers were written to the log. the counter is per process,
     // the extension is restarted with every tunnel
     private static var noteAnswers = 0
+
+    // the status line is written at most this often, so a busy resolver does not
+    // fill the log with it
+    private var lastStatusAt: TimeInterval = 0
+    private let statusInterval: TimeInterval = 5
+
+    // writes what the provider is doing, so the app can show it
+    private func writeStatus(running: Bool, force: Bool = false) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if !force, now - lastStatusAt < statusInterval { return }
+        lastStatusAt = now
+        let snapshot = counters.snapshot()
+        ProviderDiagnostics.note(DNSStatusWriter.make(running: running,
+                                                   queries: snapshot.queries,
+                                                   answers: snapshot.answers,
+                                                   names: snapshot.names,
+                                                   lastName: snapshot.lastName,
+                                                   lastAddresses: snapshot.lastAddresses))
+    }
 
     private func finish(_ flow: NEAppProxyUDPFlow, _ state: FlowSessions) {
         statesLock.lock()
@@ -127,32 +188,43 @@ class DNSProxyProvider: NEDNSProxyProvider {
         }
     }
 
-    // the resolver the query is actually sent to. it may be a configured
-    // upstream instead of the one the app asked, but the answer still has to
-    // look like it came from the server the app asked, or the app drops it.
-    private func upstreamEndpoint() -> NWHostEndpoint? {
-        let policy = DNSPolicyStore.shared.policy
-        for raw in policy.upstreamResolvers {
-            if let (host, port) = DNSPolicy.normalizeResolver(raw) {
-                return NWHostEndpoint(hostname: host, port: String(port))
-            }
-        }
-        return nil
-    }
-
     // forward one query to its resolver over the flow's shared session
     private func forward(query: Data, to server: NWHostEndpoint, on flow: NEAppProxyUDPFlow, state: FlowSessions) {
-        let target = upstreamEndpoint() ?? server
+        counters.countQuery()
+
+        // the name the query asks for. it decides where the query goes and
+        // whether the answer may become a proxy destination
+        let name = DNSParser.questionName(query)
+        let policy = DNSPolicyStore.shared.policy
+        let excluded: Bool
+        var target = server
+        if let name {
+            switch policy.decision(for: name) {
+            case .excluded:
+                // an excluded name is answered by the resolver the system handed
+                // us, so it never reaches a resolver the user configured
+                excluded = true
+            case .forward(let resolver):
+                excluded = false
+                if let resolver, let (host, port) = DNSPolicy.normalizeResolver(resolver) {
+                    target = NWHostEndpoint(hostname: host, port: String(port))
+                }
+            }
+        } else {
+            excluded = false
+        }
+
         let session = state.session(for: target, create: { createUDPSession(to: target, from: nil) }, onNew: { fresh in
             // replies are parsed for the ip -> domain map, then handed back to the app
-            fresh.setReadHandler({ responses, _ in
+            fresh.setReadHandler({ [weak self] responses, _ in
                 guard let responses = responses else { return }
                 for response in responses {
                     if let parsed = DNSParser.parse(response) {
                         // an excluded name must not become a proxy destination, so
                         // it is not recorded at all
-                        if !DNSPolicyStore.shared.policy.isExcluded(parsed.domain) {
+                        if !excluded && !DNSPolicyStore.shared.policy.isExcluded(parsed.domain) {
                             DNSMapStore.shared.record(domain: parsed.domain, ips: parsed.ips)
+                            self?.counters.countAnswer(name: parsed.domain, addresses: parsed.ips)
                             if DNSProxyProvider.noteAnswers <= 20 {
                                 ProviderDiagnostics.note("DNS answer: \(parsed.domain) -> \(parsed.ips.joined(separator: ", "))")
                             }
@@ -160,6 +232,7 @@ class DNSProxyProvider: NEDNSProxyProvider {
                     }
                 }
                 flow.writeDatagrams(responses, sentBy: [NWEndpoint](repeating: server, count: responses.count)) { _ in }
+                self?.writeStatus(running: true)
             }, maxDatagrams: 16)
         })
         session?.writeDatagram(query) { _ in }

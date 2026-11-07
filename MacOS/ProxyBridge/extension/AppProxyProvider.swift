@@ -1834,6 +1834,17 @@ class AppProxyProvider: NETransparentProxyProvider {
 
             for datagram in datagrams {
                 if let (payload, destHost, destPort) = self.decapsulateSOCKS5UDPWithEndpoint(datagram: datagram, association: association) {
+                    // A dns answer that came back through the proxy still says which
+                    // name belongs to which address.
+                    //
+                    // An app that resolves by itself - a browser with its own resolver -
+                    // asks the nameserver that the rule sends through the proxy, and
+                    // the proxy answers with the address it wants the app to use. That
+                    // address is often one that only means something to the proxy, and
+                    // without the name the connection that follows can only be given
+                    // that address. With the name the proxy is asked for the name, and
+                    // it resolves it the way it wants to.
+                    self.recordDNSAnswer(payload)
                     payloads.append(payload)
                     endpoints.append(NWHostEndpoint(hostname: destHost, port: String(destPort)))
                 }
@@ -1849,6 +1860,18 @@ class AppProxyProvider: NETransparentProxyProvider {
         }, maxDatagrams: 32)
     }
     
+    // remembers the names a dns answer carried
+    //
+    // The dns proxy provider does the same for the queries the system resolver
+    // makes. This is for the queries an app makes itself, which the transparent
+    // proxy carries to the proxy server.
+    private func recordDNSAnswer(_ payload: Data) {
+        guard let parsed = DNSParser.parse(payload) else { return }
+        // an excluded name must not become a proxy destination
+        guard !DNSPolicyStore.shared.policy.isExcluded(parsed.domain) else { return }
+        DNSMapStore.shared.record(domain: parsed.domain, ips: parsed.ips)
+    }
+
     // the socks5 udp request header for one destination, the payload follows it
     private func socks5UDPHeader(destHost: String, destPort: UInt16) -> Data? {
         var header = Data()

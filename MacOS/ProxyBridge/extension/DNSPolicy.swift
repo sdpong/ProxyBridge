@@ -32,13 +32,11 @@ enum DNSAddressing {
 
 // what the DNS proxy does with one query
 enum DNSDecision {
-    // the name is excluded: answer it with the system resolver and never let the
-    // name reach a proxy server
+    // the name is excluded: the resolver the system handed us answers it, and
+    // the name never becomes a proxy destination
     case excluded
     // answer it with this resolver, nil means the one the system handed us
     case forward(resolver: String?)
-    // answer it through the proxy server's tunnel, the local resolver never sees it
-    case forwardThroughProxy
 }
 
 struct DNSPolicy {
@@ -50,13 +48,16 @@ struct DNSPolicy {
     var upstreamResolvers: [String] = []
     // when there is no configured resolver, use the one the system handed us
     var autoDetectUpstream: Bool = true
-    // send the query through the proxy server's tunnel, so the local resolver
-    // never sees which names are looked up
+    // the proxy server is always given the name, whatever its own setting says.
+    // the local resolver still sees the query, so this is not a way to hide the
+    // names that are looked up from the network - it is a way to make sure the
+    // proxy server is the one that resolves them
     var leakProtection: Bool = false
 
-    // the resolver to ask, nil means the one the system handed us
+    // the resolver to ask, nil means the one the system handed us. a resolver
+    // that cannot be read is skipped, the next one in the list is used
     var preferredResolver: String? {
-        upstreamResolvers.first
+        upstreamResolvers.first { DNSPolicy.normalizeResolver($0) != nil }
     }
 
     // does this name match the exclusion list?
@@ -68,18 +69,12 @@ struct DNSPolicy {
 
     // what to do with a query for this name
     func decision(for domain: String) -> DNSDecision {
-        // an excluded name is answered by the system resolver and is not recorded,
-        // so no proxy server ever learns it
+        // an excluded name is answered by the resolver the system handed us and
+        // is not recorded, so no proxy server ever learns it
         if isExcluded(domain) { return .excluded }
-        if leakProtection { return .forwardThroughProxy }
-        switch mode {
-        case .system:
-            // the system's resolver answers
-            return .forward(resolver: nil)
-        case .local, .remote:
-            // a configured resolver answers, the system resolver is the fallback
-            return .forward(resolver: preferredResolver)
-        }
+        // a configured resolver answers, the one the system handed us is the
+        // fallback when there is none
+        return .forward(resolver: preferredResolver)
     }
 
     // what the transparent proxy should hand to the proxy server for this name.
