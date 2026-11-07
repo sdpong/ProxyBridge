@@ -384,11 +384,12 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
 
     // Says what is between the app and the extension.
     //
-    // The rules and the proxy list travel to the extension over the provider channel,
-    // and the system checks that channel against the app's signature. When the app is
-    // not signed by a developer the system drops the message without a word: the
-    // tunnel is up, the extension runs, and it has no rules at all, so every
-    // connection goes direct and the connections list stays empty.
+    // The rules and the proxy list travel to the extension in two ways: over the
+    // provider channel, and with the configuration the tunnel is started with.
+    // The system checks the provider channel against the app's signature. When
+    // the app is not signed by a developer the system drops the message without
+    // a word: the tunnel is up, the extension runs and proxies the traffic, but
+    // the app cannot read the connection list back.
     //
     // This is the report that says so out loud, with the two things that can be
     // checked: the signature of the app, and whether the app group it declares can
@@ -416,16 +417,17 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
                 CLI.say("  extension channel: the extension answers")
                 CLI.say("")
                 CLI.say("The app and the extension can talk to each other: the rules and the")
-                CLI.say("proxy list will arrive.")
+                CLI.say("proxy list will arrive, and the window shows the connections.")
             } else {
                 CLI.say("  extension channel: the extension does not answer")
                 CLI.say("")
-                CLI.say("The tunnel is up, but the extension never receives the rules and the")
-                CLI.say("proxy list, so it proxies nothing and every connection goes direct.")
-                CLI.say("A build that is not signed by a developer cannot talk to its own")
-                CLI.say("system extension on macOS: the system checks the signature and drops")
-                CLI.say("the message without a word. Sign the app with a Developer ID")
-                CLI.say("certificate (and notarize it) to fix this.")
+                // the same explanation the window shows, from the same place
+                let paragraphs = ExtensionDiagnosis.extensionUnreachableExplanation(
+                    hasDeveloperSignature: ExtensionDiagnosis.hasDeveloperSignature())
+                for paragraph in paragraphs {
+                    for line in CLIText.wrap(paragraph) { CLI.say(line) }
+                    CLI.say("")
+                }
             }
             self.stop(code: ok ? 0 : 1)
         }

@@ -17,4 +17,24 @@ enum CLIText {
     static func lines(_ text: String) -> String {
         text.split(separator: "\n", omittingEmptySubsequences: false).map { safe(String($0)) }.joined(separator: "\n")
     }
+
+    // a paragraph for a terminal: broken into lines that fit, without breaking a word
+    // in half. the text is ours, so it is not made safe here
+    static func wrap(_ text: String, width: Int = 72) -> [String] {
+        var lines: [String] = []
+        var current = ""
+        for word in text.split(separator: " ") {
+            let piece = String(word)
+            if current.isEmpty {
+                current = piece
+            } else if current.count + 1 + piece.count <= width {
+                current += " " + piece
+            } else {
+                lines.append(current)
+                current = piece
+            }
+        }
+        if !current.isEmpty { lines.append(current) }
+        return lines
+    }
 }

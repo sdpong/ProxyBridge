@@ -43,16 +43,17 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
 
     // ---- can the app reach its own extension at all? ----
     //
-    // The rules and the proxy list travel to the extension over the provider channel,
-    // and through the container that the app and the extension share. The system
-    // checks both against the app's signature. A build that is not signed by a
-    // developer - an ad-hoc signature has no team id - is refused by the system, and
-    // then nothing reaches the extension: the tunnel is up, the extension runs, and it
-    // has no rules at all, so every connection goes direct and the list of connections
-    // stays empty.
+    // The rules and the proxy list travel to the extension in two ways: over the
+    // provider channel, and with the configuration the tunnel is started with.
     //
-    // These two probes say which of the doors is shut, so the reason can be said out
-    // loud instead of leaving the person with an empty window.
+    // The system checks the provider channel against the app's signature. A build
+    // that is not signed by a developer - an ad-hoc signature has no team id - is
+    // refused by the system, and then the app hears nothing back: the tunnel is
+    // up, the extension runs and proxies the traffic, but the window cannot show
+    // the connections.
+    //
+    // These two probes say which of the doors is shut, so the reason can be said
+    // out loud instead of leaving the person with an empty window.
 
     // the container the app and the extension share
     static let appGroupIdentifier = "group.com.interceptsuite.ProxyBridge"
@@ -77,5 +78,36 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     // the things that are tied to a team id are refused for it.
     static func hasDeveloperSignature() -> Bool {
         return Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") != nil
+    }
+
+    // The extension does not answer at all.
+    //
+    // This is not the same thing as "another build answered": here nothing came
+    // back. The system checks the channel between the app and its own system
+    // extension against the app's signature, and a build that is not signed by a
+    // developer gets no message through it.
+    //
+    // The important part is what still works: the rules and the proxy list went
+    // with the start of the tunnel, so the traffic is proxied. Only this window
+    // cannot read the connection list back.
+    //
+    // A build that IS signed by a developer is a different case: the tunnel is
+    // up, so something is on the other end of it, and it does not answer, which
+    // means it is not this build. That one is fixed by taking the old record out,
+    // so it gets the command with it.
+    //
+    // The paragraphs are the single source of this explanation: the window shows
+    // them as one text, the command line shows them as paragraphs.
+    static func extensionUnreachableExplanation(hasDeveloperSignature: Bool) -> [String] {
+        if hasDeveloperSignature {
+            return [
+                "The extension does not answer. The tunnel is up, so the extension on the other end is not this build. Take the old record out with the command below, then start the proxy again."
+            ]
+        }
+        return [
+            "The tunnel is up and the extension runs, but macOS does not let the app talk to its own system extension: the system checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it.",
+            "The proxy itself works. The rules and the proxy list go with the start of the tunnel, which the system does not check, so your traffic is proxied. What does not work is the app reading the connection list back.",
+            "Sign the app with a Developer ID certificate (and notarize it) to get the connection list back."
+        ]
     }
 }
