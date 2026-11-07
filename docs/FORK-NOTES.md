@@ -258,6 +258,46 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     「ProxyBridge (fork)」，把它打开就等于批准了扩展——
     比让用户自己去找「登录项与扩展」里的扩展条目靠谱得多。
 
+### macOS 系统扩展的登记、显示与清理（实测）
+
+这一节记的是「用户看得到、但说不清」的那几个现象，都是实测出来的。
+
+- **`systemextensionsctl uninstall` 的 team id 参数**：
+  用法是 `uninstall <teamID> <bundleID>`，手册写明 team id 也可以是**单个 `-`**
+  （`for matching empty Team ID`）——ad-hoc 签名的记录**没有** team id，就写这个 `-`。
+  实测三种写法的结果：
+  | 写法 | 结果 |
+  |---|---|
+  | `uninstall com.sdpong.proxybridge.extension`（缺 team id） | 只打印 usage，什么都没删 |
+  | `uninstall -- com.sdpong.proxybridge.extension` | `team ID '--' does not exist` |
+  | `uninstall - com.sdpong.proxybridge.extension` | `Success`，真的卸载了 |
+  之前的清理命令用 awk **把空的 team id 过滤掉了**，于是参数少一个，永远只打印 usage。
+- **扩展在系统设置里的显示名来自 build setting `INFOPLIST_KEY_CFBundleDisplayName`**，
+  **不是** `Info.plist` 里的 `CFBundleDisplayName` 键（改了后者没有任何效果）。
+  默认值是 `extension`，于是系统设置里几个条目全都叫 "extension"，用户分不出哪个是新的。
+  现在设成「ProxyBridge 扩展」。
+- **每装一次 app 就多一条扩展登记记录**：旧的记成
+  `terminated waiting to uninstall on reboot`，**重启一次**才会真正清掉。
+  本机实测攒到 11 条，只有 1 条是 `activated enabled`。
+- **同一个 app 可能留下两条透明代理配置**：早期 build 用另一个 app bundle id 写了一条，
+  一直没删。两条的 owner 标记完全一样（`owner = sdpong.ProxyBridge.fork`），
+  而 `NetworkConfigOwner.ourManagers` 只更新 `ours.first`——另一条永远留着，
+  于是「VPN 与过滤软件」里出现两个「ProxyBridge (fork)」。
+  **归属哪个 app 是读不出来的**（`NEVPNProtocol` 没有这个公开 API，KVC 也读不到），
+  所以修法是：**发现属于本 app 的配置超过一条，就全部删掉重建一条**。
+  反正每次也要重建（cdhash 变了）。
+- **`NEDNSProxyManager.saveToPreferences` 在扩展还没批准时会报 `permission denied`**：
+  这是个会过去的状态，所以现在重试几次再算失败。不重试的话，
+  扩展刚装上那一会儿启动的 app 会**顺带把旧条目清掉**（系统会清），域名规则全部落空。
+- **「扩展没回答」和「另一个旧扩展回答了」是两回事**：
+  握手重试三次没应答，**不能**报「另一个扩展回答了」——旧扩展会回一个不同的协议号，
+  那是被单独检查过的。什么都没回答 = 消息根本没过去（签名问题）。
+  说错会让用户去删跟问题无关的扩展。
+- **provider 通道被签名拦下时，隧道其实是通的**：规则和代理列表随 `startTunnel(options:)`
+  下发，系统把启动参数交给 provider 时**不查签名**。
+  所以症状是「流量在代理，但窗口里连接列表是空的」，不是「什么都不代理」。
+  这两件事在提示里必须分开说，否则用户会去查错的方向。
+
 ### 代理链
 
 - **中间的跳只能是 SOCKS5 / SOCKS4**：HTTP CONNECT 的应答可能把隧道数据留在缓冲区里，
