@@ -501,6 +501,44 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
 - **Windows 的 `FIXED_INFO.DnsServerList` 只有一个解析器**，而且是 `IP_ADDRESS_STRING`，
   地址在 `.String` 里，不是数组。
 
+### DNS 代理必须接管每一个查询（Dia 登录不上的真正原因）
+
+- **现象**：Dia 规则正确、代理正确、流量确实走了 SOCKS5，但 Dia 登录报
+  “Something went wrong. Please try again.”，同一个代理在 Proxifier 里正常。
+- **根因不是进程过滤**，是**扩展交给代理的是地址，不是名字**。
+  浏览器自己解析（不走系统解析器），它的 DNS 查询被规则送进了代理，
+  **代理回了一个只有它自己懂的地址**；扩展不知道这个地址对应哪个名字，
+  只能把地址本身交给代理 → 连不上。
+- **三个缺口**（`extension/DNSProxyProvider.swift`、`extension/DNSMapStore.swift`）：
+  1. **DNS 代理以前会放行查询**：`!autoDetectUpstream && upstreamResolvers.isEmpty` 时
+     直接 `return false`，名字缓存永远是空的。
+     **现在无条件接管**：策略决定的是「查询发给谁」，不是「要不要接管」。
+  2. **从代理回来的 DNS 应答被扔掉了**：现在也记进 `DNSMapStore`，
+     代理给的假地址因此能对上名字（`extension/AppProxyProvider.swift` 的 `recordDNSAnswer`）。
+  3. **IPv6 地址有两种写法**：应答里是 `fd00:696e:0:0:0:ffff:0:38`，
+     流里是 `fd00:696e::ffff:0:38` —— 同一地址两个键，缓存永远查不到。
+     现在统一走 `DNSMapStore.canonicalAddress`。
+- **Proxifier 的做法**：它自己解析，然后把**名字**交给代理。我们现在也是这个行为。
+- **DNS 代理的状态写进统一日志**（`DNSStatus running queries 12 answers 11 names 7 last x -> y`），
+  App 侧从日志读回来显示在 DNS 设置窗口里。
+  **不能用 provider 消息通道**：没签名的构建那条通道是关的（日志是唯一出路）。
+
+### DNS 设置窗口：Save / Cancel 以前等于没做
+
+- **它是一个独立 Window，不是 sheet**：`Cancel` 只把旧值读回输入框，**窗口不关**；
+  `Save` 写完也不关。看上去就是「按了没反应」。
+- **窗口是复用的**：SwiftUI 视图留在窗口里，第二次打开**不会再触发 `onAppear`**，
+  窗口显示的是**第一次打开时的旧值**——保存时等于把旧值又写回去。
+  现在用 `viewModel.dnsSettingsOpenCount`（打开时 +1）通知视图重新装载。
+- **`updateDNSPolicy` 以前只写全局键**，profile 快照不更新：
+  导出的 profile 里是旧策略，切换 profile 回来设置也白改。现在两个都写。
+- **窗口现在显示 DNS 代理的实时状态**（跑了多少查询、知道多少名字、上一次是什么名字），
+  另有「系统里的 DNS 代理条目是不是开着」。
+- **系统会自己把 DNS 代理条目关掉**：条目记着扩展的代码签名，
+  ad-hoc 构建每编译一次签名就变一次，系统于是拒绝这个条目
+  （日志里是 `the configuration was disabled`）。
+  现在 app 每 30 秒看一眼，被关掉就重新写回去。
+
 ### Proxifier 配置导入（.ppx）
 
 - **两端共用一张映射表**：`docs/PPX-IMPORT.md` 是契约。
