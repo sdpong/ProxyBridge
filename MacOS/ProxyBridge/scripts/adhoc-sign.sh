@@ -1,5 +1,5 @@
 #!/bin/bash
-# ad-hoc-sign.sh - sign an unsigned ProxyBridge app so its system extension can be installed.
+# adhoc-sign.sh - sign an unsigned ProxyBridge app so its system extension can be installed.
 #
 # Why this exists:
 #
@@ -19,6 +19,21 @@
 #   release) is signed and notarized properly and needs none of this - so this script
 #   leaves an already properly signed app alone.
 #
+# The app is signed WITHOUT the App Sandbox:
+#
+#   The sandbox is what stands between the app and the unified log, and the unified
+#   log is where the system extension writes every decision it made. logd refuses to
+#   serve the system scope to a sandboxed process and the /usr/bin/log tool refuses
+#   to run in one at all ("Cannot run while sandboxed"). A build that is not going to
+#   the App Store does not need the sandbox, and without it the window can read the
+#   extension's decisions back.
+#
+#   The extension keeps its sandbox: it is the part that touches the traffic, and
+#   nothing about reading the log back needs it changed.
+#
+#   Set PROXYBRIDGE_APP_SANDBOX=1 to sign the app with the sandbox instead, which is
+#   what a build that has to run inside the App Store would use.
+#
 # Usage: adhoc-sign.sh <path to ProxyBridge.app>
 
 set -e
@@ -27,9 +42,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 APP="${1:-$APP_ROOT/output/ProxyBridge.app}"
-APP_ENTITLEMENTS="$APP_ROOT/ProxyBridge/ProxyBridgeRelease.entitlements"
+APP_ENTITLEMENTS="$APP_ROOT/ProxyBridge/ProxyBridgeReleaseNoSandbox.entitlements"
 EXT_ENTITLEMENTS="$APP_ROOT/extension/extensionRelease.entitlements"
 EXT_BINARY="Contents/Library/SystemExtensions/com.sdpong.proxybridge.extension.systemextension/Contents/MacOS/com.sdpong.proxybridge.extension"
+
+if [ "${PROXYBRIDGE_APP_SANDBOX:-0}" = "1" ]; then
+    APP_ENTITLEMENTS="$APP_ROOT/ProxyBridge/ProxyBridgeRelease.entitlements"
+fi
 
 if [ ! -d "$APP" ]; then
     echo "ERROR: no app bundle at $APP"
