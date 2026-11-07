@@ -257,6 +257,9 @@ struct ProxyTrafficView: View {
 // The numbers in the tables, the way the system writes them.
 enum TrafficFormat {
     static func bytes(_ count: Int64) -> String {
+        // The formatter writes "Zero KB" for nothing, which reads like a fault.
+        // A connection that has not moved a byte has moved no bytes.
+        if count <= 0 { return "0 B" }
         let f = ByteCountFormatter()
         f.countStyle = .file
         return f.string(fromByteCount: count)
