@@ -222,12 +222,15 @@ struct ProxyRulesView: View {
                     .width(min: 90, ideal: 120)
 
                     TableColumn("Bundle ID") { rule in
-                        Text(rule.processNames.isEmpty ? "Any" : rule.processNames)
+                        RuleEntryCell(stored: rule.processNames,
+                                      separators: RulePatternValidator.programSeparators)
                     }
                     .width(min: 100, ideal: 140)
 
                     TableColumn("Target Hosts") { rule in
-                        Text(rule.targetHosts.isEmpty ? "Any" : rule.targetHosts)
+                        RuleEntryCell(stored: rule.targetHosts,
+                                      separators: RulePatternValidator.hostSeparators,
+                                      keepRangesTogether: true)
                     }
                     .width(min: 100, ideal: 150)
 
@@ -688,6 +691,42 @@ struct RuleEditorView: View {
         )
         onCommit(rule)
         dismiss()
+    }
+}
+
+// The entries of a rule are stored in one line, separated by "; ". The table
+// shows them one per line, the way Proxifier lists them, so a rule with four
+// hosts does not read as one long string the eye has to scan.
+struct RuleEntryCell: View {
+    let stored: String
+    let separators: CharacterSet
+    let keepRangesTogether: Bool
+
+    init(stored: String, separators: CharacterSet, keepRangesTogether: Bool = false) {
+        self.stored = stored
+        self.separators = separators
+        self.keepRangesTogether = keepRangesTogether
+    }
+
+    var body: some View {
+        if stored.isEmpty {
+            Text("Any")
+        } else {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(entries.enumerated()), id: \.offset) { pair in
+                    Text(pair.element)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var entries: [String] {
+        RulePatternValidator.displayForm(stored,
+                                          separators: separators,
+                                          keepRangesTogether: keepRangesTogether)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
     }
 }
 

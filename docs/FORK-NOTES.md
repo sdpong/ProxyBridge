@@ -544,6 +544,19 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
   在出错的那一段上打红底，只能用 `NSTextView` 包一层（`PatternTextEditor.swift`）。
   注意别把用户正在选中的文字冲掉（加属性前后要把 `selectedRanges` 存下来再放回去）。
 
+### 规则列表：条目一行一条
+
+- **原来 `Bundle ID` 和 `Target Hosts` 两列直接显示存储串**，也就是
+  `QQ; com.tencent.qq; DingTalk; com.alibaba.DingTalkMac` 这样挤成一长条，
+  一眼看不出这条规则到底管哪几个程序、哪几个主机。
+- **现在两列按条目分行显示**，跟编辑器里看到的、跟 Proxifier 的规则表一个样子。
+  用的还是 `RulePatternValidator.displayForm`——**只是显示形式变了，
+  存储格式一点没动**，扩展那边依旧只按 `;` 拆。
+- **注意别用 `Text` 直接塞换行符**：改成 `RuleEntryCell`（`VStack` + `ForEach`）
+  才是一行一个 `Text`，`Text` 的换行在表格单元格里不按预期排。
+  `ForEach` 的 id 用 `\.offset` 而不是 `\.self`，因为条目**可以重复**
+  （重复的条目正是编辑器要标红的那一类），用 `\.self` 会崩。
+
 ### 进程选择器：别的规则已经用过的进程标黄
 
 - **原来能选任何进程**，于是一个程序常常同时落在两条规则里。
