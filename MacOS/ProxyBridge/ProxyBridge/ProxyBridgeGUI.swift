@@ -41,6 +41,11 @@ struct ProxyBridgeGUIApp: App {
                     AppDelegate.viewModel = viewModel
                     checkForUpdatesOnStartup()
                 }
+                .onChange(of: viewModel.needsExtensionApproval) { _ in
+                    // macOS needs the user to switch the extension on once. Without it
+                    // nothing is proxied, so say where the switch is and open the pane.
+                    if viewModel.needsExtensionApproval { showExtensionApprovalAlert() }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -128,6 +133,12 @@ struct ProxyBridgeGUIApp: App {
                     get: { LoginItem.isEnabled },
                     set: { LoginItem.setEnabled($0) }
                 ))
+
+                Divider()
+
+                Button("Approve ProxyBridge in System Settings...") {
+                    openSystemSettingsForExtension()
+                }
             }
 
             CommandGroup(replacing: .help) {
@@ -226,15 +237,66 @@ struct ProxyBridgeGUIApp: App {
             if viewModel.importProfile(from: data, name: name) {
                 // what could not be carried over is said out loud, not dropped silently
                 let notes = viewModel.lastImportNotes
-                if !notes.isEmpty {
-                    let alert = NSAlert()
-                    alert.messageText = "Imported '\(name)'"
-                    alert.informativeText = notes.joined(separator: "\n")
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
-                }
+                if !notes.isEmpty { showImportNotes(profileName: name, notes: notes) }
             }
         }
+    }
+
+    // The import says what could not be carried over. The notes go into a scrollable
+    // text view of their own: an NSAlert puts a long informative text into a grey box
+    // that reads like a disabled field, and the notes are often longer than fits.
+    private func showImportNotes(profileName: String, notes: [String]) {
+        let proxies = viewModel.proxyConfigs.count
+        let rules = UserDefaults.standard.array(forKey: "proxyRules")?.count ?? 0
+        let chains = viewModel.chains.count
+
+        let alert = NSAlert()
+        alert.messageText = "Imported '\(profileName)'"
+        alert.informativeText = "\(proxies) proxy server(s), \(rules) rule(s) and \(chains) chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxyBridge. Here is what was done with them:"
+        alert.accessoryView = makeNotesView(notes)
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    // the notes, in a scrollable box that can be read to the end and copied
+    private func makeNotesView(_ notes: [String]) -> NSView {
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 170))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = false
+
+        let text = NSTextView(frame: scroll.bounds)
+        text.isEditable = false
+        text.isSelectable = true
+        text.isRichText = false
+        text.font = NSFont.systemFont(ofSize: 11)
+        text.string = notes.enumerated()
+            .map { "\($0.offset + 1). \($0.element)" }
+            .joined(separator: "\n")
+        text.textContainerInset = NSSize(width: 6, height: 8)
+        text.autoresizingMask = [.width]
+        text.textContainer?.widthTracksTextView = true
+        scroll.documentView = text
+        return scroll
+    }
+
+    // macOS asks for a one-time approval of the system extension. Nothing can be
+    // proxied until the user switches it on, so say where the switch is and open the
+    // pane for them.
+    private func showExtensionApprovalAlert() {
+        let alert = NSAlert()
+        alert.messageText = "ProxyBridge needs your approval"
+        alert.informativeText = "Open System Settings > General > Login Items & Extensions > Network Extensions, and switch ProxyBridge on.\n\nUntil that is done, no traffic can be proxied."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn { openSystemSettingsForExtension() }
+    }
+
+    // the pane where the system extension is switched on (macOS 13 and later keep the
+    // network extensions inside Login Items & Extensions)
+    private func openSystemSettingsForExtension() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // small AppKit text prompt, SwiftUI has no clean text-input alert on macOS

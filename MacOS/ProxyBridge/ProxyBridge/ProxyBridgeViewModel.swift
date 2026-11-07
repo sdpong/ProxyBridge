@@ -31,6 +31,9 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     @Published private(set) var activeProfile: String = "Default"
     // what the last import had to leave out, shown to the user once
     @Published var lastImportNotes: [String] = []
+    // macOS asks the user to approve the system extension once. Until that happens
+    // nothing can be proxied, so the GUI says where the switch is and opens the pane.
+    @Published var needsExtensionApproval = false
     
     private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
@@ -1137,12 +1140,19 @@ extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         DispatchQueue.main.async {
             self.addLog("ERROR", "Extension failed: \(error.localizedDescription)")
+            // The message on its own does not say what to do. An unsigned build has no
+            // entitlements at all, and macOS will not install a system extension from
+            // such an app, so say that plainly.
+            if error.localizedDescription.lowercased().contains("entitlement") {
+                self.addLog("ERROR", "macOS does not install the system extension from a build that is not signed. Use a signed build, or build from source: the build script signs the app for you.")
+            }
         }
     }
-    
+
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         DispatchQueue.main.async {
-            self.addLog("INFO", "Extension needs user approval in System Settings")
+            self.needsExtensionApproval = true
+            self.addLog("INFO", "macOS wants you to approve ProxyBridge once. Open System Settings > General > Login Items & Extensions > Network Extensions and switch ProxyBridge on. Until that is done, no traffic can be proxied.")
         }
     }
     
