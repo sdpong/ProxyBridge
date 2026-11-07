@@ -21,11 +21,25 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     static let missingProviderAppExplanation =
     "macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxyBridge is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Copy the command and run it in the Terminal to take the old extension out, then start the proxy again. macOS finishes the removal at the next restart."
 
-    // The command finds the team ids itself, so it works on any machine. It only
-    // touches extensions with ProxyBridge's bundle id that were signed by a team;
-    // this build's own ad-hoc record has no team and stays.
-    static let removeOldExtensionsCommand =
-    "sudo /usr/bin/systemextensionsctl uninstall $(/usr/bin/systemextensionsctl list | /usr/bin/awk -F'\\t' '$0 ~ /com\\.interceptsuite\\.ProxyBridge\\.extension/ {t=$3; gsub(/teamID\\(\"|\"\\)|-/,\"\",t); if (t != \"\") print t}' | /usr/bin/sort -u) com.interceptsuite.ProxyBridge.extension"
+    // The command that takes the old records out of the system.
+    //
+    // It has to work on a build that is not signed by a developer, and that is the
+    // whole point: "systemextensionsctl uninstall" wants "<teamID> <bundleID>",
+    // and the team id of an ad-hoc record is written as a dash. Leaving the team
+    // id out (which is what the command used to do) makes the tool print its
+    // usage and do nothing, so the person is left with the old extensions and no
+    // way to get rid of them.
+    //
+    // The script that ships with the app does the whole job: it finds every
+    // ProxyBridge bundle id that is registered and uses the right team id for
+    // each. When the script is not in the bundle the command falls back to the
+    // one line that removes the records of this build.
+    static var removeOldExtensionsCommand: String {
+        if let script = Bundle.main.url(forResource: "remove-old-extensions", withExtension: "sh")?.path {
+            return "sudo \(script)"
+        }
+        return "sudo /usr/bin/systemextensionsctl uninstall - com.sdpong.proxybridge.extension"
+    }
 
     // ---- can the app reach its own extension at all? ----
     //

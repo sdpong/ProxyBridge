@@ -25,6 +25,11 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
+# The script that takes old system extension records out of the system travels
+# with the app: it needs root, and a person who has to type a long command with
+# the right team id is a person who does not do it. It is a resource of the app
+# target in the Xcode project, so it is part of the build and of the signature.
+
 # An unsigned app has no entitlements, and macOS refuses to install a system extension
 # without them ("Missing entitlement com.apple.developer.system-extension.install").
 # An ad-hoc signature carries them. A build signed with a real Developer ID is left

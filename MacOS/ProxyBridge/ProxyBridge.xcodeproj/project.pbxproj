@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		8466A1E92EC63C5600A8C2E5 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8466A1E82EC63C5600A8C2E5 /* NetworkExtension.framework */; };
 		8466A1F32EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 8466A1E62EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AB010000000000000000B001 /* remove-old-extensions.sh in Resources */ = {isa = PBXBuildFile; fileRef = AB010000000000000000A001 /* remove-old-extensions.sh */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +42,7 @@
 		8466A1D32EC63B9400A8C2E5 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8466A1E62EC63C5600A8C2E5 /* com.sdpong.proxybridge.extension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = com.sdpong.proxybridge.extension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
 		8466A1E82EC63C5600A8C2E5 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
+		AB010000000000000000A001 /* remove-old-extensions.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; name = "remove-old-extensions.sh"; path = "scripts/remove-old-extensions.sh"; sourceTree = SOURCE_ROOT; };
 		846F78F82F14204F00C94754 /* Signing-Config-ext.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-ext.xcconfig"; sourceTree = "<group>"; };
 		84AFF4662F23CAC8007CF0B0 /* Signing-Config-app.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-app.xcconfig"; sourceTree = "<group>"; };
 		84AFF4692F23CAD5007CF0B0 /* Signing-Config-ext.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Signing-Config-ext.xcconfig"; sourceTree = "<group>"; };
@@ -99,6 +101,7 @@
 				84B1D8002F141B2300D0E39B /* Signing-Config-app.xcconfig */,
 				8466A1D52EC63B9400A8C2E5 /* ProxyBridge */,
 				8466A1EA2EC63C5600A8C2E5 /* extension */,
+				AB010000000000000000A001 /* remove-old-extensions.sh */,
 				8466A1E72EC63C5600A8C2E5 /* Frameworks */,
 				8466A1D42EC63B9400A8C2E5 /* Products */,
 				84AFF4662F23CAC8007CF0B0 /* Signing-Config-app.xcconfig */,
@@ -217,6 +220,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB010000000000000000B001 /* remove-old-extensions.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
