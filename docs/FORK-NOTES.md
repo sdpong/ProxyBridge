@@ -190,6 +190,24 @@ fork 的 GitHub Actions（`master` 每次 push 都会跑）：
     窗口里一条连接也没有。app 现在会做**握手自检**（扩展回答 `getInfo`，
     报协议号与版本），发现对不上就在窗口里明说，并给出清理命令
     （`scripts/remove-old-extensions.sh`，需要 root）。
+  - **「VPN 配置所使用的 VPN App 尚未安装」（NEVPNConnectionErrorDomain 14）**
+    是另一回事，也是最难查的一个：系统按 **cdhash** 认扩展。
+    每条网络配置里存着当时的扩展二进制的哈希
+    （`/Library/Preferences/com.apple.networkextension.plist` 里的
+    `DesignatedRequirement` = `cdhash H"…"`）。
+    扩展二进制被换掉、或者那个 app 被删掉之后，哈希就对不上了，
+    系统报「app 未安装」，**而且新建的配置会继续钉住同一个死哈希**——
+    因为系统解析 provider bundle id 时挑中的还是那条孤儿记录。
+    修法只有一个：**把那个孤儿扩展从系统里摘掉**
+    （`sudo systemextensionsctl uninstall <团队ID> com.interceptsuite.ProxyBridge.extension`），
+    之后新建的配置才会钉到当前这个扩展的哈希上，隧道才起得来。
+  - **app 不能抢别人的网络配置**：macOS 把所有 app 的透明代理配置放在同一个列表里，
+    而它们的 provider bundle id 可能一模一样（上游的 ProxyBridge 和本 fork 就是）。
+    所以配置里要写自己的标记（`providerConfiguration`），
+    启动 / 停止 / 重建时**只碰带自己标记的那条**，
+    否则用户的别的代理开关会被 app 动。
+    但**修复路径**例外：隧道已经起不来时，本 bundle id 的旧配置全删掉重建
+    （那些配置钉的是早已不存在的哈希，留着只会一直失败）。
 
 ### 代理链
 

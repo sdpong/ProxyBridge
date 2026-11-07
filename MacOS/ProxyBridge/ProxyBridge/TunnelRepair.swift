@@ -18,8 +18,15 @@ nonisolated enum TunnelRepair {
         }
     }
 
-    // removes ProxyBridge's transparent proxy configuration and its DNS proxy entry. only entries of this
-    // app are ever touched. the completion gets one line that says what was removed.
+    // removes the transparent proxy configuration and the DNS proxy entry. only entries of this
+    // app are ever touched: the configurations of other apps carry other provider bundle ids.
+    //
+    // The configurations of ProxyBridge itself are all removed, also the ones an older build
+    // wrote: they carry the code signature hash of the extension binary of that day, and when
+    // that binary is gone macOS refuses to start them ("the VPN app used by this configuration
+    // is not installed"). This is the repair path, it only runs when the tunnel has already
+    // failed, so a configuration that cannot start is worth throwing away.
+    // the completion gets one line that says what was removed.
     static func removeSavedConfigurations(extensionIdentifier: String, completion: @escaping (String) -> Void) {
         var removed: [String] = []
         var problems: [String] = []

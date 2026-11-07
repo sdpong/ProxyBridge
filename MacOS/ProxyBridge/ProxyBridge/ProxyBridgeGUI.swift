@@ -313,7 +313,7 @@ struct ProxyBridgeGUIApp: App {
     // Taking it out needs root, so the command goes on the clipboard and the user
     // runs it in a terminal.
     private func showRemoveOldExtensionsHint() {
-        let command = ProxyBridgeViewModel.removeOldExtensionsCommand
+        let command = ExtensionDiagnosis.removeOldExtensionsCommand
         let alert = NSAlert()
         alert.messageText = "Take the older ProxyBridge extensions out"
         alert.informativeText = "Run this in the Terminal. It removes the ProxyBridge extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxyBridge on in System Settings > General > Login Items & Extensions > Network Extensions."

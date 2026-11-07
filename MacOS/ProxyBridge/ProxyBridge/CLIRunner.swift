@@ -223,12 +223,16 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if let error = error { self.fail("Could not load the network configuration: \(error.localizedDescription)"); return }
-                let manager = managers?.first ?? NETransparentProxyManager()
-                manager.localizedDescription = "ProxyBridge Transparent Proxy"
+                // only this app's own configuration is reused or changed: the other ones in
+                // the list belong to other builds of ProxyBridge and to other proxy apps.
+                let ours = NetworkConfigOwner.ourManagers(managers ?? [], extensionIdentifier: CLI.extensionIdentifier)
+                let manager = ours.first ?? NETransparentProxyManager()
+                manager.localizedDescription = NetworkConfigOwner.configDescription
                 manager.isEnabled = true
                 let proto = NETunnelProviderProtocol()
                 proto.providerBundleIdentifier = CLI.extensionIdentifier
                 proto.serverAddress = "ProxyBridge"
+                NetworkConfigOwner.mark(proto)
                 manager.protocolConfiguration = proto
                 manager.saveToPreferences { saveError in
                     DispatchQueue.main.async {
@@ -290,6 +294,15 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         TunnelRepair.lastDisconnectReason(session) { reason in
             DispatchQueue.main.async {
                 CLI.warn("\(why). macOS says: \(CLIText.safe(reason))")
+                // macOS bound the tunnel to an extension whose app is gone. The
+                // configuration is fine, so creating a new one would not help: the
+                // system would bind it to the same extension again.
+                if ExtensionDiagnosis.isMissingProviderApp(reason: reason) {
+                    CLI.warn(ExtensionDiagnosis.missingProviderAppExplanation)
+                    CLI.warn("Command: \(ExtensionDiagnosis.removeOldExtensionsCommand)")
+                    self.fail("The other ProxyBridge extension has to be taken out of the system before this one can be used.")
+                    return
+                }
                 if self.repairTried {
                     self.fail("The tunnel still does not start. Remove the ProxyBridge entries in System Settings, Network, restart the Mac and run the command again. If it keeps failing, report it with the output of: systemextensionsctl list")
                     return

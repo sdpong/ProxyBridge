@@ -19,6 +19,11 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     private var tunnelWatchdog: DispatchWorkItem?
     private var tunnelFailureObserver: NSObjectProtocol?
     private var tunnelRepairTried = false
+    // the timer that asks the system again whether the extension has been approved
+    private var approvalWatchTimer: Timer?
+    private var approvalWatchAttempts = 0
+    private let approvalWatchInterval = 20.0
+    private let approvalWatchLimit = 45
     
     var tunnelSession: NETunnelProviderSession?
     private var logTimer: Timer?
@@ -44,12 +49,6 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     // to match AppProxyProvider.protocolAPI on the extension side.
     private let extensionProtocolAPI = ExtensionHandshake.protocolAPI
     
-    // The command that takes the other, older extensions out of the system. It needs
-    // root, so the user runs it in a terminal; the window puts it on the clipboard.
-    // It finds the team ids itself, so it works on any machine.
-    static let removeOldExtensionsCommand =
-    "sudo /usr/bin/systemextensionsctl uninstall $(/usr/bin/systemextensionsctl list | /usr/bin/awk -F'\\t' '$0 ~ /com\\.interceptsuite\\.ProxyBridge\\.extension/ {t=$3; gsub(/teamID\\(\"|\"\\)|-/,\"\",t); if (t != \"\") print t}' | /usr/bin/sort -u) com.interceptsuite.ProxyBridge.extension"
-
     private let maxLogEntries = 500
     // trim back to this when the cap is hit, so we don't shift on every entry
     private let trimToEntries = 400
@@ -641,12 +640,15 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     }
     
     private func installAndStartProxy() {
-        // Stop any existing tunnel first so macOS replaces the running extension
-        // binary with the newly installed one instead of reusing the old cached process.
+        // Stop our own tunnel first so macOS replaces the running extension binary with
+        // the newly installed one instead of reusing the old cached process. Only the
+        // configurations this app wrote are touched: another app's tunnel (the upstream
+        // release, the user's own Proxifier) must keep running.
         NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
-            
-            if let existing = managers?.first,
+
+            let ours = NetworkConfigOwner.ourManagers(managers ?? [], extensionIdentifier: self.extensionIdentifier)
+            if let existing = ours.first,
                let session = existing.connection as? NETunnelProviderSession,
                session.status != .disconnected && session.status != .invalid {
                 session.stopTunnel()
@@ -678,13 +680,18 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 return
             }
             
-            let manager = managers?.first ?? NETransparentProxyManager()
-            manager.localizedDescription = "ProxyBridge Transparent Proxy"
+            // only this app's own configuration is reused or changed. the other
+            // configurations in the list belong to other builds of ProxyBridge and to
+            // other proxy apps; taking them over would switch the user's own proxy off.
+            let ours = NetworkConfigOwner.ourManagers(managers ?? [], extensionIdentifier: self.extensionIdentifier)
+            let manager = ours.first ?? NETransparentProxyManager()
+            manager.localizedDescription = NetworkConfigOwner.configDescription
             manager.isEnabled = true
-            
+
             let providerProtocol = NETunnelProviderProtocol()
             providerProtocol.providerBundleIdentifier = self.extensionIdentifier
             providerProtocol.serverAddress = "ProxyBridge"
+            NetworkConfigOwner.mark(providerProtocol)
             manager.protocolConfiguration = providerProtocol
             
             manager.saveToPreferences { saveError in
@@ -839,6 +846,15 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.addLog("ERROR", "\(why). macOS says: \(reason)")
+                // macOS bound the tunnel to an extension whose app is gone. Say so and
+                // give the command that takes it out; retrying the configuration would
+                // not help, the system would bind it to the same extension again.
+                if ExtensionDiagnosis.isMissingProviderApp(reason: reason) {
+                    self.extensionProblem = ExtensionDiagnosis.missingProviderAppExplanation
+                    self.addLog("ERROR", ExtensionDiagnosis.missingProviderAppExplanation)
+                    self.addLog("ERROR", "Command: \(ExtensionDiagnosis.removeOldExtensionsCommand)")
+                    return
+                }
                 if self.tunnelRepairTried {
                     self.addLog("ERROR", "Remove the ProxyBridge entries in System Settings, Network, restart the Mac and open ProxyBridge again. If it still fails, report it with the output of: systemextensionsctl list")
                     return
@@ -1195,6 +1211,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     deinit {
         NotificationCenter.default.removeObserver(self)
         logTimer?.invalidate()
+        stopApprovalWatch()
         stopProxy()
     }
 }
@@ -1206,6 +1223,7 @@ extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
             self.extensionReady = true
             // the switch in System Settings is on now, the notice has nothing to say
             self.needsExtensionApproval = false
+            self.stopApprovalWatch()
             self.startProxy()
             self.applyDNSProxy()
         }
@@ -1226,8 +1244,35 @@ extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         DispatchQueue.main.async {
             self.needsExtensionApproval = true
-            self.addLog("INFO", "macOS wants you to approve ProxyBridge once. Open System Settings > General > Login Items & Extensions > Network Extensions and switch ProxyBridge on. Until that is done, no traffic can be proxied.")
+            self.addLog("INFO", "macOS wants you to approve ProxyBridge once. Open System Settings > General > Login Items & Extensions > Network Extensions (on macOS 26 and later: Network > VPN & Filters) and switch ProxyBridge on. Until that is done, no traffic can be proxied.")
+            // The user approves the extension in System Settings, not in this app, so
+            // the app cannot know when it happens. Asking again is how it finds out:
+            // once the switch is on, the request succeeds and the proxy starts. That
+            // way the user does not have to restart the app after approving.
+            self.startApprovalWatch()
         }
+    }
+
+    // Asks the system again and again whether the extension is approved now. It stops
+    // when the request succeeds, or when it has asked often enough.
+    private func startApprovalWatch() {
+        guard approvalWatchTimer == nil else { return }
+        approvalWatchAttempts = 0
+        let timer = Timer.scheduledTimer(withTimeInterval: approvalWatchInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.approvalWatchAttempts += 1
+            if self.approvalWatchAttempts > approvalWatchLimit {
+                self.stopApprovalWatch()
+                return
+            }
+            self.submitExtensionActivationRequest()
+        }
+        approvalWatchTimer = timer
+    }
+
+    private func stopApprovalWatch() {
+        approvalWatchTimer?.invalidate()
+        approvalWatchTimer = nil
     }
     
     func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {

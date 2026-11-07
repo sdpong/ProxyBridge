@@ -32,13 +32,13 @@ struct ContentView: View {
                 actionTitle: "Copy the command",
                 action: {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(ProxyBridgeViewModel.removeOldExtensionsCommand, forType: .string)
+                    NSPasteboard.general.setString(ExtensionDiagnosis.removeOldExtensionsCommand, forType: .string)
                 }
             )
         } else if viewModel.needsExtensionApproval {
             noticeBar(
                 icon: "lock.shield.fill",
-                text: "macOS wants to approve ProxyBridge once: System Settings > General > Login Items & Extensions > Network Extensions, and switch ProxyBridge on. Until that is done no traffic can be proxied.",
+                text: "macOS has to approve ProxyBridge once, and until it does no traffic can be proxied. Look in System Settings > General > Login Items & Extensions > Network Extensions (on macOS 26 and later: Network > VPN & Filters) and switch ProxyBridge on. If ProxyBridge is not listed there, this build did not pass the system's signature check and needs a build signed with a Developer ID.",
                 actionTitle: "Open System Settings",
                 action: openSystemSettings
             )
