@@ -889,7 +889,13 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
         // a change is said in words: the hop is skipped, or it is back
         if alive {
-            diag("Chain health: \(label) answers, it is back in its chain")
+            // a hop that was never probed was never out of its chain, so there
+            // is nothing to say about it coming back
+            if previous == .unknown {
+                diag("Chain health: \(label) answers")
+            } else {
+                diag("Chain health: \(label) answers, it is back in its chain")
+            }
         } else {
             diag("Chain health: \(label) does not answer, it is skipped until it does", level: "WARN")
         }
