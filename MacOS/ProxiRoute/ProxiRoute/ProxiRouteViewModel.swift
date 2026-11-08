@@ -256,6 +256,12 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         loadDNSSetting()
         loadProfiles()
         loadProxyConfig()
+        // the proxy server of the app needs to know the interfaces
+        startLocalProxyInterfaceWatch()
+        // and it starts when the setting says it should
+        if localProxySettings.enabled {
+            startLocalProxyServer()
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(occlusionChanged),
@@ -328,6 +334,13 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // The switches above the rules: the global mode, the interface the
     // traffic leaves through, and whether udp may use a proxy.
     @Published var routeSettings = RouteSettings.load()
+
+    // The proxy server that runs inside this app, so that the other machines
+    // of the network can send their traffic out through this one.
+    @Published var localProxySettings = LocalProxySettings.load()
+    @Published private(set) var localProxyStatus = ""
+    @Published private(set) var localProxyRunning = false
+    private let localProxyServer = LocalProxyServer()
 
     private func loadDNSPolicySetting() {
         let d = UserDefaults.standard
@@ -412,6 +425,84 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         settings.save()
         sendRouteOptionsToExtension(settings)
         addLog("INFO", L10n.t("Routing settings saved"))
+    }
+
+    // The proxy server of the app.
+    //
+    // It is started and stopped with the setting, and it is given the proxy
+    // list and the rules of the app, so that it can send the traffic of a
+    // client the way the app would.
+    // The proxy server binds its listener to one of the interfaces of the
+    // machine, and it has to know which ones are there.
+    func startLocalProxyInterfaceWatch() {
+        InterfaceList.shared.onChange = { list in
+            LocalProxyServer.setInterfaces(list)
+        }
+        LocalProxyServer.setInterfaces(InterfaceList.shared.entries.map { (kind: $0.kind, name: $0.name) })
+    }
+
+    func updateLocalProxySettings(_ settings: LocalProxySettings) {
+        localProxySettings = settings
+        settings.save()
+        if settings.enabled {
+            startLocalProxyServer()
+        } else {
+            stopLocalProxyServer()
+        }
+    }
+
+    func startLocalProxyServer() {
+        localProxyServer.proxyConfigs = proxyConfigs.map { config in
+            LocalProxyEndpoint(id: config.id, name: config.name, type: config.type,
+                               host: config.host, port: config.port,
+                               username: config.username, password: config.password)
+        }
+        localProxyServer.rules = localProxyRules()
+        localProxyServer.logHandler = { [weak self] message, level in
+            self?.addLog(level, message)
+            // the unified log as well: the activity log of the app is only
+            // there while the window is open, and the server has to be
+            // readable when it is not
+            NSLog("[ProxiRoute] %@: %@", level, message)
+        }
+        localProxyServer.start(settings: localProxySettings) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .started(let address):
+                    self.localProxyRunning = true
+                    self.localProxyStatus = L10n.f("The proxy server listens on %@", address)
+                case .failed(let reason):
+                    self.localProxyRunning = false
+                    self.localProxyStatus = reason
+                }
+            }
+        }
+    }
+
+    func stopLocalProxyServer() {
+        localProxyServer.stop()
+        localProxyRunning = false
+        localProxyStatus = L10n.t("The proxy server is off")
+    }
+
+    // The rules of the app, in the shape the server needs. A client on the
+    // network has no program, so the rules that name one are of no use to it.
+    private func localProxyRules() -> [LocalProxyRule] {
+        let dicts = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
+        return dicts.map { dict in
+            let programs = (dict["processNames"] as? String ?? "")
+                .split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let hosts = (dict["targetHosts"] as? String ?? "")
+                .split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let ports = (dict["targetPorts"] as? String ?? "")
+                .split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            return LocalProxyRule(action: dict["action"] as? String ?? "DIRECT",
+                                  targetHosts: hosts, targetPorts: ports,
+                                  hasProgram: !programs.isEmpty,
+                                  enabled: dict["enabled"] as? Bool ?? true,
+                                  protocolMode: dict["protocol"] as? String ?? "BOTH")
+        }
     }
 
     private func sendRouteOptionsToExtension(_ settings: RouteSettings) {

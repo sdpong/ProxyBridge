@@ -9,7 +9,7 @@ struct RouteSettingsView: View {
     @ObservedObject var viewModel: ProxiRouteViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var interfaces = InterfaceList()
+    @StateObject private var interfaces = InterfaceList.shared
     @State private var settings = RouteSettings.load()
 
     var body: some View {

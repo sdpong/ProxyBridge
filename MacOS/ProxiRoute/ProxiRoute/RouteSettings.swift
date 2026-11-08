@@ -1,6 +1,4 @@
 import Foundation
-import Network
-import Combine
 
 // The switches that sit above the rules.
 //
@@ -55,57 +53,3 @@ struct RouteSettings: Equatable {
     }
 }
 
-// The interfaces of this machine.
-//
-// The user wants to say "the traffic goes out through the wired connection"
-// and not "through en3", because the number of an interface changes when a
-// cable is pulled and a thunderbolt bridge takes its place. The kind is the
-// stable thing, so it is what is stored, and the name is only used to show
-// which one it is right now.
-@MainActor
-final class InterfaceList: ObservableObject {
-
-    @Published private(set) var interfaces: [(name: String, kind: String)] = []
-
-    private let monitor = NWPathMonitor()
-    private let queue = DispatchQueue(label: "com.sdpong.proxiroute.app.interfaces")
-
-    init() {
-        monitor.pathUpdateHandler = { [weak self] path in
-            let list = path.availableInterfaces.compactMap { interface -> (String, String)? in
-                let kind = InterfaceList.kind(of: interface)
-                guard kind != "loopback" else { return nil }
-                return (interface.name, kind)
-            }
-            DispatchQueue.main.async {
-                self?.interfaces = list
-            }
-        }
-        monitor.start(queue: queue)
-    }
-
-    nonisolated static func kind(of interface: NWInterface) -> String {
-        switch interface.type {
-        case .wifi: return "wifi"
-        case .wiredEthernet: return "ethernet"
-        case .loopback: return "loopback"
-        default: return "other"
-        }
-    }
-
-    // The name of the first interface of this kind, for the text that says
-    // what the choice is.
-    func name(ofKind kind: String) -> String? {
-        interfaces.first { $0.kind == kind }?.name
-    }
-
-    // The kinds that are there, without the loopback and without the ones
-    // that are of no use (a bridge, a virtual interface).
-    var kinds: [String] {
-        var seen: [String] = []
-        for entry in interfaces where !seen.contains(entry.kind) {
-            seen.append(entry.kind)
-        }
-        return seen
-    }
-}
