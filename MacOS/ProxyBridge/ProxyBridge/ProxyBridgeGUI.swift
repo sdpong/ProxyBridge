@@ -511,18 +511,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         item.button?.image = NSImage(systemSymbolName: "network", accessibilityDescription: "ProxyBridge")
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Open ProxyBridge", action: #selector(showMainWindow), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.t("Open ProxyBridge"), action: #selector(showMainWindow), keyEquivalent: ""))
         menu.addItem(.separator())
         // the same setting as in the Settings menu, so that it can be reached
         // when the window is closed and the app only lives in the menu bar
-        let keepItem = NSMenuItem(title: "Keep Proxy Running in Background",
+        let keepItem = NSMenuItem(title: L10n.t("Keep Proxy Running in Background"),
                                   action: #selector(toggleKeepProxyRunning),
                                   keyEquivalent: "")
         keepItem.target = self
         keepItem.state = keepProxyRunningInBackground ? .on : .off
         menu.addItem(keepItem)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit ProxyBridge", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L10n.t("Quit ProxyBridge"), action: #selector(quitApp), keyEquivalent: "q"))
         menu.delegate = self
         item.menu = menu
         statusItem = item

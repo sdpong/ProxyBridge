@@ -201,7 +201,7 @@ struct ProxyConfigEditorView: View {
                 Image(systemName: "network")
                     .font(.title2)
                     .foregroundColor(.accentColor)
-                Text(existing == nil ? "Add Proxy" : "Edit Proxy")
+                Text(existing == nil ? L10n.t("Add Proxy") : L10n.t("Edit Proxy"))
                     .font(.title2)
                     .fontWeight(.semibold)
                 Spacer()

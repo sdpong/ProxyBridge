@@ -127,7 +127,7 @@ struct ProxyRulesView: View {
                 }) {
                     HStack {
                         Image(systemName: selectedRuleIds.count == rules.count ? "checkmark.square" : "square")
-                        Text(selectedRuleIds.count == rules.count ? "Deselect All" : "Select All")
+                        Text(selectedRuleIds.count == rules.count ? L10n.t("Deselect All") : L10n.t("Select All"))
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -321,7 +321,7 @@ struct ProxyRulesView: View {
             return
         }
         pendingEdit = rule
-        notice = RuleNotice(title: "Named twice", message: clashes)
+        notice = RuleNotice(title: L10n.t("Named twice"), message: clashes)
     }
 
     // what this rule names that another rule names as well
@@ -340,11 +340,11 @@ struct ProxyRulesView: View {
                                       isHost: true)
             if programs.isEmpty && hosts.isEmpty { continue }
             var lines: [String] = []
-            if !programs.isEmpty { lines.append("program(s): " + programs.joined(separator: ", ")) }
-            if !hosts.isEmpty { lines.append("host(s): " + hosts.joined(separator: ", ")) }
-            let name = other.name.isEmpty ? "another rule" : other.name
-            let state = other.enabled ? "is in effect" : "is switched off too"
-            parts.append("The rule \"\(name)\" \(state) and names the same:\n\(lines.joined(separator: "\n"))")
+            if !programs.isEmpty { lines.append(L10n.f("program(s): %@", programs.joined(separator: ", "))) }
+            if !hosts.isEmpty { lines.append(L10n.f("host(s): %@", hosts.joined(separator: ", "))) }
+            let name = other.name.isEmpty ? L10n.t("another rule") : other.name
+            let state = other.enabled ? L10n.t("is in effect") : L10n.t("is switched off too")
+            parts.append(L10n.f("The rule \"%@\" %@ and names the same:\n%@", name, state, lines.joined(separator: "\n")))
         }
         return parts.joined(separator: "\n\n")
     }
@@ -439,8 +439,8 @@ struct ProxyRulesView: View {
         let selectedRules = getSelectedRules()
         
         let savePanel = NSSavePanel()
-        savePanel.title = "Export Proxy Rules"
-        savePanel.message = "Choose a location to save the selected rules"
+        savePanel.title = L10n.t("Export Proxy Rules")
+        savePanel.message = L10n.t("Choose a location to save the selected rules")
         savePanel.nameFieldStringValue = "ProxyBridge-Rules.json"
         savePanel.allowedContentTypes = [.json]
         savePanel.canCreateDirectories = true
@@ -454,14 +454,14 @@ struct ProxyRulesView: View {
             let data = try encoder.encode(selectedRules)
             try data.write(to: url)
         } catch {
-            print("Export failed: \(error)")
+            print(L10n.f("Export failed: %@", "\(error)"))
         }
     }
     
     private func importRulesFromFile() {
         let openPanel = NSOpenPanel()
-        openPanel.title = "Import Proxy Rules"
-        openPanel.message = "Choose a rules file to import"
+        openPanel.title = L10n.t("Import Proxy Rules")
+        openPanel.message = L10n.t("Choose a rules file to import")
         openPanel.allowedContentTypes = [.json]
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = false
@@ -480,7 +480,7 @@ struct ProxyRulesView: View {
             rules.append(contentsOf: importedRules)
             saveAndSync()
         } catch {
-            print("Failed to import rules: \(error)")
+            print(L10n.f("Failed to import rules: %@", "\(error)"))
         }
     }
 }
@@ -537,7 +537,7 @@ struct RuleEditorView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text(isEditMode ? "Edit Rule" : "Add Rule")
+            Text(isEditMode ? L10n.t("Edit Rule") : L10n.t("Add Rule"))
                 .font(.title2)
                 .fontWeight(.semibold)
 
@@ -547,7 +547,7 @@ struct RuleEditorView: View {
                         label: L10n.t("Rule Name"),
                         placeholder: L10n.t("Optional, e.g. Work traffic"),
                         text: $ruleName,
-                        hint: "Shown in the rules list. Leave empty if you don't need one."
+                        hint: L10n.t("Shown in the rules list. Leave empty if you don't need one.")
                     )
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -593,8 +593,8 @@ struct RuleEditorView: View {
                         Image(systemName: viewModel.isDNSEnabled ? "info.circle" : "exclamationmark.triangle.fill")
                             .foregroundColor(viewModel.isDNSEnabled ? .secondary : .orange)
                         Text(viewModel.isDNSEnabled
-                             ? "Host names only match when Enable DNS is on in the Proxy menu. IP addresses always work."
-                             : "Enable DNS is off in the Proxy menu, so host names do not match. IP addresses still work.")
+                             ? L10n.t("Host names only match when Enable DNS is on in the Proxy menu. IP addresses always work.")
+                             : L10n.t("Enable DNS is off in the Proxy menu, so host names do not match. IP addresses still work."))
                             .font(.caption).foregroundColor(.secondary)
                     }
                     
@@ -602,7 +602,7 @@ struct RuleEditorView: View {
                         label: L10n.t("Target ports"),
                         placeholder: "*",
                         text: $targetPorts,
-                        hint: "Example: 80; 8000-9000; 3128"
+                        hint: L10n.t("Example: 80; 8000-9000; 3128")
                     )
 
                     HStack(spacing: 4) {
@@ -804,8 +804,8 @@ struct RuleEditorView: View {
     private func handleClick(_ index: Int, entries: [RulePatternEntry], names: RuleNameIndex, isHost: Bool) {
         guard let entry = RuleClickLookup.entry(at: index, in: entries) else { return }
         guard let owner = RuleClickLookup.offOwner(for: entry, names: names, isHost: isHost) else { return }
-        notice = RuleNotice(title: "Also named by a rule that is off",
-                            message: "\"\(entry.text)\" is also named by the rule \"\(owner)\", which is switched off. It can still be used here.")
+        notice = RuleNotice(title: L10n.t("Also named by a rule that is off"),
+                            message: L10n.f("\"%@\" is also named by the rule \"%@\", which is switched off. It can still be used here.", entry.text, owner))
     }
 
     @ViewBuilder

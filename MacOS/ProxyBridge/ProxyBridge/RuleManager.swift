@@ -27,9 +27,9 @@ struct RuleManager {
         ) { success, result in
             if success, let result = result, result["status"] as? String == "ok" {
                 let ruleId = (result["ruleId"] as? NSNumber).map { UInt32($0.intValue) }
-                completion(true, "Rule added successfully", ruleId)
+                completion(true, L10n.t("Rule added successfully"), ruleId)
             } else {
-                completion(false, result?["message"] as? String ?? "Unknown error", nil)
+                completion(false, result?["message"] as? String ?? L10n.t("Unknown error"), nil)
             }
         }
     }
@@ -40,8 +40,8 @@ struct RuleManager {
     ) {
         sendMessage(session: session, action: "clearRules", params: [:]) { success, result in
             let message = success
-                ? "Cleared \(result?["cleared"] as? Int ?? 0) rule(s)"
-                : (result?["message"] as? String ?? "Unknown error")
+                ? L10n.f("Cleared %@ rule(s)", "\(result?["cleared"] as? Int ?? 0)")
+                : (result?["message"] as? String ?? L10n.t("Unknown error"))
             completion(success, message)
         }
     }

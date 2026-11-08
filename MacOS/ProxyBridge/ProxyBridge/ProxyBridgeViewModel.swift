@@ -349,7 +349,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             d.set(data, forKey: profileDNSPolicyKey(activeProfile))
         }
         sendDNSPolicyToExtension()
-        addLog("INFO", "DNS settings saved: \(policy.summary)")
+        addLog("INFO", L10n.f("DNS settings saved: %@", policy.summary))
     }
 
     // the policy as it is stored right now.
@@ -828,7 +828,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             guard let self = self else { return }
 
             if let error = error {
-                self.addLog("ERROR", "Failed to load managers: \(error.localizedDescription)")
+                self.addLog("ERROR", L10n.f("Failed to load managers: %@", error.localizedDescription))
                 return
             }
 
@@ -840,7 +840,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 // installed can never start, and macOS shows them all with the
                 // same name, so the person cannot tell which one is in use. All
                 // of them go and one new one is written.
-                self.addLog("INFO", "Found \(ours.count) saved network configurations of this app. Removing the old ones and writing a single new one.")
+                self.addLog("INFO", L10n.f("Found %@ saved network configurations of this app. Removing the old ones and writing a single new one.", "\(ours.count)"))
                 NetworkConfigOwner.clearAll(ours) {
                     self.writeNetworkConfiguration(completion: completion)
                 }
@@ -864,7 +864,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         manager.saveToPreferences { saveError in
             DispatchQueue.main.async {
                 if let saveError = saveError {
-                    self.addLog("ERROR", "Failed to save preferences: \(saveError.localizedDescription)")
+                    self.addLog("ERROR", L10n.f("Failed to save preferences: %@", saveError.localizedDescription))
                     return
                 }
                 completion?(manager)
@@ -906,7 +906,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
 
     func startProxy() {
         ensureNetworkConfiguration { manager in
-            self.addLog("INFO", "Configuration saved")
+            self.addLog("INFO", L10n.t("Configuration saved"))
             self.reloadAndStartTunnel(manager: manager)
         }
     }
@@ -949,14 +949,14 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                                 }
                                 return
                             }
-                            self.addLog("ERROR", "DNS proxy setup failed: \(error.localizedDescription). Host name rules and send hostname will not work.")
+                            self.addLog("ERROR", L10n.f("DNS proxy setup failed: %@. Host name rules and send hostname will not work.", error.localizedDescription))
                         } else {
-                            self.addLog("INFO", "DNS proxy enabled")
+                            self.addLog("INFO", L10n.t("DNS proxy enabled"))
                         }
                     }
                 }
             } else {
-                let note = "DNS proxy is off (Enable DNS in the Proxy menu). Host name rules and send hostname do not work."
+                let note = L10n.t("DNS proxy is off (Enable DNS in the Proxy menu). Host name rules and send hostname do not work.")
                 guard loadError == nil, ours, manager.isEnabled else {
                     DispatchQueue.main.async { self.addLog("INFO", note) }
                     return
@@ -965,7 +965,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 manager.saveToPreferences { error in
                     DispatchQueue.main.async {
                         if let error = error {
-                            self.addLog("ERROR", "Could not switch the DNS proxy off: \(error.localizedDescription)")
+                            self.addLog("ERROR", L10n.f("Could not switch the DNS proxy off: %@", error.localizedDescription))
                         } else {
                             self.addLog("INFO", note)
                         }
@@ -998,7 +998,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             let ours = manager.providerProtocol?.providerBundleIdentifier == self.extensionIdentifier
             guard !manager.isEnabled || !ours else { return }
             DispatchQueue.main.async {
-                self.addLog("INFO", "The DNS proxy entry was off in the system. It is being written again, so host names are known again.")
+                self.addLog("INFO", L10n.t("The DNS proxy entry was off in the system. It is being written again, so host names are known again."))
                 self.applyDNSProxy()
             }
         }
@@ -1033,7 +1033,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             guard let self = self else { return }
 
             if let loadError = loadError {
-                self.addLog("ERROR", "Failed to reload preferences: \(loadError.localizedDescription)")
+                self.addLog("ERROR", L10n.f("Failed to reload preferences: %@", loadError.localizedDescription))
                 return
             }
 
@@ -1058,7 +1058,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 
                 RuleManager.loadRulesFromUserDefaults(session: session) { success, count in
                     if success && count > 0 {
-                        self.addLog("INFO", "Loaded \(count) rule(s) from local storage")
+                        self.addLog("INFO", L10n.f("Loaded %@ rule(s) from local storage", "\(count)"))
                     }
                 }
             }
@@ -1074,13 +1074,13 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 try session.startTunnel(options: self.tunnelStartOptions())
                 DispatchQueue.main.async {
                     self.isProxyActive = true
-                    self.addLog("INFO", "Proxy tunnel started")
+                    self.addLog("INFO", L10n.t("Proxy tunnel started"))
                 }
             } catch {
                 if let obs = observer { NotificationCenter.default.removeObserver(obs) }
                 observer = nil
                 DispatchQueue.main.async { self.tunnelStartPending = false }
-                self.addLog("ERROR", "Failed to start tunnel: \(error.localizedDescription)")
+                self.addLog("ERROR", L10n.f("Failed to start tunnel: %@", error.localizedDescription))
             }
         }
     }
@@ -1102,14 +1102,14 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 self.tunnelStartPending = false
                 self.tunnelWatchdog?.cancel()
             case .disconnected, .invalid:
-                if sawConnecting { self.tunnelStartFailed(session: session, why: "The tunnel stopped before it was ready") }
+                if sawConnecting { self.tunnelStartFailed(session: session, why: L10n.t("The tunnel stopped before it was ready")) }
             default:
                 break
             }
         }
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self = self, self.tunnelStartPending, session.status != .connected else { return }
-            self.tunnelStartFailed(session: session, why: "The tunnel did not start in 30 seconds")
+            self.tunnelStartFailed(session: session, why: L10n.t("The tunnel did not start in 30 seconds"))
         }
         tunnelWatchdog = watchdog
         DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: watchdog)
@@ -1123,7 +1123,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         TunnelRepair.lastDisconnectReason(session) { [weak self] reason in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.addLog("ERROR", "\(why). macOS says: \(reason)")
+                self.addLog("ERROR", L10n.f("%@. macOS says: %@", why, reason))
                 // macOS bound the tunnel to an extension whose app is gone. Say so and
                 // give the command that takes it out; retrying the configuration would
                 // not help, the system would bind it to the same extension again.
@@ -1133,15 +1133,15 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                     self.extensionProblemIsStanding = false
                     self.extensionProblemAction = .copyRemoveCommand
                     self.addLog("ERROR", ExtensionDiagnosis.missingProviderAppExplanation)
-                    self.addLog("ERROR", "Command: \(ExtensionDiagnosis.removeOldExtensionsCommand)")
+                    self.addLog("ERROR", L10n.f("Command: %@", ExtensionDiagnosis.removeOldExtensionsCommand))
                     return
                 }
                 if self.tunnelRepairTried {
-                    self.addLog("ERROR", "Remove the ProxyBridge entries in System Settings, Network, restart the Mac and open ProxyBridge again. If it still fails, report it with the output of: systemextensionsctl list")
+                    self.addLog("ERROR", L10n.t("Remove the ProxyBridge entries in System Settings, Network, restart the Mac and open ProxyBridge again. If it still fails, report it with the output of: systemextensionsctl list"))
                     return
                 }
                 self.tunnelRepairTried = true
-                self.addLog("INFO", "Removing the saved network configuration and creating a new one. macOS may ask you to allow it again")
+                self.addLog("INFO", L10n.t("Removing the saved network configuration and creating a new one. macOS may ask you to allow it again"))
                 TunnelRepair.removeSavedConfigurations(extensionIdentifier: self.extensionIdentifier) { summary in
                     DispatchQueue.main.async {
                         self.addLog("INFO", summary)
@@ -1178,7 +1178,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                     self.logTimer?.invalidate()
                     self.logTimer = nil
                     self.tunnelSession = nil
-                    self.addLog("INFO", "Proxy stopped and extension memory cleared")
+                    self.addLog("INFO", L10n.t("Proxy stopped and extension memory cleared"))
                 }
                 completion?()
             }
@@ -1254,7 +1254,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                 self.extensionProblem = nil
                 self.extensionProblemDetails = nil
                 self.extensionProblemIsStanding = false
-                self.addLog("INFO", "Extension handshake ok (protocol \(api), version \(version))")
+                self.addLog("INFO", L10n.f("Extension handshake ok (protocol %@, version %@)", "\(api)", "\(version)"))
             case .mismatch(let api):
                 self.providerChannelAvailable = false
                 self.canTerminateFlows = false
@@ -1294,7 +1294,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         extensionProblemDetails = nil
         extensionProblemIsStanding = false
         extensionProblemAction = .copyRemoveCommand
-        addLog("ERROR", "The extension that answered is not this build\(detail). The rules and the proxies never reach it, so no connection is proxied. Take the older extension out and approve this one.")
+        addLog("ERROR", L10n.f("The extension that answered is not this build%@. The rules and the proxies never reach it, so no connection is proxied. Take the older extension out and approve this one.", detail))
     }
 
     // The extension did not answer at all. The traffic is proxied, but the window
@@ -1309,7 +1309,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             // has to be taken out, and there is a command for it.
             extensionProblem = ExtensionDiagnosis.extensionUnreachableSummary(hasDeveloperSignature: true)
             extensionProblemAction = .copyRemoveCommand
-            addLog("ERROR", "The extension does not answer over the provider channel. The tunnel is up, so the extension on the other end is not this build. Take the older extension out and approve this one.")
+            addLog("ERROR", L10n.t("The extension does not answer over the provider channel. The tunnel is up, so the extension on the other end is not this build. Take the older extension out and approve this one."))
         } else {
             // A build that is not signed by a developer never gets a message
             // through, and it never will: this is a standing condition and not
@@ -1325,7 +1325,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
             } else {
                 extensionProblem = ExtensionDiagnosis.extensionUnreachableSummary(hasDeveloperSignature: false)
             }
-            addLog("ERROR", "The extension does not answer over the provider channel: this build is not signed by a developer, and macOS does not let it talk to its own system extension. The traffic is proxied all the same, and the connections and their traffic are read from the system log. What is lost: the switches the extension reads while it runs, and closing a connection by hand.")
+            addLog("ERROR", L10n.t("The extension does not answer over the provider channel: this build is not signed by a developer, and macOS does not let it talk to its own system extension. The traffic is proxied all the same, and the connections and their traffic are read from the system log. What is lost: the switches the extension reads while it runs, and closing a connection by hand."))
         }
     }
     
@@ -1842,7 +1842,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
     }
 
     private func restartTunnelNow() {
-        addLog("INFO", "The extension did not answer, so the tunnel is restarted to pick up the change.")
+        addLog("INFO", L10n.t("The extension did not answer, so the tunnel is restarted to pick up the change."))
 
         // the same path the on/off switch uses: it stops the tunnel, clears what
         // the extension has, and starts it again with the configuration of now.
@@ -1876,7 +1876,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
         }
         let message: [String: Any] = ["action": "setProxyConfigs", "configs": configsArray, "chains": chainsArray]
         guard let data = try? JSONSerialization.data(withJSONObject: message) else {
-            addLog("ERROR", "Failed to encode proxy configs")
+            addLog("ERROR", L10n.t("Failed to encode proxy configs"))
             return
         }
         try? session.sendProviderMessage(data) { [weak self] response in
@@ -1884,7 +1884,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
                let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
                let status = json["status"] as? String, status == "ok" {
                 DispatchQueue.main.async {
-                    self?.addLog("INFO", "Proxy configs sent: \(self?.proxyConfigs.count ?? 0) config(s)")
+                    self?.addLog("INFO", L10n.f("Proxy configs sent: %@ config(s)", "\(self?.proxyConfigs.count ?? 0)"))
                 }
             }
         }
@@ -1943,7 +1943,7 @@ class ProxyBridgeViewModel: NSObject, ObservableObject {
 extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
     func request(_ request: OSSystemExtensionRequest, didFinishWithResult result: OSSystemExtensionRequest.Result) {
         DispatchQueue.main.async {
-            self.addLog("INFO", "Extension installed successfully")
+            self.addLog("INFO", L10n.t("Extension installed successfully"))
             self.extensionReady = true
             // the switch in System Settings is on now, the notice has nothing to say
             self.needsExtensionApproval = false
@@ -1955,12 +1955,12 @@ extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
     
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         DispatchQueue.main.async {
-            self.addLog("ERROR", "Extension failed: \(error.localizedDescription)")
+            self.addLog("ERROR", L10n.f("Extension failed: %@", error.localizedDescription))
             // The message on its own does not say what to do. An unsigned build has no
             // entitlements at all, and macOS will not install a system extension from
             // such an app, so say that plainly.
             if error.localizedDescription.lowercased().contains("entitlement") {
-                self.addLog("ERROR", "macOS does not install the system extension from a build that is not signed. Use a signed build, or build from source: the build script signs the app for you.")
+                self.addLog("ERROR", L10n.t("macOS does not install the system extension from a build that is not signed. Use a signed build, or build from source: the build script signs the app for you."))
             }
         }
     }
@@ -1968,7 +1968,7 @@ extension ProxyBridgeViewModel: OSSystemExtensionRequestDelegate {
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         DispatchQueue.main.async {
             self.needsExtensionApproval = true
-            self.addLog("INFO", "macOS wants you to approve ProxyBridge once. Open System Settings > General > Login Items & Extensions > Network Extensions (on macOS 26 and later: Network > VPN & Filters) and switch ProxyBridge on. Until that is done, no traffic can be proxied.")
+            self.addLog("INFO", L10n.t("macOS wants you to approve ProxyBridge once. Open System Settings > General > Login Items & Extensions > Network Extensions (on macOS 26 and later: Network > VPN & Filters) and switch ProxyBridge on. Until that is done, no traffic can be proxied."))
             // The user approves the extension in System Settings, not in this app, so
             // the app cannot know when it happens. Asking again is how it finds out:
             // once the switch is on, the request succeeds and the proxy starts. That

@@ -65,9 +65,9 @@ enum ExtensionLogReader {
     /// no setting of the app changes that.
     static func unreadableReason(_ raw: String) -> String {
         if raw.lowercased().contains("sandboxed") {
-            return "This build cannot read the unified log. The App Sandbox is what stops it: logd does not serve the system scope to a sandboxed process, and /usr/bin/log refuses to run in one at all. A build that is not sandboxed reads it without trouble."
+            return L10n.t("This build cannot read the unified log. The App Sandbox is what stops it: logd does not serve the system scope to a sandboxed process, and /usr/bin/log refuses to run in one at all. A build that is not sandboxed reads it without trouble.")
         }
-        return "The unified log cannot be read: \(raw)"
+        return L10n.f("The unified log cannot be read: %@", raw)
     }
 
     /// One line the extension wrote.
@@ -407,14 +407,14 @@ final class UnifiedLogTail {
         process.terminationHandler = { [weak self] finished in
             guard let self = self else { return }
             if !self.stopped {
-                self.onFailure?("The tool that reads the unified log stopped (status \(finished.terminationStatus)).")
+                self.onFailure?(L10n.f("The tool that reads the unified log stopped (status %@).", "\(finished.terminationStatus)"))
             }
         }
 
         do {
             try process.run()
         } catch {
-            onFailure?("The tool that reads the unified log could not be started: \(error.localizedDescription)")
+            onFailure?(L10n.f("The tool that reads the unified log could not be started: %@", error.localizedDescription))
             return
         }
 

@@ -21,6 +21,15 @@ struct ProcessPickerView: View {
 
         var id: String { rawValue }
 
+        // the name of the mode, in the language of the app
+        var title: String {
+            switch self {
+            case .name: return L10n.t("Name")
+            case .bundleId: return L10n.t("Bundle ID")
+            case .path: return L10n.t("Full path")
+            }
+        }
+
         func value(for process: RunningProcess) -> String {
             switch self {
             case .name: return process.ruleValueByName
@@ -102,7 +111,7 @@ struct ProcessPickerView: View {
             HStack(spacing: 16) {
                 Picker(L10n.t("Add"), selection: $valueMode) {
                     ForEach(ValueMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                        Text(mode.title).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -209,29 +218,29 @@ struct ProcessPickerView: View {
     }
 
     private var emptyText: String {
-        if !search.isEmpty { return "Nothing matches \"\(search)\"." }
+        if !search.isEmpty { return L10n.f("Nothing matches \"%@\".", search) }
         if !currentEntries.isEmpty {
-            return "Every program that matches is already in this rule."
+            return L10n.t("Every program that matches is already in this rule.")
         }
-        return "No programs found."
+        return L10n.t("No programs found.")
     }
 
     private var footerText: String {
         if !used.enabledEntries.isEmpty {
-            return "Programs in yellow are named by a rule that is in effect and cannot be picked."
+            return L10n.t("Programs in yellow are named by a rule that is in effect and cannot be picked.")
         }
         if selection.isEmpty {
-            return "Pick one or more programs. A rule matches a program by its name or its bundle id."
+            return L10n.t("Pick one or more programs. A rule matches a program by its name or its bundle id.")
         }
-        return "\(selection.count) program(s) picked."
+        return L10n.f("%@ program(s) picked.", "\(selection.count)")
     }
 
     private func rowHelp(for process: RunningProcess) -> String {
         if let owner = enabledOwner(for: process) {
-            return "Already named by \"\(owner)\", which is in effect"
+            return L10n.f("Already named by \"%@\", which is in effect", owner)
         }
         if let owner = disabledOwner(for: process) {
-            return "Also named by \"\(owner)\", which is switched off"
+            return L10n.f("Also named by \"%@\", which is switched off", owner)
         }
         return ""
     }
@@ -277,10 +286,10 @@ struct ProcessPickerView: View {
         for pid in pids.sorted() {
             guard let process = processes.first(where: { $0.pid == pid }) else { continue }
             guard let owner = disabledOwner(for: process) else { continue }
-            lines.append("\"\(process.name)\" is also named by the rule \"\(owner)\", which is switched off. It can still be added.")
+            lines.append(L10n.f("\"%@\" is also named by the rule \"%@\", which is switched off. It can still be added.", process.name, owner))
         }
         guard !lines.isEmpty else { return nil }
-        return RuleNotice(title: "Also named by a rule that is off",
+        return RuleNotice(title: L10n.t("Also named by a rule that is off"),
                           message: lines.joined(separator: "\n\n"))
     }
 

@@ -188,17 +188,18 @@ struct DNSSettingsView: View {
     }
 
     private var statusTitle: String {
-        guard let status else { return "The state of the DNS proxy is not known yet." }
-        return status.running ? "The DNS proxy is running." : "The DNS proxy is not running."
+        guard let status else { return L10n.t("The state of the DNS proxy is not known yet.") }
+        return status.running ? L10n.t("The DNS proxy is running.") : L10n.t("The DNS proxy is not running.")
     }
 
     private var statusDetail: String {
         guard let status else {
-            return "ProxyBridge looks in the log of the system extension for it. The window shows it as soon as the extension has written something."
+            return L10n.t("ProxyBridge looks in the log of the system extension for it. The window shows it as soon as the extension has written something.")
         }
-        var text = "\(status.queries) queries, \(status.answers) answers, \(status.names) names known."
+        var text = L10n.f("%@ queries, %@ answers, %@ names known.",
+                          "\(status.queries)", "\(status.answers)", "\(status.names)")
         if !status.lastName.isEmpty {
-            text += " Last answer: \(status.lastName) -> \(status.lastAddresses)."
+            text += L10n.f(" Last answer: %@ -> %@.", status.lastName, status.lastAddresses)
         }
         return text
     }
@@ -246,7 +247,7 @@ struct DNSSettingsView: View {
         policy.autoDetectUpstream = autoDetect
         policy.leakProtection = leakProtection
         viewModel.updateDNSPolicy(policy)
-        savedNote = "Saved: \(policy.summary)"
+        savedNote = L10n.f("Saved: %@", policy.summary)
         // the note is there long enough to be read, then the window goes away
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { closeWindow() }
     }

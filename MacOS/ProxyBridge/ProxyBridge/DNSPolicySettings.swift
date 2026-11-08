@@ -19,29 +19,29 @@ struct DNSPolicySettings: Equatable {
 
         var title: String {
             switch self {
-            case .system: return "System"
-            case .local: return "Local"
-            case .remote: return "Remote"
+            case .system: return L10n.t("System")
+            case .local: return L10n.t("Local")
+            case .remote: return L10n.t("Remote")
             }
         }
 
         var detail: String {
             switch self {
             case .system:
-                return "macOS answers the name with the resolver it was given. The proxy server is given the name only when the proxy's own setting says so, otherwise it gets the address."
+                return L10n.t("macOS answers the name with the resolver it was given. The proxy server is given the name only when the proxy's own setting says so, otherwise it gets the address.")
             case .local:
-                return "A resolver on this Mac answers, and the proxy server is always given the address. The proxy server never resolves a name."
+                return L10n.t("A resolver on this Mac answers, and the proxy server is always given the address. The proxy server never resolves a name.")
             case .remote:
-                return "The proxy server resolves the name itself. The answer from this Mac is only used to start the connection, so the site is reached even when the local answer is wrong or is an address that only means something here."
+                return L10n.t("The proxy server resolves the name itself. The answer from this Mac is only used to start the connection, so the site is reached even when the local answer is wrong or is an address that only means something here.")
             }
         }
 
         // what the proxy server is given for a name in this mode
         var serverGets: String {
             switch self {
-            case .system: return "the address, unless the proxy's own setting asks for the name"
-            case .local: return "the address"
-            case .remote: return "the name"
+            case .system: return L10n.t("the address, unless the proxy's own setting asks for the name")
+            case .local: return L10n.t("the address")
+            case .remote: return L10n.t("the name")
             }
         }
     }
@@ -100,15 +100,15 @@ struct DNSPolicySettings: Equatable {
 
     // one line that says what the policy is, for the log and for the window
     var summary: String {
-        var parts = ["resolution \(mode.title.lowercased())"]
-        if leakProtection { parts.append("leak protection on") }
+        var parts = [L10n.f("resolution %@", mode.title)]
+        if leakProtection { parts.append(L10n.t("leak protection on")) }
         if !upstreamResolvers.isEmpty {
-            parts.append("resolvers \(upstreamResolvers.joined(separator: ", "))")
+            parts.append(L10n.f("resolvers %@", upstreamResolvers.joined(separator: ", ")))
         } else {
-            parts.append("the resolver of the system")
+            parts.append(L10n.t("the resolver of the system"))
         }
         if !excludedDomains.isEmpty {
-            parts.append("\(excludedDomains.count) excluded name\(excludedDomains.count == 1 ? "" : "s")")
+            parts.append(L10n.f("%@ excluded name(s)", "\(excludedDomains.count)"))
         }
         return parts.joined(separator: ", ")
     }

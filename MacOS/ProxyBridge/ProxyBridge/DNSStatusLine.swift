@@ -75,11 +75,12 @@ struct DNSStatus: Equatable {
     // one line that says what this means, in words
     var summary: String {
         if !running {
-            return "The DNS proxy is not running."
+            return L10n.t("The DNS proxy is not running.")
         }
-        var text = "The DNS proxy is running. \(queries) queries, \(answers) answers, \(names) names."
+        var text = L10n.f("The DNS proxy is running. %@ queries, %@ answers, %@ names.",
+                          "\(queries)", "\(answers)", "\(names)")
         if !lastName.isEmpty {
-            text += " Last answer: \(lastName) -> \(lastAddresses)."
+            text += L10n.f(" Last answer: %@ -> %@.", lastName, lastAddresses)
         }
         return text
     }

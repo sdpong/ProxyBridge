@@ -207,7 +207,7 @@ struct ProxyChainEditorView: View {
                 Image(systemName: "link")
                     .font(.title2)
                     .foregroundColor(.accentColor)
-                Text(isEditMode ? "Edit Chain" : "Add Chain")
+                Text(isEditMode ? L10n.t("Edit Chain") : L10n.t("Add Chain"))
                     .font(.title2)
                     .fontWeight(.semibold)
                 Spacer()
@@ -253,7 +253,7 @@ struct ProxyChainEditorView: View {
                                 if let alive = health(of: id) {
                                     Image(systemName: alive ? "checkmark.circle.fill" : "xmark.circle.fill")
                                         .foregroundColor(alive ? .green : .red)
-                                        .help(alive ? "The proxy answers" : "The proxy does not answer, the chain is walked without it")
+                                        .help(alive ? L10n.t("The proxy answers") : L10n.t("The proxy does not answer, the chain is walked without it"))
                                 }
                                 Button {
                                     move(index, to: index - 1)

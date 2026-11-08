@@ -138,13 +138,13 @@ class UpdateNotificationViewModel: ObservableObject {
         guard let downloadUrl = versionInfo.downloadUrl,
               let fileName = versionInfo.fileName else {
             hasError = true
-            errorMessage = "Download URL not available"
+            errorMessage = L10n.t("Download URL not available")
             return
         }
         
         isDownloading = true
         downloadProgress = 0
-        downloadStatus = "Starting download..."
+        downloadStatus = L10n.t("Starting download...")
         hasError = false
         errorMessage = ""
         
@@ -155,18 +155,18 @@ class UpdateNotificationViewModel: ObservableObject {
             ) { progress in
                 Task { @MainActor in
                     self.downloadProgress = progress
-                    self.downloadStatus = String(format: "Downloading... %.0f%%", progress * 100)
+                    self.downloadStatus = String(format: L10n.t("Downloading... %.0f%%"), progress * 100)
                 }
             }
             
-            downloadStatus = "Download complete. Starting installer..."
+            downloadStatus = L10n.t("Download complete. Starting installer...")
             try await Task.sleep(nanoseconds: 1_000_000_000)
             
             updateService.installUpdateAndQuit(installerPath: installerPath)
         } catch {
             hasError = true
-            errorMessage = "Error downloading update: \(error.localizedDescription)"
-            downloadStatus = "Download failed"
+            errorMessage = L10n.f("Error downloading update: %@", error.localizedDescription)
+            downloadStatus = L10n.t("Download failed")
             isDownloading = false
         }
     }

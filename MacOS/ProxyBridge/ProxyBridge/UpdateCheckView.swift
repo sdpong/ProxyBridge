@@ -69,7 +69,7 @@ struct UpdateCheckView: View {
             
             // Progress
             if viewModel.isChecking {
-                ProgressView("Checking for updates...")
+                ProgressView(L10n.t("Checking for updates..."))
                     .padding()
             } else if viewModel.isDownloading {
                 VStack(spacing: 8) {
@@ -103,7 +103,7 @@ struct UpdateCheckView: View {
                     }
                 }
                 
-                Button(viewModel.isDownloading ? "Cancel" : "Close") {
+                Button(viewModel.isDownloading ? L10n.t("Cancel") : L10n.t("Close")) {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -154,15 +154,15 @@ class UpdateCheckViewModel: ObservableObject {
         if let error = info.error {
             hasError = true
             errorMessage = error
-            statusMessage = "Unable to check for updates"
+            statusMessage = L10n.t("Unable to check for updates")
             statusColor = .red
             latestVersionColor = .red
         } else if info.isUpdateAvailable {
-            statusMessage = "New version available!"
+            statusMessage = L10n.t("New version available!")
             statusColor = .green
             latestVersionColor = .green
         } else {
-            statusMessage = "You have the latest version"
+            statusMessage = L10n.t("You have the latest version")
             statusColor = .green
             latestVersionColor = .blue
         }
@@ -174,14 +174,14 @@ class UpdateCheckViewModel: ObservableObject {
         guard let info = versionInfo,
               let downloadUrl = info.downloadUrl,
               let fileName = info.fileName else {
-            errorMessage = "Download URL not available"
+            errorMessage = L10n.t("Download URL not available")
             hasError = true
             return
         }
         
         isDownloading = true
         downloadProgress = 0
-        downloadStatus = "Starting download..."
+        downloadStatus = L10n.t("Starting download...")
         hasError = false
         errorMessage = ""
         
@@ -192,18 +192,18 @@ class UpdateCheckViewModel: ObservableObject {
             ) { progress in
                 Task { @MainActor in
                     self.downloadProgress = progress
-                    self.downloadStatus = String(format: "Downloading... %.0f%%", progress * 100)
+                    self.downloadStatus = String(format: L10n.t("Downloading... %.0f%%"), progress * 100)
                 }
             }
             
-            downloadStatus = "Download complete. Starting installer..."
+            downloadStatus = L10n.t("Download complete. Starting installer...")
             try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
             
             updateService.installUpdateAndQuit(installerPath: installerPath)
         } catch {
             hasError = true
-            errorMessage = "Download error: \(error.localizedDescription)"
-            downloadStatus = "Download failed"
+            errorMessage = L10n.f("Download error: %@", error.localizedDescription)
+            downloadStatus = L10n.t("Download failed")
             isDownloading = false
         }
     }

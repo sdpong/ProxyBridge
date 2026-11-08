@@ -7,6 +7,11 @@ import Foundation
 var fails = 0
 func t(_ name: String, _ ok: Bool) { if !ok { fails += 1; print("FAIL", name) } }
 
+// the notes of the import are written in the language of the app. the test
+// asks for english, so that it says the same thing on every machine, whatever
+// the language of the system that runs it is.
+LocalizationManager.shared.language = .english
+
 // the profile Proxifier writes. it has one proxy of every kind, a chain with a
 // switched off hop, and one rule of every action.
 let sample = """

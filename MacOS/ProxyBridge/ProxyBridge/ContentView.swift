@@ -37,7 +37,7 @@ struct ContentView: View {
                 noticeBar(
                     icon: "exclamationmark.triangle.fill",
                     text: problem,
-                    actionTitle: "Copy the command",
+                    actionTitle: L10n.t("Copy the command"),
                     action: {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(ExtensionDiagnosis.removeOldExtensionsCommand, forType: .string)

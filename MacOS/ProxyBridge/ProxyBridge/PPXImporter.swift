@@ -155,16 +155,16 @@ private struct PPXConverter {
                 }
                 httpProxies += 1
             default:
-                warnings.append("Proxy \(id) has the type '\(rawType)', which ProxyBridge does not know. It was left out.")
+                warnings.append(L10n.f("Proxy %@ has the type '%@', which ProxyBridge does not know. It was left out.", "\(id)", rawType))
                 continue
             }
             out.append(ProxyEntry(id: id, type: type, sendDomain: sendDomain))
         }
         if httpSkipped > 0 {
-            warnings.append("The profile says HTTP proxy servers are not used, so \(httpSkipped) HTTP proxy/proxies were left out.")
+            warnings.append(L10n.f("The profile says HTTP proxy servers are not used, so %@ HTTP proxy/proxies were left out.", "\(httpSkipped)"))
         }
         if httpProxies > 0 {
-            warnings.append("Proxifier's plain HTTP proxy mode has no CONNECT tunnel. The \(httpProxies) HTTP proxy/proxies were imported, but ProxyBridge always asks them for a CONNECT tunnel.")
+            warnings.append(L10n.f("Proxifier's plain HTTP proxy mode has no CONNECT tunnel. The %@ HTTP proxy/proxies were imported, but ProxyBridge always asks them for a CONNECT tunnel.", "\(httpProxies)"))
         }
         return out
     }
@@ -182,7 +182,7 @@ private struct PPXConverter {
             let address = node.child("Address")?.value ?? ""
             let port = Int(node.child("Port")?.value ?? "") ?? 0
             guard !address.isEmpty, port > 0 else {
-                warnings.append("Proxy \(id) has no address or no port. It was left out.")
+                warnings.append(L10n.f("Proxy %@ has no address or no port. It was left out.", "\(id)"))
                 continue
             }
             var config: [String: Any] = [
@@ -218,7 +218,7 @@ private struct PPXConverter {
                 if proxyIds.contains(proxyId) { hops.append(proxyId) }
             }
             if hops.isEmpty {
-                warnings.append("The chain '\(node.child("Name")?.value ?? id)' has no proxy that is switched on. It was left out, and the rules that named it go direct.")
+                warnings.append(L10n.f("The chain '%@' has no proxy that is switched on. It was left out, and the rules that named it go direct.", node.child("Name")?.value ?? id))
                 continue
             }
             chainIds.insert(id)
@@ -238,7 +238,7 @@ private struct PPXConverter {
             case "proxy":
                 let id = action.value
                 guard proxyIds.contains(id) else {
-                    warnings.append("A rule points at proxy \(id), which is not in the profile. It goes direct.")
+                    warnings.append(L10n.f("A rule points at proxy %@, which is not in the profile. It goes direct.", "\(id)"))
                     actionValue = "DIRECT"
                     break
                 }
@@ -246,13 +246,13 @@ private struct PPXConverter {
             case "chain":
                 let id = action.value
                 guard chainIds.contains(id) else {
-                    warnings.append("A rule points at chain \(id), which is not in the profile. It goes direct.")
+                    warnings.append(L10n.f("A rule points at chain %@, which is not in the profile. It goes direct.", "\(id)"))
                     actionValue = "DIRECT"
                     break
                 }
                 actionValue = ProxyChain.actionPrefix + id
             default:
-                warnings.append("A rule has the action '\(actionType)', which ProxyBridge does not know. It goes direct.")
+                warnings.append(L10n.f("A rule has the action '%@', which ProxyBridge does not know. It goes direct.", actionType))
                 actionValue = "DIRECT"
             }
             let rule: [String: Any] = [
@@ -301,12 +301,12 @@ private struct PPXConverter {
             // Proxifier decides by itself; the closest is the default, where the
             // proxy's own setting decides
             mode = "system"
-            warnings.append("The profile lets Proxifier detect the DNS settings automatically. The DNS policy was set to 'system'; check it in the DNS settings.")
+            warnings.append(L10n.t("The profile lets Proxifier detect the DNS settings automatically. The DNS policy was set to 'system'; check it in the DNS settings."))
         } else if viaProxy {
             mode = "remote"
             leakProtection = true
             if tryLocalFirst {
-                warnings.append("The profile tries the local DNS first and the proxy second. ProxyBridge asks the proxy server to resolve the name.")
+                warnings.append(L10n.t("The profile tries the local DNS first and the proxy second. ProxyBridge asks the proxy server to resolve the name."))
             }
         }
 

@@ -60,7 +60,7 @@ nonisolated enum TunnelRepair {
                 if dnsLoadError == nil, dns.providerProtocol?.providerBundleIdentifier == extensionIdentifier {
                     dns.removeFromPreferences { error in
                         if let error = error { note("could not remove the DNS proxy entry: \(describe(error))", problem: true) }
-                        else { note("DNS proxy entry", problem: false) }
+                        else { note(L10n.t("DNS proxy entry"), problem: false) }
                         group.leave()
                     }
                 } else {
@@ -68,8 +68,8 @@ nonisolated enum TunnelRepair {
                 }
             }
             group.notify(queue: .main) {
-                var text = removed.isEmpty ? "Nothing to remove" : "Removed the saved " + removed.joined(separator: " and ")
-                if !problems.isEmpty { text += ". Problems: " + problems.joined(separator: "; ") }
+                var text = removed.isEmpty ? L10n.t("Nothing to remove") : L10n.f("Removed the saved %@", removed.joined(separator: " and "))
+                if !problems.isEmpty { text += L10n.f(". Problems: %@", problems.joined(separator: "; ")) }
                 completion(text)
             }
         }

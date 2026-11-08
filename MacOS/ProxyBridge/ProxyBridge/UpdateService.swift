@@ -67,7 +67,7 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         guard let http = downloadTask.response as? HTTPURLResponse, http.statusCode == 200 else {
-            finish(.failure(NSError(domain: "UpdateService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Download failed"])))
+            finish(.failure(NSError(domain: "UpdateService", code: -1, userInfo: [NSLocalizedDescriptionKey: L10n.t("Download failed")])))
             return
         }
         do {
@@ -92,7 +92,7 @@ class UpdateService {
     func checkForUpdates() async -> VersionInfo {
         do {
             guard let url = URL(string: manifestUrl) else {
-                return errorVersion("Invalid update URL")
+                return errorVersion(L10n.t("Invalid update URL"))
             }
 
             var request = URLRequest(url: url)
@@ -118,13 +118,13 @@ class UpdateService {
                 error: nil
             )
         } catch {
-            return errorVersion("Failed to check for updates: \(error.localizedDescription)")
+            return errorVersion(L10n.f("Failed to check for updates: %@", error.localizedDescription))
         }
     }
 
     func downloadUpdate(from urlString: String, fileName: String, progress: @escaping (Double) -> Void) async throws -> URL {
         guard let url = URL(string: urlString) else {
-            throw NSError(domain: "UpdateService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid download URL"])
+            throw NSError(domain: "UpdateService", code: -1, userInfo: [NSLocalizedDescriptionKey: L10n.t("Invalid download URL")])
         }
 
         // only ever the last path component, so a crafted name can't leave the temp folder

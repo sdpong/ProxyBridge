@@ -17,7 +17,7 @@ struct AboutView: View {
                 .font(.system(size: 28, weight: .bold))
                 .foregroundColor(.accentColor)
 
-            Text(verbatim: "Version \(appVersion)")
+            Text(verbatim: L10n.f("Version %@", appVersion))
                 .font(.system(size: 14))
                 .foregroundColor(.secondary)
 
