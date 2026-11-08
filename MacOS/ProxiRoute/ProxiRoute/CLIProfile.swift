@@ -1,0 +1,203 @@
+import Foundation
+
+// a profile as the command line needs it. same layout the app writes when it exports a
+// profile (and keeps per profile in its preferences), read without touching the GUI's state
+struct CLIProxy: Decodable, Equatable {
+    let id: String
+    let name: String
+    let type: String
+    let host: String
+    let port: Int
+    let username: String?
+    let password: String?
+    let sendDomain: Bool
+    // tell the proxy server which application the traffic comes from
+    let sendAppId: Bool
+
+    enum CodingKeys: String, CodingKey { case id, name, type, host, port, username, password, sendDomain, sendAppId }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        type = try c.decode(String.self, forKey: .type)
+        host = try c.decode(String.self, forKey: .host)
+        port = try c.decode(Int.self, forKey: .port)
+        username = try c.decodeIfPresent(String.self, forKey: .username)
+        password = try c.decodeIfPresent(String.self, forKey: .password)
+        // proxies saved before the option existed behave like the app's default
+        sendDomain = try c.decodeIfPresent(Bool.self, forKey: .sendDomain) ?? true
+        // the application id is a new thing: a proxy saved before it existed sends nothing
+        sendAppId = try c.decodeIfPresent(Bool.self, forKey: .sendAppId) ?? false
+    }
+
+    var label: String { "\(type.uppercased()) \(host):\(port)" }
+}
+
+struct CLIProfile {
+    var name: String
+    var proxies: [CLIProxy]
+    var rules: [[String: Any]]      // as saved by the app: processNames, targetHosts, targetPorts, protocol, action, enabled
+    var dnsEnabled: Bool = true     // the profile's Enable DNS setting, on when the profile has none
+    // the profile's DNS policy, as the wire form the extension understands. a profile
+    // saved before the policy existed has none, and the extension then uses its default
+    var dnsPolicy: [String: Any]? = nil
+    // the profile's proxy chains, as the wire form the extension understands:
+    // a list of {id, name, proxies: [proxy id]}
+    var chains: [[String: Any]] = []
+    // what the import had to leave out, shown to the user
+    var notes: [String] = []
+}
+
+enum CLIProfileError: Error, Equatable {
+    case invalid(String)
+    var message: String { if case .invalid(let m) = self { return m }; return "" }
+}
+
+enum CLIProfileLoader {
+    // what an import had to leave out. it is collected while the profile is read
+    // and moved into the profile afterwards
+    static var notes: [String] = []
+
+    // reads a preferences value, injected so tests don't need the real app's preferences
+    typealias Reader = (String) -> Any?
+
+    // the app's preferences, read by its bundle identifier so it also works when the
+    // executable is started through a link or a launcher script
+    static let appReader: Reader = { key in
+        CFPreferencesCopyAppValue(key as CFString, "com.sdpong.ProxiRoute" as CFString)
+    }
+
+    // an exported .pbprofile (json), or a Proxifier profile (.ppx, xml)
+    static func parse(json data: Data) throws -> CLIProfile {
+        // a Proxifier profile is xml, not json: it is converted first, so that one
+        // code path reads both
+        if PPXImporter.looksLikePPX(data) {
+            guard let imported = PPXImporter.parse(data) else {
+                throw CLIProfileError.invalid("The Proxifier profile could not be read.")
+            }
+            guard let converted = try? JSONSerialization.data(withJSONObject: imported.profile) else {
+                throw CLIProfileError.invalid("The Proxifier profile could not be converted.")
+            }
+            for warning in imported.warnings { CLIProfileLoader.notes.append(warning) }
+            var profile = try CLIProfileLoader.parse(json: converted)
+            profile.notes = CLIProfileLoader.notes
+            CLIProfileLoader.notes = []
+            return profile
+        }
+        guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw CLIProfileError.invalid("The profile is not valid JSON.")
+        }
+        guard obj["proxyConfigs"] != nil || obj["proxyRules"] != nil else {
+            throw CLIProfileError.invalid("This does not look like a ProxiRoute macOS profile (no proxyConfigs or proxyRules). Profiles exported from the Windows app use a different layout and can't be loaded here.")
+        }
+        let proxies = try decodeProxies(obj["proxyConfigs"] ?? [])
+        let rules = obj["proxyRules"] as? [[String: Any]] ?? []
+        return CLIProfile(name: (obj["name"] as? String) ?? "profile", proxies: proxies, rules: rules,
+                          dnsEnabled: obj["dnsEnabled"] as? Bool ?? true,
+                          dnsPolicy: obj["dnsPolicy"] as? [String: Any],
+                          chains: obj["proxyChains"] as? [[String: Any]] ?? [])
+    }
+
+    // a profile saved in the app. the active profile lives in the working keys
+    // ("proxyConfigs", "proxyRules"), the others in "profile.<name>.*" snapshots
+    static func saved(named name: String, read: Reader) throws -> CLIProfile {
+        let names = read("profiles") as? [String] ?? []
+        guard names.contains(name) else {
+            let list = names.isEmpty ? "none saved yet" : names.joined(separator: ", ")
+            throw CLIProfileError.invalid("No saved profile named '\(name)' (available: \(list)). Use --list-profiles.")
+        }
+        let active = read("activeProfile") as? String
+        let configsKey = name == active ? "proxyConfigs" : "profile.\(name).proxyConfigs"
+        let rulesKey = name == active ? "proxyRules" : "profile.\(name).proxyRules"
+        let dnsKey = name == active ? "dnsEnabled" : "profile.\(name).dnsEnabled"
+        let dnsPolicyKey = name == active ? "dnsPolicy" : "profile.\(name).dnsPolicy"
+        let proxies = try decodeProxies(read(configsKey) ?? [])
+        let rules = read(rulesKey) as? [[String: Any]] ?? []
+        // the policy is stored as json data, an export carries it as a plain object
+        let policy: [String: Any]?
+        if let data = read(dnsPolicyKey) as? Data {
+            policy = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        } else {
+            policy = read(dnsPolicyKey) as? [String: Any]
+        }
+        // the chains are stored as json data, an export carries them as a plain array
+        let chainsKey = name == active ? "chains" : "profile.\(name).chains"
+        var chains: [[String: Any]] = []
+        if let data = read(chainsKey) as? Data {
+            chains = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+        } else if let list = read(chainsKey) as? [[String: Any]] {
+            chains = list
+        }
+        return CLIProfile(name: name, proxies: proxies, rules: rules, dnsEnabled: read(dnsKey) as? Bool ?? true,
+                          dnsPolicy: policy, chains: chains)
+    }
+
+    static func savedNames(read: Reader) -> (names: [String], active: String?) {
+        (read("profiles") as? [String] ?? [], read("activeProfile") as? String)
+    }
+
+    // the proxy list is stored as json Data (or an already decoded array in an export)
+    private static func decodeProxies(_ value: Any) throws -> [CLIProxy] {
+        let data: Data
+        if let d = value as? Data { data = d }
+        else if JSONSerialization.isValidJSONObject(value), let d = try? JSONSerialization.data(withJSONObject: value) { data = d }
+        else { return [] }
+        do { return try JSONDecoder().decode([CLIProxy].self, from: data) }
+        catch { throw CLIProfileError.invalid("The proxy list in the profile could not be read: \(error.localizedDescription)") }
+    }
+
+    // true when a target hosts entry is a name and not an IP address, a range or a wildcard of numbers
+    static func hasHostName(_ hosts: String) -> Bool {
+        hosts.split(separator: ";").contains { part in
+            let t = part.trimmingCharacters(in: .whitespaces)
+            return !t.isEmpty && t.range(of: "^[0-9a-fA-F:.*-]+$", options: .regularExpression) == nil
+        }
+    }
+
+    static let maxProxies = 100
+    static let maxRules = 5000
+
+    // problems that make the profile unusable. the extension would silently drop some of these
+    // (a rule with an unknown protocol) or only fail later, per connection, so they stop the run
+    static func errors(for profile: CLIProfile) -> [String] {
+        var out: [String] = []
+        if profile.proxies.count > maxProxies { out.append("the profile has \(profile.proxies.count) proxies, the limit is \(maxProxies)") }
+        if profile.rules.count > maxRules { out.append("the profile has \(profile.rules.count) rules, the limit is \(maxRules)") }
+        var ids = Set<String>()
+        for p in profile.proxies {
+            if !ids.insert(p.id).inserted { out.append("two proxies have the same id '\(p.id)'") }
+            if p.host.trimmingCharacters(in: .whitespaces).isEmpty { out.append("a \(p.type) proxy has no host") }
+            if !(1...65535).contains(p.port) { out.append("proxy \(p.host) has the port \(p.port), it must be 1-65535") }
+            let type = p.type.lowercased()
+            if type != "socks5" && type != "socks4" && type != "http" { out.append("proxy \(p.label) has the type '\(p.type)', it must be socks5, socks4 or http") }
+            if type == "socks5", (p.username?.utf8.count ?? 0) > 255 || (p.password?.utf8.count ?? 0) > 255 {
+                out.append("proxy \(p.label) has a username or password longer than 255 bytes, SOCKS5 can't carry that")
+            }
+        }
+        for (i, rule) in profile.rules.enumerated() {
+            let proto = rule["protocol"] as? String ?? "BOTH"
+            if !["TCP", "UDP", "BOTH"].contains(proto) { out.append("rule \(i + 1) has the protocol '\(proto)', it must be TCP, UDP or BOTH") }
+        }
+        return out
+    }
+
+    // problems that don't stop the run but the user should know about
+    static func warnings(for profile: CLIProfile) -> [String] {
+        var out: [String] = []
+        let ids = Set(profile.proxies.map { $0.id })
+        for (i, rule) in profile.rules.enumerated() {
+            let action = rule["action"] as? String ?? "DIRECT"
+            if action != "DIRECT" && action != "BLOCK" && !ids.contains(action) {
+                out.append("rule \(i + 1) sends traffic to a proxy that is not in this profile, it will go direct")
+            }
+        }
+        if profile.rules.isEmpty { out.append("the profile has no rules, nothing will be redirected") }
+        if !profile.dnsEnabled {
+            for (i, rule) in profile.rules.enumerated() where hasHostName(rule["targetHosts"] as? String ?? "") {
+                out.append("rule \(i + 1) uses a host name, but DNS is off in this profile, so it will not match")
+            }
+        }
+        return out
+    }
+}

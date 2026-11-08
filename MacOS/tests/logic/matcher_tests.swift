@@ -53,7 +53,7 @@ t("all hosts", matcher("*", "*", "*").matchesHost(ip: "9.9.9.9", domains: []), t
 
 // whether the rule names the programs it is for. it decides what the proxy
 // server is told about the traffic: a rule without a program filter says that
-// the traffic is ProxyBridge's own.
+// the traffic is ProxiRoute's own.
 t("an empty program filter names no program", matcher("", "*", "*").hasProcessFilter, false)
 t("a star names no program", matcher("*", "*", "*").hasProcessFilter, false)
 t("a program names a program", matcher("safari", "*", "*").hasProcessFilter, true)

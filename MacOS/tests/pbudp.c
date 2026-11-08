@@ -1,4 +1,4 @@
-// Small UDP client for the ProxyBridge macOS tests. The test rules match it by process name
+// Small UDP client for the ProxiRoute macOS tests. The test rules match it by process name
 // ("pbudp"), which keeps it apart from the Python test proxies (rules match on process only).
 //
 //   pbudp ntp <ip>             one NTP exchange, prints the reply size (48 = answered)

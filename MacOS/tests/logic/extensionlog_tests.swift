@@ -51,8 +51,8 @@ check(noRule?.rule == nil, "no rule number means no rule number")
 
 // the line the tool that reads the log writes, and the parsing of it
 //
-// 2026-11-07 15:54:32.627 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Connection UDP MiniMax Code Helper -> unknown:unknown via Direct
-let compact = ExtensionLogReader.parseCompact("2026-11-07 15:54:32.627 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Connection UDP MiniMax Code Helper -> unknown:unknown via Direct")
+// 2026-11-07 15:54:32.627 Df com.sdpong.proxiroute.extension[32915:5e4ee] [com.sdpong.proxiroute.extension:provider] Connection UDP MiniMax Code Helper -> unknown:unknown via Direct
+let compact = ExtensionLogReader.parseCompact("2026-11-07 15:54:32.627 Df com.sdpong.proxiroute.extension[32915:5e4ee] [com.sdpong.proxiroute.extension:provider] Connection UDP MiniMax Code Helper -> unknown:unknown via Direct")
 check(compact != nil, "a line of the tool is read")
 check(compact?.level == "INFO", "a note is not an error")
 check(compact?.text == "Connection UDP MiniMax Code Helper -> unknown:unknown via Direct",
@@ -61,7 +61,7 @@ check(compact?.connection?.process == "MiniMax Code Helper", "the connection in 
 check(compact?.connection?.proto == "UDP", "the protocol in it is read")
 
 // an error the extension wrote comes with its own mark
-let errorLine = ExtensionLogReader.parseCompact("2026-11-07 15:54:33.001 Ee com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Tunnel stopping: stopped by the user (1)")
+let errorLine = ExtensionLogReader.parseCompact("2026-11-07 15:54:33.001 Ee com.sdpong.proxiroute.extension[32915:5e4ee] [com.sdpong.proxiroute.extension:provider] Tunnel stopping: stopped by the user (1)")
 check(errorLine?.level == "ERROR", "an error is an error")
 check(errorLine?.connection == nil, "an error is not a connection")
 
@@ -184,7 +184,7 @@ check(ExtensionLogReader.parseProxyTotals("ProxyTotals ") == nil,
       "totals without a proxy are not read")
 
 // the totals are read out of the line of the tool as well
-let totalsLine = ExtensionLogReader.parseCompact("2026-11-07 17:00:00.123 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] ProxyTotals Direct|0|0|820")
+let totalsLine = ExtensionLogReader.parseCompact("2026-11-07 17:00:00.123 Df com.sdpong.proxiroute.extension[32915:5e4ee] [com.sdpong.proxiroute.extension:provider] ProxyTotals Direct|0|0|820")
 check(totalsLine?.proxyTotals?.first?.connections == 820, "the totals of a line of the tool are read")
 check(totalsLine?.flowEvent == nil, "a line of totals is not a flow")
 
@@ -202,7 +202,7 @@ check(ExtensionLogReader.parseFlow("FlowEnd 42 9876") == nil,
       "a closed flow without both numbers is not read")
 
 // the traffic lines are read out of the line of the tool as well
-let flowLine = ExtensionLogReader.parseCompact("2026-11-07 17:00:00.123 Df com.sdpong.proxybridge.extension[32915:5e4ee] [com.interceptsuite.ProxyBridge.extension:provider] Flows 42:1234:5678")
+let flowLine = ExtensionLogReader.parseCompact("2026-11-07 17:00:00.123 Df com.sdpong.proxiroute.extension[32915:5e4ee] [com.sdpong.proxiroute.extension:provider] Flows 42:1234:5678")
 if case .bytes(let rows)? = flowLine?.flowEvent {
     check(rows.first?.id == 42, "the traffic of a line of the tool is read")
 } else {

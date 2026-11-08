@@ -25,13 +25,13 @@ t("a name in english stays as it is",
 t("the names go in order",
   L10n.formatted("%@ rule(s) use this chain and will be set to Direct.", arguments: ["3"], language: .english) == "3 rule(s) use this chain and will be set to Direct.")
 // every name goes into its own placeholder
-let threeNames = "%@ proxy server(s), %@ rule(s) and %@ chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxyBridge. Here is what was done with them:"
+let threeNames = "%@ proxy server(s), %@ rule(s) and %@ chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxiRoute. Here is what was done with them:"
 t("each name goes into its own placeholder",
   L10n.formatted(threeNames, arguments: ["2", "26", "1"], language: .english)
-    == "2 proxy server(s), 26 rule(s) and 1 chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxyBridge. Here is what was done with them:")
+    == "2 proxy server(s), 26 rule(s) and 1 chain(s) were imported.\n\nSome Proxifier settings have no counterpart in ProxiRoute. Here is what was done with them:")
 t("each name goes into its own placeholder in chinese too",
   L10n.formatted(threeNames, arguments: ["2", "26", "1"], language: .chinese)
-    == "已导入 2 个代理服务器、26 条规则和 1 条代理链。\n\nProxifier 的部分设置在 ProxyBridge 里没有对应项，处理情况如下：")
+    == "已导入 2 个代理服务器、26 条规则和 1 条代理链。\n\nProxifier 的部分设置在 ProxiRoute 里没有对应项，处理情况如下：")
 // more names than placeholders do not crash
 t("a name without a place is ignored",
   L10n.formatted("%@ of %@", arguments: ["1", "2", "3"], language: .english) == "1 of 2")

@@ -36,15 +36,15 @@ jobs:
         # files. With no signing secret they must still carry the committed templates, otherwise
         # both targets build the same swift module and the build fails.
         if [ -n "${{ secrets.MACOS_APP_XCCONFIG }}" ]; then
-          echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-app.xcconfig
-          echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-ext.xcconfig
+          echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxiRoute/Signing-Config-app.xcconfig
+          echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxiRoute/Signing-Config-ext.xcconfig
         else
           # the committed templates plus the overrides an unsigned build needs: no team and no
           # provisioning profile, because without a certificate there is no profile to find and
           # xcode refuses to build when it is named
           for part in app ext; do
-            cp "MacOS/ProxyBridge/proxybridge-$part.xcconfig" "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
-            printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
+            cp "MacOS/ProxiRoute/proxiroute-$part.xcconfig" "MacOS/ProxiRoute/Signing-Config-$part.xcconfig"
+            printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxiRoute/Signing-Config-$part.xcconfig"
           done
         fi
 
@@ -104,13 +104,13 @@ jobs:
 
     - name: Build Universal Binary
       run: |
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         # without a certificate the app is built unsigned: a fork has no Developer ID, and an
         # unsigned build is still a working build
         if [ "$HAS_SIGNING_CERT" = "true" ]; then
           xcodebuild \
-            -project ProxyBridge.xcodeproj \
-            -scheme ProxyBridge \
+            -project ProxiRoute.xcodeproj \
+            -scheme ProxiRoute \
             -configuration Release \
             -derivedDataPath build/DerivedData \
             ARCHS="arm64 x86_64" \
@@ -120,8 +120,8 @@ jobs:
         else
           # the xcconfig files already say that nothing is signed
           xcodebuild \
-            -project ProxyBridge.xcodeproj \
-            -scheme ProxyBridge \
+            -project ProxiRoute.xcodeproj \
+            -scheme ProxiRoute \
             -configuration Release \
             -derivedDataPath build/DerivedData \
             ARCHS="arm64 x86_64" \
@@ -131,23 +131,23 @@ jobs:
 
     - name: Verify Build
       run: |
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         ls -la build/DerivedData/Build/Products/Release/
-        file build/DerivedData/Build/Products/Release/ProxyBridge.app/Contents/MacOS/ProxyBridge
-        lipo -archs build/DerivedData/Build/Products/Release/ProxyBridge.app/Contents/MacOS/ProxyBridge
+        file build/DerivedData/Build/Products/Release/ProxiRoute.app/Contents/MacOS/ProxiRoute
+        lipo -archs build/DerivedData/Build/Products/Release/ProxiRoute.app/Contents/MacOS/ProxiRoute
         # Verify code signature (an unsigned build has none, which is not an error here)
-        codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxyBridge.app || true
+        codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxiRoute.app || true
 
     - name: Notarize App
       if: env.HAS_SIGNING_CERT == 'true'
       run: |
-        APP_PATH="MacOS/ProxyBridge/build/DerivedData/Build/Products/Release/ProxyBridge.app"
+        APP_PATH="MacOS/ProxiRoute/build/DerivedData/Build/Products/Release/ProxiRoute.app"
 
         # Zip the app for submission
-        ditto -c -k --keepParent "$APP_PATH" /tmp/ProxyBridge.zip
+        ditto -c -k --keepParent "$APP_PATH" /tmp/ProxiRoute.zip
 
         # Submit for notarization and wait for result, capture submission ID
-        SUBMIT_OUTPUT=$(xcrun notarytool submit /tmp/ProxyBridge.zip \
+        SUBMIT_OUTPUT=$(xcrun notarytool submit /tmp/ProxiRoute.zip \
           --apple-id "${{ secrets.APPLE_ID }}" \
           --password "${{ secrets.APPLE_APP_PASSWORD }}" \
           --team-id "${{ secrets.APPLE_TEAM_ID }}" \
@@ -183,7 +183,7 @@ jobs:
 
     - name: Sign the app (ad-hoc, with entitlements)
       run: |
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         # The CI build is unsigned, and macOS refuses to install a system extension from
         # an app without the com.apple.developer.system-extension.install entitlement.
         # An ad-hoc signature carries it. A build signed with a real Developer ID is
@@ -194,25 +194,25 @@ jobs:
         # scope to a sandboxed process. A build that is not going to the App Store
         # does not need the sandbox.
         chmod +x scripts/adhoc-sign.sh
-        bash scripts/adhoc-sign.sh build/DerivedData/Build/Products/Release/ProxyBridge.app
-        codesign -d --entitlements - build/DerivedData/Build/Products/Release/ProxyBridge.app
+        bash scripts/adhoc-sign.sh build/DerivedData/Build/Products/Release/ProxiRoute.app
+        codesign -d --entitlements - build/DerivedData/Build/Products/Release/ProxiRoute.app
 
     - name: Package App Bundle
       run: |
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         # the installer requires admin rights, so also publish a portable app bundle
         APP_VERSION=$(grep -m1 '^VERSION=' build.sh | cut -d'"' -f2)
         mkdir -p output
         ditto -c -k --keepParent \
-          build/DerivedData/Build/Products/Release/ProxyBridge.app \
-          "output/ProxyBridge-v${APP_VERSION}-Universal.app.zip"
+          build/DerivedData/Build/Products/Release/ProxiRoute.app \
+          "output/ProxiRoute-v${APP_VERSION}-Universal.app.zip"
         ls -la output/
 
     - name: Upload App Artifact
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: ProxyBridge-macOS-App
-        path: MacOS/ProxyBridge/output/ProxyBridge-*.app.zip
+        name: ProxiRoute-macOS-App
+        path: MacOS/ProxiRoute/output/ProxiRoute-*.app.zip
         retention-days: 30
 
     - name: Build PKG Installer
@@ -223,21 +223,21 @@ jobs:
         # (productsign inside build.sh cannot access build.keychain - we do it below)
         # grep exits 1 when it selects nothing, and a fork has no PKG_ENV secret, so the
         # pipeline would abort the step under `bash -e` before the package is built
-        printf '%s' "$PKG_ENV_CONTENT" | grep -v "^SIGNING_IDENTITY" > MacOS/ProxyBridge/.env || true
+        printf '%s' "$PKG_ENV_CONTENT" | grep -v "^SIGNING_IDENTITY" > MacOS/ProxiRoute/.env || true
 
         # Copy notarized .app into output/ where build.sh expects it
-        mkdir -p MacOS/ProxyBridge/output
-        cp -R MacOS/ProxyBridge/build/DerivedData/Build/Products/Release/ProxyBridge.app \
-          MacOS/ProxyBridge/output/ProxyBridge.app
+        mkdir -p MacOS/ProxiRoute/output
+        cp -R MacOS/ProxiRoute/build/DerivedData/Build/Products/Release/ProxiRoute.app \
+          MacOS/ProxiRoute/output/ProxiRoute.app
 
         # Run build script - creates the unsigned .pkg only
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         chmod +x build.sh
         bash build.sh
 
         PKG_VERSION=$(grep -m1 '^VERSION=' build.sh | cut -d'"' -f2)
-        PKG_UNSIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer.pkg"
-        PKG_SIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer-signed.pkg"
+        PKG_UNSIGNED="output/ProxiRoute-v${PKG_VERSION}-Universal-Installer.pkg"
+        PKG_SIGNED="output/ProxiRoute-v${PKG_VERSION}-Universal-Installer-signed.pkg"
 
         # Sign pkg with explicit keychain - no prompting
         if [ "$HAS_SIGNING_CERT" = "true" ]; then
@@ -288,8 +288,8 @@ jobs:
     - name: Upload PKG Artifact
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: ProxyBridge-macOS-Installer
-        path: MacOS/ProxyBridge/output/ProxyBridge-*.pkg
+        name: ProxiRoute-macOS-Installer
+        path: MacOS/ProxiRoute/output/ProxiRoute-*.pkg
         retention-days: 30
 
     - name: Cleanup
@@ -302,11 +302,11 @@ jobs:
         rm -f ~/Library/MobileDevice/Provisioning\ Profiles/*.provisionprofile || true
 
         # Remove temp cert and profile files
-        rm -f /tmp/certificate.p12 /tmp/installer.p12 /tmp/app.provisionprofile /tmp/ext.provisionprofile /tmp/ProxyBridge.zip || true
+        rm -f /tmp/certificate.p12 /tmp/installer.p12 /tmp/app.provisionprofile /tmp/ext.provisionprofile /tmp/ProxiRoute.zip || true
 
         # Remove .env with sensitive data
-        rm -f MacOS/ProxyBridge/.env || true
+        rm -f MacOS/ProxiRoute/.env || true
 
         # Remove xcconfig files with sensitive data
-        rm -f MacOS/ProxyBridge/Signing-Config-app.xcconfig || true
-        rm -f MacOS/ProxyBridge/Signing-Config-ext.xcconfig || true
+        rm -f MacOS/ProxiRoute/Signing-Config-app.xcconfig || true
+        rm -f MacOS/ProxiRoute/Signing-Config-ext.xcconfig || true

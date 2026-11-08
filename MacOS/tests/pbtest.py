@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ProxyBridge macOS end-to-end tests. Run on a Mac that has the app installed, the system extension
+"""ProxiRoute macOS end-to-end tests. Run on a Mac that has the app installed, the system extension
 approved and the pbtest.pbprofile imported (see README.md). The runner starts the local test proxies
 (servers.py) itself and builds pbudp.c when needed.
 
@@ -18,7 +18,7 @@ suites: functional  rule routing, SOCKS5/HTTP/auth, DIRECT, BLOCK, UDP, stuck-ha
         dns         200 uncached DNS lookups through the DNS proxy
         idle        40 idle UDP flows must be reaped after ~2 minutes (slow)
         leaks       `leaks` on the extension must report 0 (needs `sudo -v` first, or SUDO_ASKPASS)
-        cli         the command line mode: runs pbtest.pbprofile through `ProxyBridge --cli` from /Applications,
+        cli         the command line mode: runs pbtest.pbprofile through `ProxiRoute --cli` from /Applications,
                     traffic must be redirected, Ctrl+C must clear everything. Not in the default set: the app
                     must be QUIT and the installed build must have the CLI
 Environment: PB_NTP_IP (default: time.apple.com resolved once), PB_EVENTS (event log path)."""
@@ -29,7 +29,7 @@ WORK = os.path.join(HERE, "work")
 os.makedirs(WORK, exist_ok=True)
 LOG = os.environ.setdefault("PB_EVENTS", os.path.join(WORK, "events.log"))
 PBUDP = os.path.join(WORK, "pbudp")
-EXT = "com.interceptsuite.ProxyBridge.extension"
+EXT = "com.sdpong.proxiroute.extension"
 NTP_PAYLOAD = b"\x1b" + b"\0" * 47
 results = []
 _servers = None
@@ -148,7 +148,7 @@ def preflight():
     run(["curl", "-s", "-o", "/dev/null", "-m", "15", "https://example.com"], 20)
     time.sleep(1)
     if ext_pid() is None:
-        sys.exit("The ProxyBridge extension is not running. Start the app and approve the system extension.")
+        sys.exit("The ProxiRoute extension is not running. Start the app and approve the system extension.")
     if not hits(events(t0), "connect", "socks1080", 443):
         sys.exit("The test rules are not active: curl to example.com did not reach SOCKS5 1080.\n"
                  "Import pbtest.pbprofile (Profiles menu, Import) and make it the active profile, see README.md.")
@@ -332,13 +332,13 @@ def leaks():
 
 def cli():
     print("\n== command line mode ==")
-    app = "/Applications/ProxyBridge.app/Contents/MacOS/ProxyBridge"
+    app = "/Applications/ProxiRoute.app/Contents/MacOS/ProxiRoute"
     if not os.path.exists(app):
-        print("SKIP cli: /Applications/ProxyBridge.app is not installed"); return
-    if subprocess.run(["pgrep", "-x", "ProxyBridge"], capture_output=True).returncode == 0:
-        print("SKIP cli: quit the ProxyBridge app first, the CLI refuses to run next to it"); return
+        print("SKIP cli: /Applications/ProxiRoute.app is not installed"); return
+    if subprocess.run(["pgrep", "-x", "ProxiRoute"], capture_output=True).returncode == 0:
+        print("SKIP cli: quit the ProxiRoute app first, the CLI refuses to run next to it"); return
     v = subprocess.run([app, "--cli", "--version"], capture_output=True, text=True)
-    check("C1 --version", v.returncode == 0 and v.stdout.startswith("ProxyBridge CLI "), v.stdout.strip() or v.stderr.strip())
+    check("C1 --version", v.returncode == 0 and v.stdout.startswith("ProxiRoute CLI "), v.stdout.strip() or v.stderr.strip())
     bad = subprocess.run([app, "--cli", "--bogus"], capture_output=True, text=True)
     check("C2 unknown option exits with 2 and a message", bad.returncode == 2 and "Unknown option" in bad.stderr, f"exit {bad.returncode}")
     profile = open(os.path.join(HERE, "pbtest.pbprofile")).read()

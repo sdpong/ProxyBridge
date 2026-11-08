@@ -19,8 +19,8 @@ t("a payload with a bundle id is not empty", !payload.isEmpty)
 t("no payload means no header", ProxyAppIdentity.httpHeaderLines(for: nil).isEmpty)
 t("an empty payload means no header", ProxyAppIdentity.httpHeaderLines(for: ProxyAppIdentity.Payload(bundleId: "", processName: "")).isEmpty)
 let lines = ProxyAppIdentity.httpHeaderLines(for: payload)
-t("there is a header for the bundle id", lines.contains("ProxyBridge-App-Id: com.example.app"))
-t("there is a header for the process name", lines.contains("ProxyBridge-Process: Example"))
+t("there is a header for the bundle id", lines.contains("ProxiRoute-App-Id: com.example.app"))
+t("there is a header for the process name", lines.contains("ProxiRoute-Process: Example"))
 t("there are two headers", lines.count == 2)
 
 // a header value may not end the header
@@ -61,7 +61,7 @@ t("an empty user id is no user id", ProxyAppIdentity.socks4UserId(payload: paylo
 t("without a name there is no user id", ProxyAppIdentity.socks4UserId(payload: nil, username: nil) == nil)
 
 // what the rule that matched decides
-let bridge = "com.sdpong.proxybridge.extension"
+let bridge = "com.sdpong.proxiroute.extension"
 
 // a rule that names the program tells the proxy which program it is
 let withFilter = ProxyAppIdentity.payload(bundleId: "com.example.app",
@@ -72,19 +72,19 @@ t("a rule with a program filter names the program", withFilter.bundleId == "com.
 t("a rule with a program filter keeps the name of the program", withFilter.processName == "Example")
 t("a rule with a program filter sends the program", withFilter.value == "com.example.app")
 
-// a rule that names no program says that the traffic is ProxyBridge's own
+// a rule that names no program says that the traffic is ProxiRoute's own
 let withoutFilter = ProxyAppIdentity.payload(bundleId: "com.example.app",
                                              processName: "Example",
                                              ruleHasProcessFilter: false,
                                              proxyBridgeBundleId: bridge)
-t("a rule without a program filter names ProxyBridge", withoutFilter.bundleId == bridge)
-t("a rule without a program filter sends the name of ProxyBridge", withoutFilter.value == bridge)
+t("a rule without a program filter names ProxiRoute", withoutFilter.bundleId == bridge)
+t("a rule without a program filter sends the name of ProxiRoute", withoutFilter.value == bridge)
 t("a rule without a program filter sends no program name", withoutFilter.processName.isEmpty)
 t("a rule without a program filter is not empty", !withoutFilter.isEmpty)
 
 // the header of the virtual name
 let virtualLines = ProxyAppIdentity.httpHeaderLines(for: withoutFilter)
-t("the virtual name is in the header", virtualLines.contains("ProxyBridge-App-Id: \(bridge)"))
+t("the virtual name is in the header", virtualLines.contains("ProxiRoute-App-Id: \(bridge)"))
 t("the virtual name is the only header", virtualLines.count == 1)
 
 // the socks5 user name of the virtual name

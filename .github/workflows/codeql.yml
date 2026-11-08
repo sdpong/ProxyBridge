@@ -114,22 +114,22 @@ jobs:
       # writing the settings by hand. The templates carry the product name, the bundle id and
       # the module name of this fork (com.sdpong...), and the hand written stubs still named
       # the upstream ones, so the "Embed System Extensions" copy phase looked for
-      # com.sdpong.proxybridge.extension.systemextension while the build had produced
-      # com.interceptsuite.ProxyBridge.extension.systemextension, and the job failed before
+      # com.sdpong.proxiroute.extension.systemextension while the build had produced
+      # com.sdpong.proxiroute.extension.systemextension, and the job failed before
       # CodeQL ever saw a line of Swift.
       - name: Create xcconfig files
         run: |
           for part in app ext; do
-            cp "MacOS/ProxyBridge/proxybridge-$part.xcconfig" "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
-            printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxyBridge/Signing-Config-$part.xcconfig"
+            cp "MacOS/ProxiRoute/proxiroute-$part.xcconfig" "MacOS/ProxiRoute/Signing-Config-$part.xcconfig"
+            printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxiRoute/Signing-Config-$part.xcconfig"
           done
 
       - name: Build (no signing)
         run: |
-          cd MacOS/ProxyBridge
+          cd MacOS/ProxiRoute
           xcodebuild \
-            -project ProxyBridge.xcodeproj \
-            -scheme ProxyBridge \
+            -project ProxiRoute.xcodeproj \
+            -scheme ProxiRoute \
             -configuration Release \
             -derivedDataPath build/DerivedData \
             ARCHS="arm64 x86_64" \

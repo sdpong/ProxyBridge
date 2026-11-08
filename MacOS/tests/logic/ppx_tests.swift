@@ -1,4 +1,4 @@
-// A Proxifier profile (.ppx) and the import into a ProxyBridge profile.
+// A Proxifier profile (.ppx) and the import into a ProxiRoute profile.
 //
 // The same fixture and the same cases are in Windows/tests/test_ppx.c, so the two
 // platforms cannot drift apart: the same file has to mean the same thing on both.

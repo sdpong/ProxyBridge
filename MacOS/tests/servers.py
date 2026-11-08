@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local proxies the ProxyBridge macOS tests talk to. Loopback only, logs every event as
+"""Local proxies the ProxiRoute macOS tests talk to. Loopback only, logs every event as
 one JSON line to $PB_EVENTS (default: work/events.log next to this file).
 
   socks5  127.0.0.1:1080  no auth      (TCP CONNECT + UDP ASSOCIATE)

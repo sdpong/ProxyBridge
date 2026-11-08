@@ -1,4 +1,4 @@
-name: Release ProxyBridge macOS
+name: Release ProxiRoute macOS
 permissions:
   contents: write
 
@@ -33,8 +33,8 @@ jobs:
     
     - name: Create xcconfig files
       run: |
-        echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-app.xcconfig
-        echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxyBridge/Signing-Config-ext.xcconfig
+        echo "${{ secrets.MACOS_APP_XCCONFIG }}" > MacOS/ProxiRoute/Signing-Config-app.xcconfig
+        echo "${{ secrets.MACOS_EXT_XCCONFIG }}" > MacOS/ProxiRoute/Signing-Config-ext.xcconfig
 
     - name: Install Provisioning Profiles
       run: |
@@ -90,10 +90,10 @@ jobs:
 
     - name: Build Universal Binary
       run: |
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         xcodebuild \
-          -project ProxyBridge.xcodeproj \
-          -scheme ProxyBridge \
+          -project ProxiRoute.xcodeproj \
+          -scheme ProxiRoute \
           -configuration Release \
           -derivedDataPath build/DerivedData \
           ARCHS="arm64 x86_64" \
@@ -103,8 +103,8 @@ jobs:
 
     - name: Verify Build
       run: |
-        cd MacOS/ProxyBridge
-        APP="build/DerivedData/Build/Products/Release/ProxyBridge.app"
+        cd MacOS/ProxiRoute
+        APP="build/DerivedData/Build/Products/Release/ProxiRoute.app"
         ls -la build/DerivedData/Build/Products/Release/
 
         # hard gate: fail the release if any shipped binary is not universal.
@@ -121,8 +121,8 @@ jobs:
           fi
         }
 
-        assert_universal "$APP/Contents/MacOS/ProxyBridge"
-        EXT="$APP/Contents/Library/SystemExtensions/com.interceptsuite.ProxyBridge.extension.systemextension/Contents/MacOS/com.interceptsuite.ProxyBridge.extension"
+        assert_universal "$APP/Contents/MacOS/ProxiRoute"
+        EXT="$APP/Contents/Library/SystemExtensions/com.sdpong.proxiroute.extension.systemextension/Contents/MacOS/com.sdpong.proxiroute.extension"
         assert_universal "$EXT"
 
         # Verify code signature
@@ -130,13 +130,13 @@ jobs:
 
     - name: Notarize App
       run: |
-        APP_PATH="MacOS/ProxyBridge/build/DerivedData/Build/Products/Release/ProxyBridge.app"
+        APP_PATH="MacOS/ProxiRoute/build/DerivedData/Build/Products/Release/ProxiRoute.app"
 
         # Zip the app for submission
-        ditto -c -k --keepParent "$APP_PATH" /tmp/ProxyBridge.zip
+        ditto -c -k --keepParent "$APP_PATH" /tmp/ProxiRoute.zip
 
         # Submit for notarization and wait for result, capture submission ID
-        SUBMIT_OUTPUT=$(xcrun notarytool submit /tmp/ProxyBridge.zip \
+        SUBMIT_OUTPUT=$(xcrun notarytool submit /tmp/ProxiRoute.zip \
           --apple-id "${{ secrets.APPLE_ID }}" \
           --password "${{ secrets.APPLE_APP_PASSWORD }}" \
           --team-id "${{ secrets.APPLE_TEAM_ID }}" \
@@ -175,21 +175,21 @@ jobs:
       run: |
         # Write PKG_ENV to .env but strip SIGNING_IDENTITY so build.sh skips signing
         # (productsign inside build.sh cannot access build.keychain - we do it below)
-        printf '%s' "$PKG_ENV_CONTENT" | grep -v "^SIGNING_IDENTITY" > MacOS/ProxyBridge/.env
+        printf '%s' "$PKG_ENV_CONTENT" | grep -v "^SIGNING_IDENTITY" > MacOS/ProxiRoute/.env
 
         # Copy notarized .app into output/ where build.sh expects it
-        mkdir -p MacOS/ProxyBridge/output
-        cp -R MacOS/ProxyBridge/build/DerivedData/Build/Products/Release/ProxyBridge.app \
-          MacOS/ProxyBridge/output/ProxyBridge.app
+        mkdir -p MacOS/ProxiRoute/output
+        cp -R MacOS/ProxiRoute/build/DerivedData/Build/Products/Release/ProxiRoute.app \
+          MacOS/ProxiRoute/output/ProxiRoute.app
 
         # Run build script - creates the unsigned .pkg only
-        cd MacOS/ProxyBridge
+        cd MacOS/ProxiRoute
         chmod +x build.sh
         bash build.sh
 
         PKG_VERSION=$(grep -m1 '^VERSION=' build.sh | cut -d'"' -f2)
-        PKG_UNSIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer.pkg"
-        PKG_SIGNED="output/ProxyBridge-v${PKG_VERSION}-Universal-Installer-signed.pkg"
+        PKG_UNSIGNED="output/ProxiRoute-v${PKG_VERSION}-Universal-Installer.pkg"
+        PKG_SIGNED="output/ProxiRoute-v${PKG_VERSION}-Universal-Installer-signed.pkg"
 
         # Sign pkg with explicit keychain - no prompting
         echo "Signing installer..."
@@ -231,7 +231,7 @@ jobs:
 
     - name: Upload PKG to Release
       run: |
-        gh release upload "$TAG" MacOS/ProxyBridge/output/ProxyBridge-*.pkg --clobber
+        gh release upload "$TAG" MacOS/ProxiRoute/output/ProxiRoute-*.pkg --clobber
       env:
         GH_TOKEN: ${{ github.token }}
         TAG: ${{ inputs.tag }}
@@ -239,8 +239,8 @@ jobs:
     - name: Upload PKG Artifact
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: ProxyBridge-macOS-Installer
-        path: MacOS/ProxyBridge/output/ProxyBridge-*.pkg
+        name: ProxiRoute-macOS-Installer
+        path: MacOS/ProxiRoute/output/ProxiRoute-*.pkg
         retention-days: 30
 
     - name: Cleanup
@@ -253,11 +253,11 @@ jobs:
         rm -f ~/Library/MobileDevice/Provisioning\ Profiles/*.provisionprofile || true
 
         # Remove temp cert and profile files
-        rm -f /tmp/certificate.p12 /tmp/installer.p12 /tmp/app.provisionprofile /tmp/ext.provisionprofile /tmp/ProxyBridge.zip || true
+        rm -f /tmp/certificate.p12 /tmp/installer.p12 /tmp/app.provisionprofile /tmp/ext.provisionprofile /tmp/ProxiRoute.zip || true
 
         # Remove .env with sensitive data
-        rm -f MacOS/ProxyBridge/.env || true
+        rm -f MacOS/ProxiRoute/.env || true
 
         # Remove xcconfig files with sensitive data
-        rm -f MacOS/ProxyBridge/Signing-Config-app.xcconfig || true
-        rm -f MacOS/ProxyBridge/Signing-Config-ext.xcconfig || true
+        rm -f MacOS/ProxiRoute/Signing-Config-app.xcconfig || true
+        rm -f MacOS/ProxiRoute/Signing-Config-ext.xcconfig || true

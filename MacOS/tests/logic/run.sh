@@ -3,8 +3,8 @@
 # network needed, this is what could run on a hosted CI runner. Needs the Xcode command line tools.
 set -e
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXT="$HERE/../../ProxyBridge/extension"
-APP="$HERE/../../ProxyBridge/ProxyBridge"
+EXT="$HERE/../../ProxiRoute/extension"
+APP="$HERE/../../ProxiRoute/ProxiRoute"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 run_test() {   # <test file> <extension sources...>

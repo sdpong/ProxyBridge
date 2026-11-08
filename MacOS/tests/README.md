@@ -1,4 +1,4 @@
-# ProxyBridge macOS tests
+# ProxiRoute macOS tests
 
 Regression tests for the macOS app and system extension. They found the UDP association leak, the proxy
 reply parsing bugs and the BLOCK-without-proxy bug, so run them before every release.
@@ -26,7 +26,7 @@ Compiles `matcher_tests.swift` (rule matching: process, host, domain and port pa
 
 One-time setup:
 
-1. Install and start ProxyBridge, approve the system extension and the network configuration when macOS asks.
+1. Install and start ProxiRoute, approve the system extension and the network configuration when macOS asks.
 2. In the app, create a profile and import `pbtest.pbprofile` (Profiles menu, Import). It adds five test proxies
    on `127.0.0.1` (SOCKS5 1080, SOCKS5 1081 with auth, SOCKS5 1082 black hole, HTTP 8080, HTTP 8081 with auth;
    the credentials `pbtest` / `pbpass` are dummies) and ten rules. Make it the active profile.
@@ -54,7 +54,7 @@ If the rules are not active it stops with a message instead of failing every tes
 | `dns` | 200 uncached lookups through the DNS proxy all return the right answer |
 | `idle` | 40 idle UDP flows are reaped after about 2 minutes while the app still holds the sockets |
 | `leaks` | `leaks` on the extension reports 0 (the extension is a root process, so this needs sudo) |
-| `cli` | the command line mode (`ProxyBridge --cli`): version and error handling, a profile piped in over standard input redirects traffic, a BLOCK rule works, a second CLI is refused, Ctrl+C clears everything. **Not in the default set:** quit the app first, and the build installed in `/Applications` must include the CLI |
+| `cli` | the command line mode (`ProxiRoute --cli`): version and error handling, a profile piped in over standard input redirects traffic, a BLOCK rule works, a second CLI is refused, Ctrl+C clears everything. **Not in the default set:** quit the app first, and the build installed in `/Applications` must include the CLI |
 
 ### Hostname suite with a box unticked
 

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The entitlements of a build that is not going to the App Store.
+
+	  The difference to ProxiRouteRelease.entitlements is that the App Sandbox
+	  is left out, and with it the entitlements that only mean something inside
+	  a sandbox (the app group, the user selected files, the network client and
+	  server).
+
+	  Why:
+	  - the sandbox is what stops the app from reading the unified log, and the
+	    unified log is where the system extension writes every decision it made
+	    ("Connection TCP ... via SOCKS5 (rule 3)"). logd refuses to serve the
+	    system scope to a sandboxed process and the /usr/bin/log tool refuses
+	    to run in one at all ("Cannot run while sandboxed"). Without the
+	    sandbox the app reads that log back and the window has its connections.
+	  - the message channel between the app and its own extension is checked
+	    against the app's signature, so a build that is not signed by a developer
+	    gets no message through it. The log is the way around that, and it is
+	    also what a build signed by a developer reads, so both builds show the
+	    same thing.
+
+	  The app group is gone because a process without the sandbox has no group
+	  container. The shared container was only used for the dns policy, and
+	  that travels with the start of the tunnel instead.
+	-->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+				<string>packet-tunnel-provider-systemextension</string>
+				<string>app-proxy-provider-systemextension</string>
+				<string>content-filter-provider-systemextension</string>
+				<string>dns-proxy-systemextension</string>
+				<string>dns-settings</string>
+				<string>relay</string>
+				<string>url-filter-provider</string>
+				<string>hotspot-provider</string>
+		</array>
+	<key>com.apple.developer.system-extension.install</key>
+	<true/>
+</dict>
+</plist>

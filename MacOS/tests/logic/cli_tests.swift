@@ -3,20 +3,20 @@ import Foundation
 
 var fails = 0
 func t(_ name: String, _ ok: Bool) { if !ok { fails += 1; print("FAIL", name) } }
-func opts(_ args: [String]) -> CLIOptions? { if case .run(let o) = CLIArguments.parse(["proxybridge"] + args) { return o }; return nil }
-func err(_ args: [String]) -> String? { if case .failure(let m) = CLIArguments.parse(["proxybridge"] + args) { return m }; return nil }
+func opts(_ args: [String]) -> CLIOptions? { if case .run(let o) = CLIArguments.parse(["proxiroute"] + args) { return o }; return nil }
+func err(_ args: [String]) -> String? { if case .failure(let m) = CLIArguments.parse(["proxiroute"] + args) { return m }; return nil }
 
 // ---- GUI or CLI
-t("no options is the GUI", !CLIArguments.isCLI(["/Applications/ProxyBridge.app/Contents/MacOS/ProxyBridge"]))
-t("only the program name is the GUI", !CLIArguments.isCLI(["ProxyBridge"]))
+t("no options is the GUI", !CLIArguments.isCLI(["/Applications/ProxiRoute.app/Contents/MacOS/ProxiRoute"]))
+t("only the program name is the GUI", !CLIArguments.isCLI(["ProxiRoute"]))
 t("empty arguments is the GUI", !CLIArguments.isCLI([]))
-t("old Finder launch argument is the GUI", !CLIArguments.isCLI(["ProxyBridge", "-psn_0_12345"]))
-t("Xcode debug arguments are the GUI", !CLIArguments.isCLI(["ProxyBridge", "-NSDocumentRevisionsDebugMode", "YES"]))
+t("old Finder launch argument is the GUI", !CLIArguments.isCLI(["ProxiRoute", "-psn_0_12345"]))
+t("Xcode debug arguments are the GUI", !CLIArguments.isCLI(["ProxiRoute", "-NSDocumentRevisionsDebugMode", "YES"]))
 for flag in ["--cli", "--profile", "--verbose", "--version", "--update", "--list-profiles", "--help", "-h", "-?"] {
-    t("\(flag) means the command line", CLIArguments.isCLI(["ProxyBridge", flag]))
+    t("\(flag) means the command line", CLIArguments.isCLI(["ProxiRoute", flag]))
 }
-t("--profile=name means the command line", CLIArguments.isCLI(["ProxyBridge", "--profile=work"]))
-t("--verbose=2 means the command line", CLIArguments.isCLI(["ProxyBridge", "--verbose=2"]))
+t("--profile=name means the command line", CLIArguments.isCLI(["ProxiRoute", "--profile=work"]))
+t("--verbose=2 means the command line", CLIArguments.isCLI(["ProxiRoute", "--verbose=2"]))
 t("the program name itself is not an option", !CLIArguments.isCLI(["--profile"]))   // argv[0] is skipped
 
 // ---- parsing
