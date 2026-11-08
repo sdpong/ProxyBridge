@@ -351,17 +351,23 @@ say "   the test place is on 127.0.0.1:$TARGET_PORT, the program listens on 127.
 
 # ---------------------------------------------------------------- the local test
 
-step "a connection goes to the test place"
-curl -s --max-time 20 "http://127.0.0.1:$TARGET_PORT/" -o "$TMP/client.out" 2>"$TMP/client.err"
-say "   the client got $(wc -c < "$TMP/client.out" | tr -d ' ') bytes"
-if [ -s "$TMP/helper.log" ]; then
-    say "   the program took the connection:"
-    grep -E '^(accepted|NATLOOK|going|no way)' "$TMP/helper.log" | sed 's/^/      /'
-else
-    say "   the program took nothing: the redirect did not happen."
-fi
+# one connection to the test place, and what the program made of it
+local_test() {
+    log_file="$1"
+    step "a connection goes to the test place"
+    curl -s --max-time 20 "http://127.0.0.1:$TARGET_PORT/" -o "$TMP/client.out" 2>"$TMP/client.err"
+    say "   the client got $(wc -c < "$TMP/client.out" | tr -d ' ') bytes"
+    if [ -s "$log_file" ]; then
+        say "   the program took the connection:"
+        grep -E '^(accepted|NATLOOK|going|no way)' "$log_file" | sed 's/^/      /'
+    else
+        say "   the program took nothing: the redirect did not happen."
+    fi
+    sleep 1
+}
 
-sleep 1
+local_test "$TMP/helper.log"
+
 pfctl -ss 2>&1 | head -40 > "$TMP/states.txt"
 pfctl -ss -o nat 2>&1 | head -40 > "$TMP/states-nat.txt"
 say
@@ -371,14 +377,35 @@ say
 say "the same states with the translation details (-o nat):"
 sed 's/^/   /' "$TMP/states-nat.txt"
 
+# ---------------------------------------------------------------- the same, without root
+#
+# The ioctl is sent on the socket of the connection, so it may not need the
+# root at all: if the program can ask the kernel as an ordinary user, the
+# app of the gateway mode can do it by itself and the helper does not have
+# to. The reading of the states needs the root, so the two are told apart.
+
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    step "the same, with the program running as $SUDO_USER instead of root"
+    kill "$HELPER_PID" 2>/dev/null
+    sleep 1
+    kill -9 "$HELPER_PID" 2>/dev/null
+    sudo -u "$SUDO_USER" "$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" \
+        "$SRC_PORT_BASE" 127.0.0.1 "$TARGET_PORT" > "$TMP/helper-user.log" 2>&1 &
+    HELPER_PID=$!
+    sleep 2
+    local_test "$TMP/helper-user.log"
+    verdict "without root" "$TMP/helper-user.log"
+fi
+
 # ---------------------------------------------------------------- the verdict
 
 verdict() {
     which_test="$1"
+    log_file="$2"
     echo
     echo "== the verdict ($which_test) =="
 
-    if ! grep -q '^accepted from' "$TMP/helper.log" 2>/dev/null; then
+    if ! grep -q '^accepted from' "$log_file" 2>/dev/null; then
         say "   FAIL: the connection never came to the program."
         say "        The filter did not redirect it, so the rules are not in"
         say "        place. The output above says what the filter thinks it has."
@@ -388,7 +415,7 @@ verdict() {
     # Every answer of the kernel is looked at, not only the first one: the
     # layout that this kernel uses is not known, and a layout that is not
     # the right one can answer with something that makes no sense.
-    answer="$(python3 - "$TMP/helper.log" "$TARGET_PORT" "$REDIRECT_PORT" "$which_test" <<'PY'
+    answer="$(python3 - "$log_file" "$TARGET_PORT" "$REDIRECT_PORT" "$which_test" <<'PY'
 import re
 import sys
 
@@ -483,7 +510,7 @@ PY
     esac
 }
 
-verdict local
+verdict local "$TMP/helper.log"
 
 # ---------------------------------------------------------------- the forwarding
 
@@ -505,8 +532,15 @@ if [ "$FORWARD" = "1" ]; then
     grep -E '^(accepted|NATLOOK|going|no way)' "$TMP/helper.log" | sed 's/^/   /'
     echo
     say "the states of the filter:"
-    pfctl -ss 2>&1 | head -20 | sed 's/^/   /'
-    verdict client
+    pfctl -ss 2>&1 | head -40 > "$TMP/states-client.txt"
+    pfctl -ss -o nat 2>&1 | head -40 > "$TMP/states-client-nat.txt"
+    sed 's/^/   /' "$TMP/states-client.txt"
+    say
+    say "the same states with the translation details (-o nat):"
+    sed 's/^/   /' "$TMP/states-client-nat.txt"
+    cp "$TMP/states-client.txt" "$TMP/states.txt"
+    cp "$TMP/states-client-nat.txt" "$TMP/states-nat.txt"
+    verdict client "$TMP/helper.log"
 fi
 
 echo
