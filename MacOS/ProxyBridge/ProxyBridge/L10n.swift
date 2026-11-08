@@ -53,10 +53,15 @@ enum L10n {
     }
 
     // A text with names in it, in a given language.
+    //
+    // The names go into the placeholders one after the other. Replacing them
+    // all at once would put the first name into every placeholder, so a text
+    // with three names would say the first name three times.
     static func formatted(_ text: String, arguments: [String], language: Language) -> String {
         var out = translate(text, language: language)
         for argument in arguments {
-            out = out.replacingOccurrences(of: "%@", with: argument)
+            guard let range = out.range(of: "%@") else { break }
+            out.replaceSubrange(range, with: argument)
         }
         return out
     }
