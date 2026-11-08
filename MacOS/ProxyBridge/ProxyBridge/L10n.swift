@@ -91,6 +91,36 @@ enum L10n {
         "Approve ProxyBridge in System Settings...": "在系统设置中授权 ProxyBridge…",
         "Take Out Older ProxyBridge Extensions...": "移除较旧的 ProxyBridge 扩展…",
 
+        // the menus macOS brings itself. their titles come from the
+        // localization of the app bundle, and this app has no bundle of
+        // resources, so they are renamed at runtime (StandardMenuLocalizer)
+        "View": "显示",
+        "Window": "窗口",
+        "Help": "帮助",
+        "File": "文件",
+        "Format": "格式",
+        "About %@": "关于 %@",
+        "Hide %@": "隐藏 %@",
+        "Hide Others": "隐藏其他",
+        "Show All": "显示全部",
+        "Services": "服务",
+        "Quit %@": "退出 %@",
+        "Minimize": "最小化",
+        "Zoom": "缩放",
+        "Bring All to Front": "前置全部窗口",
+        "Undo": "撤销",
+        "Redo": "重做",
+        "Cut": "剪切",
+        "Copy": "拷贝",
+        "Paste": "粘贴",
+        "Select All": "全选",
+        "AutoFill": "自动填充",
+        "Contact…": "通讯录…",
+        "Passwords…": "密码…",
+        "Credit Card…": "信用卡…",
+        "Start Dictation…": "开始听写…",
+        "Emoji & Symbols": "表情与符号",
+
         // the buttons
         "Add": "添加",
         "Add Rule": "添加规则",

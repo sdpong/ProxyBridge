@@ -57,6 +57,11 @@ struct ProxyBridgeGUIApp: App {
                     AppDelegate.viewModel = viewModel
                     checkForUpdatesOnStartup()
                 }
+                .onChange(of: localization.language) { _ in
+                    // the menus are built again when the language changes, and
+                    // the system writes its own titles into them
+                    StandardMenuLocalizer.applySoon()
+                }
                 .onChange(of: viewModel.needsExtensionApproval) { needsApproval in
                     // The first time this happens it deserves a dialog, so it is not
                     // missed. After that the notice in the window is enough: a dialog
@@ -439,6 +444,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         setupStatusItem()
+        // the menus macOS brings itself are renamed, so that they speak the
+        // language of the app. it is done here and not from the window: the
+        // window can be hidden in the menu bar, and the menus are there even
+        // then.
+        StandardMenuLocalizer.install()
         // keep the real login item in sync with the active profile's setting
         LoginItem.applyToSystem(LoginItem.isEnabled)
 
