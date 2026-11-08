@@ -6,23 +6,44 @@
  * was going before it was redirected. That is the original destination, and
  * the kernel is the only one that knows it.
  *
- * macOS does not ship <net/pfvar.h>, so the layouts that are in the field
- * are declared here. The size of the struct goes into the number of the
- * ioctl, so a layout that is not the one of this kernel is refused with
- * ENOTTY instead of being read wrong. All of them are tried, and the answer
- * is printed in every reading, because the byte order of the addresses and
- * of the ports is a convention that this program cannot know either.
+ * macOS does not ship <net/pfvar.h>, so the layouts of the struct that are
+ * in the field are declared here: three of them, with a file descriptor,
+ * without one, and the newer one with a field for the reply.
+ *
+ * What the first run of this test taught us is that the error of the ioctl
+ * does not tell the layout apart: with no state to find, the kernel
+ * answered ENXIO for all of them. So the program does not guess, it tries:
+ *
+ *   - every layout (three of them);
+ *   - which end of the socket is given first (two);
+ *   - the byte order of the ports (two: the order of the network and the
+ *     order of the machine - the state table keeps the ports of the
+ *     machine, and nobody writes down what the ioctl wants);
+ *   - the number that goes into the protocol field (two);
+ *   - the direction (two);
+ *   - the destination the lookup is made with: the address the socket is
+ *     bound to, or the place the traffic was going before (two).
+ *
+ * That is a hundred and something ioctls for one connection, and they cost
+ * nothing. The answer of the kernel is printed in every reading, because
+ * the byte order of what it says is a convention this program cannot know
+ * either.
  *
  * The program takes the connections, asks the kernel where they came from,
  * and then connects to that place and relays the bytes. The answer of the
  * kernel is written to the log, which is what the spike reads.
  *
- *   gateway-natlook <listen port> <fallback host> <fallback port> [source port base]
+ *   gateway-natlook <listen port> <fallback host> <fallback port>
+ *                   [source port base] [known original host] [known original port]
  *
  * The source port is bound on the outgoing connection: the packet filter
  * would otherwise redirect it again, and the program would talk to itself.
  * Every connection takes the next port of the range, so that many of them
  * can be open at the same time.
+ *
+ * The known original host and port are only for the test: the test knows
+ * where it sent the connection, so one more way of looking the state up
+ * can be tried with it.
  */
 
 #include <errno.h>
@@ -101,6 +122,12 @@ union natlook_buffer {
     char raw[64];
 };
 
+/* The layouts the program tries. */
+#define LAYOUT_OLD    0
+#define LAYOUT_OLDER  1
+#define LAYOUT_NEW    2
+#define LAYOUT_COUNT  3
+
 /* How many connections may be open at the same time. */
 #define SOURCE_PORTS 100
 
@@ -171,194 +198,223 @@ struct answer {
     uint16_t port;
 };
 
-/* The order the two ends of the socket are given to the kernel. */
+/* One way of asking the kernel. */
+struct probe_input {
+    int order;        /* ORDER_PEER_FIRST, ORDER_LOCAL_FIRST */
+    int ports;        /* PORT_NET, PORT_HOST */
+    int addrs;        /* ADDR_NET, ADDR_HOST */
+    int proto;        /* 6 or 2 */
+    int dir;          /* PF_IN, PF_OUT */
+    int use_original; /* the destination is the place the traffic was going */
+};
+
+/* What the kernel wrote back. */
+struct probe_result {
+    uint32_t saddr;
+    uint32_t daddr;
+    uint32_t rsaddr;
+    uint32_t rdaddr;
+    uint16_t sport;
+    uint16_t dport;
+    uint16_t rsport;
+    uint16_t rdport;
+};
+
 #define ORDER_PEER_FIRST 0
 #define ORDER_LOCAL_FIRST 1
+#define PORT_NET 0
+#define PORT_HOST 1
+#define ADDR_NET 0
+#define ADDR_HOST 1
 
-static const char *order_name(int order) {
-    return order == ORDER_PEER_FIRST ? "peer_first" : "local_first";
+static const char *layout_name(int layout) {
+    switch (layout) {
+    case LAYOUT_OLD: return "old";
+    case LAYOUT_OLDER: return "older";
+    default: return "new";
+    }
+}
+
+/* The port in the byte order that is asked for. */
+static uint16_t port_in(uint16_t network_port, int order) {
+    return order == PORT_NET ? network_port : (uint16_t)ntohs(network_port);
+}
+
+/* The address in the byte order that is asked for.
+ *
+ * The addresses of the state table are the addresses of the network, but
+ * the ioctl may want the other reading, and even 127.0.0.1 is two
+ * different numbers in the two of them. */
+static uint32_t addr_in(uint32_t network_addr, int order) {
+    return order == ADDR_NET ? network_addr : swap32(network_addr);
+}
+
+/* Fills one of the three layouts and asks the kernel.
+ * Returns 1 when the kernel answered. */
+static int probe(int fd, int layout, const struct sockaddr_in *peer,
+                 const struct sockaddr_in *local, const struct sockaddr_in *original,
+                 const struct probe_input *in, struct probe_result *out) {
+    /* the ends of the socket, in the order the lookup is made with */
+    struct sockaddr_in src, dst;
+    if (in->order == ORDER_PEER_FIRST) {
+        src = *peer;
+        dst = *local;
+    } else {
+        src = *local;
+        dst = *peer;
+    }
+    /* the destination may be the place the traffic was going before */
+    if (in->use_original && original != NULL) {
+        dst = *original;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    if (layout == LAYOUT_NEW) {
+        union natlook_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        struct pfioc_natlook_new *nl = &buf.newer;
+        nl->saddr.pfa.addr32 = addr_in(src.sin_addr.s_addr, in->addrs);
+        nl->daddr.pfa.addr32 = addr_in(dst.sin_addr.s_addr, in->addrs);
+        nl->sport = port_in(src.sin_port, in->ports);
+        nl->dport = port_in(dst.sin_port, in->ports);
+        nl->af = AF_INET;
+        nl->proto = (uint8_t)in->proto;
+        nl->direction = (uint8_t)in->dir;
+        if (ioctl(fd, DIOCNATLOOK_NEW, &buf) != 0) return 0;
+        out->saddr = nl->saddr.pfa.addr32;
+        out->daddr = nl->daddr.pfa.addr32;
+        out->rsaddr = nl->rsaddr.pfa.addr32;
+        out->rdaddr = nl->rdaddr.pfa.addr32;
+        out->sport = nl->sport;
+        out->dport = nl->dport;
+        out->rsport = nl->rsport;
+        out->rdport = nl->rdport;
+        return 1;
+    }
+
+    if (layout == LAYOUT_OLD) {
+        union natlook_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        struct pfioc_natlook_old *nl = &buf.old;
+        nl->saddr.pfa.addr32 = addr_in(src.sin_addr.s_addr, in->addrs);
+        nl->daddr.pfa.addr32 = addr_in(dst.sin_addr.s_addr, in->addrs);
+        nl->sport = port_in(src.sin_port, in->ports);
+        nl->dport = port_in(dst.sin_port, in->ports);
+        nl->proto = (uint16_t)in->proto;
+        nl->direction = (uint16_t)in->dir;
+        nl->fd = fd;
+        if (ioctl(fd, DIOCNATLOOK_OLD, &buf) != 0) return 0;
+        out->saddr = nl->saddr.pfa.addr32;
+        out->daddr = nl->daddr.pfa.addr32;
+        out->sport = nl->sport;
+        out->dport = nl->dport;
+        return 1;
+    }
+
+    union natlook_buffer buf;
+    memset(&buf, 0, sizeof(buf));
+    struct pfioc_natlook_older *nl = &buf.older;
+    nl->saddr.pfa.addr32 = addr_in(src.sin_addr.s_addr, in->addrs);
+    nl->daddr.pfa.addr32 = addr_in(dst.sin_addr.s_addr, in->addrs);
+    nl->sport = port_in(src.sin_port, in->ports);
+    nl->dport = port_in(dst.sin_port, in->ports);
+    nl->proto = (uint16_t)in->proto;
+    nl->direction = (uint16_t)in->dir;
+    if (ioctl(fd, DIOCNATLOOK_OLDER, &buf) != 0) return 0;
+    out->saddr = nl->saddr.pfa.addr32;
+    out->daddr = nl->daddr.pfa.addr32;
+    out->sport = nl->sport;
+    out->dport = nl->dport;
+    return 1;
 }
 
 /* Prints one line per answer of the kernel. Every number is shown in both
  * readings, because the byte order is a convention this program cannot know. */
-static void report(const char *layout, int order, int proto, int dir,
-                   uint32_t saddr, uint16_t sport,
-                   uint32_t daddr, uint16_t dport,
-                   uint32_t rsaddr, uint16_t rsport,
-                   uint32_t rdaddr, uint16_t rdport) {
+static void report(const struct probe_input *in, int layout,
+                   const struct probe_result *r) {
     char s1[INET_ADDRSTRLEN], s2[INET_ADDRSTRLEN];
     char d1[INET_ADDRSTRLEN], d2[INET_ADDRSTRLEN];
     char rs1[INET_ADDRSTRLEN], rs2[INET_ADDRSTRLEN];
     char rd1[INET_ADDRSTRLEN], rd2[INET_ADDRSTRLEN];
     char sp[32], dp[32], rsp[32], rdp[32];
 
-    fmt_addr(saddr, s1, s2);
-    fmt_addr(daddr, d1, d2);
-    fmt_addr(rsaddr, rs1, rs2);
-    fmt_addr(rdaddr, rd1, rd2);
-    fmt_port(sport, sp, sizeof(sp));
-    fmt_port(dport, dp, sizeof(dp));
-    fmt_port(rsport, rsp, sizeof(rsp));
-    fmt_port(rdport, rdp, sizeof(rdp));
+    fmt_addr(r->saddr, s1, s2);
+    fmt_addr(r->daddr, d1, d2);
+    fmt_addr(r->rsaddr, rs1, rs2);
+    fmt_addr(r->rdaddr, rd1, rd2);
+    fmt_port(r->sport, sp, sizeof(sp));
+    fmt_port(r->dport, dp, sizeof(dp));
+    fmt_port(r->rsport, rsp, sizeof(rsp));
+    fmt_port(r->rdport, rdp, sizeof(rdp));
 
-    log_line("NATLOOK ok layout=%s order=%s proto=%d dir=%s "
+    log_line("NATLOOK ok layout=%s order=%s ports=%s addrs=%s proto=%d dir=%s dst=%s "
              "saddr=%s/%s sport=%s daddr=%s/%s dport=%s "
              "rsaddr=%s/%s rsport=%s rdaddr=%s/%s rdport=%s",
-             layout, order_name(order), proto, dir == PF_IN ? "in" : "out",
+             layout_name(layout),
+             in->order == ORDER_PEER_FIRST ? "peer_first" : "local_first",
+             in->ports == PORT_NET ? "net" : "host",
+             in->addrs == ADDR_NET ? "net" : "host",
+             in->proto,
+             in->dir == PF_IN ? "in" : "out",
+             in->use_original ? "original" : "local",
              s1, s2, sp, d1, d2, dp, rs1, rs2, rsp, rd1, rd2, rdp);
 }
 
-/* The guess of the program: where the connection was going before it was
- * redirected. The old layout puts it where the destination was, the new one
- * has a field of its own for it. */
-static void take_answer(struct answer *best, const char *layout,
-                         uint32_t addr, uint16_t port) {
-    if (best->found) return;
-    best->found = 1;
-    snprintf(best->layout, sizeof(best->layout), "%s", layout);
-    best->addr = addr;
-    best->port = port;
-}
-
-/* Tries one layout, with every way of telling the kernel about the socket.
+/* Asks the kernel in every way there is, and keeps the first answer.
  * Returns the number of answers. */
-static int try_old(int fd, const struct sockaddr_in *peer,
-                   const struct sockaddr_in *local, struct answer *best) {
+static int ask(int fd, const struct sockaddr_in *peer, const struct sockaddr_in *local,
+               const struct sockaddr_in *original, struct answer *best) {
     static const int protos[] = { 6, 2 };
     static const int dirs[] = { PF_IN, PF_OUT };
     int answers = 0;
-    int last_errno = 0;
+    int errnos[LAYOUT_COUNT] = { 0, 0, 0 };
 
-    for (int order = 0; order < 2; order++) {
-        for (size_t p = 0; p < sizeof(protos) / sizeof(protos[0]); p++) {
-            for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
-                union natlook_buffer buf;
-                memset(&buf, 0, sizeof(buf));
-                struct pfioc_natlook_old *nl = &buf.old;
-                if (order == ORDER_PEER_FIRST) {
-                    nl->saddr.pfa.addr32 = peer->sin_addr.s_addr;
-                    nl->daddr.pfa.addr32 = local->sin_addr.s_addr;
-                    nl->sport = peer->sin_port;
-                    nl->dport = local->sin_port;
-                } else {
-                    nl->saddr.pfa.addr32 = local->sin_addr.s_addr;
-                    nl->daddr.pfa.addr32 = peer->sin_addr.s_addr;
-                    nl->sport = local->sin_port;
-                    nl->dport = peer->sin_port;
+    for (int layout = 0; layout < LAYOUT_COUNT; layout++) {
+        for (int order = 0; order < 2; order++) {
+            for (int ports = 0; ports < 2; ports++) {
+                for (int addrs = 0; addrs < 2; addrs++) {
+                    for (size_t p = 0; p < sizeof(protos) / sizeof(protos[0]); p++) {
+                        for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
+                            for (int original_dst = 0; original_dst < 2; original_dst++) {
+                            struct probe_input in;
+                            in.order = order;
+                            in.ports = ports;
+                            in.addrs = addrs;
+                            in.proto = protos[p];
+                            in.dir = dirs[d];
+                            in.use_original = original_dst && original != NULL;
+                            struct probe_result r;
+                            if (!probe(fd, layout, peer, local, original, &in, &r)) {
+                                errnos[layout] = errno;
+                                continue;
+                            }
+                            answers++;
+                            report(&in, layout, &r);
+                            if (!best->found) {
+                                best->found = 1;
+                                snprintf(best->layout, sizeof(best->layout), "%s",
+                                         layout_name(layout));
+                                /* the newer layout has a field of its own for
+                                 * the place the traffic was going */
+                                if (layout == LAYOUT_NEW) {
+                                    best->addr = r.rdaddr;
+                                    best->port = r.rdport;
+                                } else {
+                                    best->addr = r.daddr;
+                                    best->port = r.dport;
+                                }
+                            }
+                            }
+                        }
+                    }
                 }
-                nl->proto = (uint16_t)protos[p];
-                nl->direction = (uint16_t)dirs[d];
-                nl->fd = fd;
-                if (ioctl(fd, DIOCNATLOOK_OLD, &buf) != 0) {
-                    last_errno = errno;
-                    continue;
-                }
-                answers++;
-                report("old", order, protos[p], dirs[d],
-                       nl->saddr.pfa.addr32, nl->sport,
-                       nl->daddr.pfa.addr32, nl->dport,
-                       0, 0, 0, 0);
-                take_answer(best, "old", nl->daddr.pfa.addr32, nl->dport);
             }
         }
-    }
-    if (answers == 0 && last_errno != 0) {
-        log_line("NATLOOK layout=old was refused: %s (errno %d)",
-                 strerror(last_errno), last_errno);
-    }
-    return answers;
-}
-
-static int try_older(int fd, const struct sockaddr_in *peer,
-                     const struct sockaddr_in *local, struct answer *best) {
-    static const int protos[] = { 6, 2 };
-    static const int dirs[] = { PF_IN, PF_OUT };
-    int answers = 0;
-    int last_errno = 0;
-
-    for (int order = 0; order < 2; order++) {
-        for (size_t p = 0; p < sizeof(protos) / sizeof(protos[0]); p++) {
-            for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
-                union natlook_buffer buf;
-                memset(&buf, 0, sizeof(buf));
-                struct pfioc_natlook_older *nl = &buf.older;
-                if (order == ORDER_PEER_FIRST) {
-                    nl->saddr.pfa.addr32 = peer->sin_addr.s_addr;
-                    nl->daddr.pfa.addr32 = local->sin_addr.s_addr;
-                    nl->sport = peer->sin_port;
-                    nl->dport = local->sin_port;
-                } else {
-                    nl->saddr.pfa.addr32 = local->sin_addr.s_addr;
-                    nl->daddr.pfa.addr32 = peer->sin_addr.s_addr;
-                    nl->sport = local->sin_port;
-                    nl->dport = peer->sin_port;
-                }
-                nl->proto = (uint16_t)protos[p];
-                nl->direction = (uint16_t)dirs[d];
-                if (ioctl(fd, DIOCNATLOOK_OLDER, &buf) != 0) {
-                    last_errno = errno;
-                    continue;
-                }
-                answers++;
-                report("older", order, protos[p], dirs[d],
-                       nl->saddr.pfa.addr32, nl->sport,
-                       nl->daddr.pfa.addr32, nl->dport,
-                       0, 0, 0, 0);
-                take_answer(best, "older", nl->daddr.pfa.addr32, nl->dport);
-            }
+        if (answers == 0 && errnos[layout] != 0) {
+            log_line("NATLOOK layout=%s was refused in every way: %s (errno %d)",
+                     layout_name(layout), strerror(errnos[layout]), errnos[layout]);
         }
-    }
-    if (answers == 0 && last_errno != 0) {
-        log_line("NATLOOK layout=older was refused: %s (errno %d)",
-                 strerror(last_errno), last_errno);
-    }
-    return answers;
-}
-
-static int try_new(int fd, const struct sockaddr_in *peer,
-                   const struct sockaddr_in *local, struct answer *best) {
-    static const int protos[] = { 6, 2 };
-    static const int dirs[] = { PF_IN, PF_OUT };
-    int answers = 0;
-    int last_errno = 0;
-
-    for (int order = 0; order < 2; order++) {
-        for (size_t p = 0; p < sizeof(protos) / sizeof(protos[0]); p++) {
-            for (size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); d++) {
-                union natlook_buffer buf;
-                memset(&buf, 0, sizeof(buf));
-                struct pfioc_natlook_new *nl = &buf.newer;
-                if (order == ORDER_PEER_FIRST) {
-                    nl->saddr.pfa.addr32 = peer->sin_addr.s_addr;
-                    nl->daddr.pfa.addr32 = local->sin_addr.s_addr;
-                    nl->sport = peer->sin_port;
-                    nl->dport = local->sin_port;
-                } else {
-                    nl->saddr.pfa.addr32 = local->sin_addr.s_addr;
-                    nl->daddr.pfa.addr32 = peer->sin_addr.s_addr;
-                    nl->sport = local->sin_port;
-                    nl->dport = peer->sin_port;
-                }
-                nl->af = AF_INET;
-                nl->proto = (uint8_t)protos[p];
-                nl->direction = (uint8_t)dirs[d];
-                if (ioctl(fd, DIOCNATLOOK_NEW, &buf) != 0) {
-                    last_errno = errno;
-                    continue;
-                }
-                answers++;
-                report("new", order, protos[p], dirs[d],
-                       nl->saddr.pfa.addr32, nl->sport,
-                       nl->daddr.pfa.addr32, nl->dport,
-                       nl->rsaddr.pfa.addr32, nl->rsport,
-                       nl->rdaddr.pfa.addr32, nl->rdport);
-                take_answer(best, "new", nl->rdaddr.pfa.addr32, nl->rdport);
-            }
-        }
-    }
-    if (answers == 0 && last_errno != 0) {
-        log_line("NATLOOK layout=new was refused: %s (errno %d)",
-                 strerror(last_errno), last_errno);
     }
     return answers;
 }
@@ -460,7 +516,7 @@ static void relay(int a, int b) {
 
 /* One connection: where was it going, and then the bytes. */
 static void handle_one(int client, const char *fallback_host, int fallback_port,
-                       int source_port, int listen_port) {
+                       int source_port, const struct sockaddr_in *original) {
     struct sockaddr_in peer, local;
     peer_of(client, &peer);
     local_of(client, &local);
@@ -470,9 +526,7 @@ static void handle_one(int client, const char *fallback_host, int fallback_port,
 
     struct answer best;
     memset(&best, 0, sizeof(best));
-    int answers = try_old(client, &peer, &local, &best);
-    answers += try_older(client, &peer, &local, &best);
-    answers += try_new(client, &peer, &local, &best);
+    int answers = ask(client, &peer, &local, original, &best);
 
     if (answers > 0) {
         char a1[INET_ADDRSTRLEN], a2[INET_ADDRSTRLEN];
@@ -529,7 +583,6 @@ static void handle_one(int client, const char *fallback_host, int fallback_port,
         log_line("no way out of this connection");
         return;
     }
-    (void)listen_port;
     relay(client, upstream);
     close(upstream);
     log_line("one connection is over");
@@ -537,13 +590,29 @@ static void handle_one(int client, const char *fallback_host, int fallback_port,
 
 int main(int argc, char **argv) {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s <listen port> <fallback host> <fallback port> [source port base]\n", argv[0]);
+        fprintf(stderr, "usage: %s <listen port> <fallback host> <fallback port> "
+                        "[source port base] [known original host] [known original port]\n", argv[0]);
         return 2;
     }
     int listen_port = atoi(argv[1]);
     const char *fallback_host = argv[2];
     int fallback_port = atoi(argv[3]);
     int source_base = (argc > 4) ? atoi(argv[4]) : 0;
+
+    /* the place the traffic was going before, when the caller knows it */
+    struct sockaddr_in original;
+    memset(&original, 0, sizeof(original));
+    const struct sockaddr_in *original_ptr = NULL;
+    if (argc > 6) {
+        struct in_addr a;
+        if (inet_pton(AF_INET, argv[5], &a) == 1) {
+            original.sin_family = AF_INET;
+            original.sin_addr = a;
+            original.sin_port = htons((uint16_t)atoi(argv[6]));
+            original_ptr = &original;
+            log_line("the place the traffic was going is known: %s:%d", argv[5], atoi(argv[6]));
+        }
+    }
 
     /* The children are taken care of by the system, so that many
      * connections at the same time do not fill the machine with zombies. */
@@ -579,7 +648,7 @@ int main(int argc, char **argv) {
         pid_t pid = fork();
         if (pid == 0) {
             close(listener);
-            handle_one(client, fallback_host, fallback_port, source_port, listen_port);
+            handle_one(client, fallback_host, fallback_port, source_port, original_ptr);
             close(client);
             _exit(0);
         }

@@ -343,7 +343,8 @@ say "    test below, where it either works or it does not)"
 step "starting the test place and the program that takes the redirected traffic"
 python3 -m http.server "$TARGET_PORT" --bind 127.0.0.1 > "$TMP/target.log" 2>&1 &
 TARGET_PID=$!
-"$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" "$SRC_PORT_BASE" > "$TMP/helper.log" 2>&1 &
+"$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" "$SRC_PORT_BASE" \
+    127.0.0.1 "$TARGET_PORT" > "$TMP/helper.log" 2>&1 &
 HELPER_PID=$!
 sleep 2
 say "   the test place is on 127.0.0.1:$TARGET_PORT, the program listens on 127.0.0.1:$REDIRECT_PORT"
@@ -361,9 +362,14 @@ else
 fi
 
 sleep 1
+pfctl -ss 2>&1 | head -40 > "$TMP/states.txt"
+pfctl -ss -o nat 2>&1 | head -40 > "$TMP/states-nat.txt"
 say
 say "the states of the filter (this is the official view of where the traffic was going):"
-pfctl -ss 2>&1 | head -20 | sed 's/^/   /'
+sed 's/^/   /' "$TMP/states.txt"
+say
+say "the same states with the translation details (-o nat):"
+sed 's/^/   /' "$TMP/states-nat.txt"
 
 # ---------------------------------------------------------------- the verdict
 
@@ -436,6 +442,19 @@ PY
         say "        The way out then is to read the states of the filter"
         say "        instead, which the helper can do as root: it is slower,"
         say "        but it works."
+        return
+    fi
+
+    # the states of the filter are the other way of finding the place the
+    # traffic was going: the helper can read them as root, and it is slower
+    # but it works
+    states="$(cat "$TMP/states.txt" "$TMP/states-nat.txt" 2>/dev/null)"
+    if echo "$states" | grep -q "$TARGET_PORT"; then
+        say "   the states of the filter show the place the traffic was going:"
+        echo "$states" | grep "$TARGET_PORT" | sed 's/^/      /'
+        say "   PASS: the original destination can be read from the states."
+        say "         The helper can do it as root: it is slower than the"
+        say "         ioctl, but it works."
         return
     fi
 
