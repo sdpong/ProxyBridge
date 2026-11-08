@@ -379,14 +379,26 @@ Connection logs are available in the main window, showing:
 
 The menu bar of the app keeps what belongs to the documents and the help:
 
-- **ProxiRoute** - about, hide, quit
-- **Edit** - undo, redo, cut, copy, paste, delete, select all
+- **ProxiRoute** - settings, hide, quit
 - **Profile** - the profiles, new, rename, delete, export, import
 - **Window** - open ProxiRoute, enter full screen, and the windows of the app
 - **Help** - documentation, check for updates
 
+There is no **Edit** menu. The editing keys (**⌘C**, **⌘X**, **⌘V**, **⌘A**,
+**⌘Z**) keep working: they are answered by the field or the text view that
+holds the keyboard, so the log can still be copied out of it.
+
+The items that macOS puts into the **Window** menu (close, minimize, zoom,
+fill, center, move and resize, full screen tile) are renamed into the
+language of the app, and the grey items about tabs and window sets are
+taken out - this app has one window and no row of tabs.
+
 Everything else is in the **Settings** tab of the main window. The shortcut
 **⌘,** opens it.
+
+The row of tabs says what the app is doing right now: the running mode, and
+whether the traffic of this machine is taken over or the server waits for
+the clients of the network.
 
 ### Menu Bar Controls
 
