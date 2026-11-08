@@ -345,6 +345,8 @@ enum L10n {
         "The traffic to the proxy leaves through this interface. A Mac that is plugged in and also on a wireless network sends it the way you say here.": "到代理的流量从这张网卡出去。Mac 同时插着网线又连着无线时，就按这里选的走。",
         "Send UDP Through a Proxy": "让 UDP 走代理",
         "Only a SOCKS5 proxy can carry UDP. When this is off, UDP always goes out directly.": "只有 SOCKS5 代理能带 UDP。关掉之后，UDP 一律直连。",
+        "Keep Local Traffic Local": "局域网流量留在本地",
+        "The addresses of this network and of this machine go out directly. A proxy on the internet cannot answer for a server here, and a program that asks the nameserver of your router would wait for an answer that never comes.": "本机和这个网络的地址一律直连。网上的代理没法替这里的服务器作答，问路由器 DNS 的程序会一直等一个不会来的回答。",
         "UDP and DNS": "UDP 与 DNS",
         "DNS Forwarding": "DNS 转发",
         "DNS forwarding is in the DNS settings. With it on, the answers are seen, and the rules can name a host name.": "DNS 转发在 DNS 设置里。打开后能看到应答，规则里才能写域名。",

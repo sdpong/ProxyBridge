@@ -789,6 +789,14 @@ class AppProxyProvider: NETransparentProxyProvider {
         var currentHost = ""
         var currentPort: UInt16 = 0
         var isTornDown = false
+        // whether the traffic of the local network goes out directly. the
+        // destination of a udp flow is only known once its first datagram
+        // arrives, so this is decided per datagram and not per flow.
+        var directIfLocal = false
+        // the local destinations that were written about already
+        var loggedLocalDestinations = Set<String>()
+        // the sockets that talk to a local address without a proxy
+        var directSessions: [UDPAssociation.HostPort: DirectUDPSession] = [:]
         private var lastActivity = Date()
         private let activityLock = NSLock()
 
@@ -1755,6 +1763,15 @@ class AppProxyProvider: NETransparentProxyProvider {
         // is ProxiRoute's own.
         let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
 
+        // The traffic of the local network is not part of the global mode: a
+        // proxy on the internet cannot answer for a server on this network.
+        // The rules still decide - a rule that names a program says where that
+        // program goes.
+        if matchedRule == nil, globalAction != nil, route.localNetworkDirect,
+           LocalAddress.isLocal(destination) {
+            sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct")
+            return false
+        }
 
         if let action = action {
             switch action {
@@ -1905,6 +1922,15 @@ class AppProxyProvider: NETransparentProxyProvider {
         let action = matchedRule?.action ?? globalAction
         let decidingRuleId = matchedRule?.ruleId
 
+        // The traffic of the local network is not part of the global mode: a
+        // proxy on the internet cannot answer for a server on this network.
+        // The rules still decide - a rule that names a program says where that
+        // program goes.
+        //
+        // For udp the destination is only known once the first datagram
+        // arrives, so the check is made there and that datagram goes out
+        // directly.
+        let directIfLocal = matchedRule == nil && globalAction != nil && route.localNetworkDirect
 
         if let action = action {
             switch action {
@@ -1951,6 +1977,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                                                socksHost: socks5Config.host, socksPort: socks5Config.port,
                                                proxyLabel: self.proxyLabel(socks5Config),
                                                username: socks5Config.username, password: socks5Config.password,
+                                               directIfLocal: directIfLocal,
                                                appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
                 }
                 return true
@@ -1998,10 +2025,12 @@ class AppProxyProvider: NETransparentProxyProvider {
                                        proxyLabel: String,
                                        username: String?,
                                        password: String?,
+                                       directIfLocal: Bool = false,
                                        appIdentity: ProxyAppIdentity.Payload? = nil,
                                        allowAppIdRetry: Bool = true) {
         let key = udpPoolKey(programKey: programKey, socksHost: socksHost, socksPort: socksPort, username: username)
         let client = UDPClient(flow: clientFlow, displayName: displayName, programKey: programKey)
+        client.directIfLocal = directIfLocal
 
         udpLock.lock()
         udpClients[ObjectIdentifier(clientFlow)] = client
@@ -2394,6 +2423,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         // the row of the traffic list goes when the last socket of it is gone
         self.leaveUDPGroup(client.programKey, client: client)
 
+        // the sockets that talk to a local address go with it
+        for session in client.directSessions.values {
+            session.cancel()
+        }
+        client.directSessions.removeAll()
 
         client.flow.closeReadWithError(nil)
         client.flow.closeWriteWithError(nil)
@@ -2539,6 +2573,44 @@ class AppProxyProvider: NETransparentProxyProvider {
         return built
     }
 
+    // The datagram goes to the address itself, without a proxy.
+    private func relayDirectUDP(client: UDPClient, host: String, port: UInt16, payload: Data) {
+        let key = UDPAssociation.HostPort(host: host, port: port)
+        var session = client.directSessions[key]
+        if session == nil {
+            let fresh = DirectUDPSession(host: host, port: port, queue: self.connectionQueue)
+            client.directSessions[key] = fresh
+            session = fresh
+            fresh.start()
+            self.readDirectUDP(client: client, session: fresh, key: key)
+        }
+        session?.send(payload) { [weak self] error in
+            if let error = error {
+                self?.log("UDP direct write error: \(error.localizedDescription)", level: "ERROR")
+            }
+        }
+    }
+
+    // The answer of a direct socket goes back to the socket that asked for it.
+    private func readDirectUDP(client: UDPClient, session: DirectUDPSession, key: UDPAssociation.HostPort) {
+        session.receive { [weak self, weak session] data, error in
+            guard let self = self, let session = session else { return }
+            if let error = error {
+                self.log("UDP direct read error: \(error.localizedDescription)", level: "ERROR")
+                return
+            }
+            guard let data = data, !data.isEmpty else { return }
+            client.touch()
+            self.noteUDPBytes(client, up: 0, down: Int64(data.count))
+            client.flow.writeDatagrams([data], sentBy: [NWHostEndpoint(hostname: key.host, port: String(key.port))]) { [weak self] error in
+                if let error = error {
+                    self?.log("UDP direct response write error: \(error.localizedDescription)", level: "ERROR")
+                }
+            }
+            self.readDirectUDP(client: client, session: session, key: key)
+        }
+    }
+
     // The datagrams of a socket go into the association of its program, with
     // the address of the destination in the header of each one.
     private func readAndForwardClientUDP(_ client: UDPClient) {
@@ -2594,6 +2666,22 @@ class AppProxyProvider: NETransparentProxyProvider {
                                           port: destPort, proxy: association.proxyLabel)
                 }
 
+                // The traffic of the local network goes out directly. A proxy on
+                // the internet cannot answer for a server on this network, and
+                // the program that asked would wait for an answer that never
+                // comes - and ask again, and again.
+                if client.directIfLocal, LocalAddress.isLocal(destHost) {
+                    // the local traffic is written about once per destination too
+                    if !client.loggedLocalDestinations.contains(destHost) {
+                        if client.loggedLocalDestinations.count < 64 {
+                            client.loggedLocalDestinations.insert(destHost)
+                        }
+                        self.logUDPConnection(process: client.displayName, destination: destHost,
+                                              port: destPort, proxy: "Direct")
+                    }
+                    self.relayDirectUDP(client: client, host: destHost, port: destPort, payload: datagrams[i])
+                    continue
+                }
 
                 // the socket is now on the row of this program
                 client.currentHost = destHost

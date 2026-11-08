@@ -26,15 +26,23 @@ struct RouteOptions: Equatable {
     // a rule that names a socks5 proxy means the udp of that program too.
     var proxyUDP = true
 
+    // whether the traffic of the local network stays local. a proxy on the
+    // internet cannot answer for a server on this network, and a program that
+    // asks the nameserver of the local router would wait for an answer that
+    // never comes. it is on by default, and the rules still decide: a rule
+    // that names a program says where that program goes.
+    var localNetworkDirect = true
+
     static let `default` = RouteOptions()
 
     init() {}
 
-    init(globalMode: Bool, globalProxyId: String, outboundInterface: String, proxyUDP: Bool) {
+    init(globalMode: Bool, globalProxyId: String, outboundInterface: String, proxyUDP: Bool, localNetworkDirect: Bool = true) {
         self.globalMode = globalMode
         self.globalProxyId = globalProxyId
         self.outboundInterface = outboundInterface
         self.proxyUDP = proxyUDP
+        self.localNetworkDirect = localNetworkDirect
     }
 
     // the wire form the app sends the options in
@@ -43,7 +51,8 @@ struct RouteOptions: Equatable {
             "globalMode": globalMode,
             "globalProxyId": globalProxyId,
             "outboundInterface": outboundInterface,
-            "proxyUDP": proxyUDP
+            "proxyUDP": proxyUDP,
+            "localNetworkDirect": localNetworkDirect
         ]
     }
 
@@ -56,6 +65,7 @@ struct RouteOptions: Equatable {
         options.globalProxyId = dict["globalProxyId"] as? String ?? "DIRECT"
         options.outboundInterface = dict["outboundInterface"] as? String ?? ""
         options.proxyUDP = dict["proxyUDP"] as? Bool ?? true
+        options.localNetworkDirect = dict["localNetworkDirect"] as? Bool ?? true
         return options
     }
 }

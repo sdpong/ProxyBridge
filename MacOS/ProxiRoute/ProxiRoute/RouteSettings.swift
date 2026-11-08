@@ -23,6 +23,11 @@ struct RouteSettings: Equatable {
     var outboundInterface = ""
     // whether udp is allowed to go through a proxy
     var proxyUDP = true
+    // whether the traffic of the local network stays local. a proxy on the
+    // internet cannot answer for a server on this network, and a program that
+    // asks the nameserver of the local router would wait for an answer that
+    // never comes.
+    var localNetworkDirect = true
 
     static let storageKey = "routeSettings"
 
@@ -32,12 +37,14 @@ struct RouteSettings: Equatable {
             "globalMode": globalMode,
             "globalProxyId": globalProxyId,
             "outboundInterface": outboundInterface,
-            "proxyUDP": proxyUDP
+            "proxyUDP": proxyUDP,
+            "localNetworkDirect": localNetworkDirect
         ]
     }
 
     // What is stored. A setting that was never written is the default: the
-    // rules decide, the system picks the way out, and udp may use a proxy.
+    // rules decide, the system picks the way out, udp may use a proxy, and
+    // the traffic of the local network stays local.
     static func load() -> RouteSettings {
         let defaults = UserDefaults.standard
         var settings = RouteSettings()
@@ -47,6 +54,7 @@ struct RouteSettings: Equatable {
             settings.globalProxyId = raw["globalProxyId"] as? String ?? "DIRECT"
             settings.outboundInterface = raw["outboundInterface"] as? String ?? ""
             settings.proxyUDP = raw["proxyUDP"] as? Bool ?? true
+            settings.localNetworkDirect = raw["localNetworkDirect"] as? Bool ?? true
         }
         return settings
     }

@@ -81,6 +81,12 @@ struct RouteSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
+                Toggle(L10n.t("Keep Local Traffic Local"), isOn: $settings.localNetworkDirect)
+
+                Text(L10n.t("The addresses of this network and of this machine go out directly. A proxy on the internet cannot answer for a server here, and a program that asks the nameserver of your router would wait for an answer that never comes."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                 Divider()
 
                 HStack {
