@@ -199,47 +199,46 @@ struct ContentView: View {
     // The tables of the traffic are empty for different reasons in the
     // different modes, and an empty table that does not say why is a table
     // that looks broken.
+    // Every mode takes the traffic of this machine over, so the tables are
+    // empty because no traffic has gone through yet - and not because the
+    // extension is stopped.
     private var emptyTrafficTitle: String {
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("This machine is not taken over")
+        case .local, .gateway:
+            return L10n.t("No traffic yet")
         case .server:
             return L10n.t("No traffic from the clients yet")
-        case .route:
-            return L10n.t("No traffic yet")
         }
     }
 
     private var emptyTrafficHint: String {
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("Nothing is taken over, so nothing is counted. Switch to the gateway mode to count the traffic of this machine.")
+        case .local:
+            return L10n.t("The traffic of this machine goes through the proxy. Every proxy the traffic goes through gets a line here")
+        case .gateway:
+            return L10n.t("The traffic of this machine and of the other terminals goes through the proxy. Every proxy the traffic goes through gets a line here")
         case .server:
             return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
-        case .route:
-            return L10n.t("Every proxy the traffic goes through gets a line here")
         }
     }
 
     private var emptyFlowTitle: String {
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("This machine is not taken over")
+        case .local, .gateway:
+            return L10n.t("No active connections")
         case .server:
             return L10n.t("No traffic from the clients yet")
-        case .route:
-            return L10n.t("No active connections")
         }
     }
 
     private var emptyFlowHint: String {
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("The extension is stopped, so no connection of this machine is proxied. Switch to the gateway mode to see the connections here.")
+        case .local:
+            return L10n.t("The traffic of this machine goes through the proxy. Connections that are proxied show up here")
+        case .gateway:
+            return L10n.t("The traffic of this machine and of the other terminals goes through the proxy. Connections that are proxied show up here")
         case .server:
             return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
-        case .route:
-            return L10n.t("Connections that are proxied show up here")
         }
     }
 
@@ -310,9 +309,7 @@ struct TabStatusView: View {
     // asked for something it cannot do at the moment
     private var color: Color {
         switch viewModel.runtimeMode {
-        case .off:
-            return .secondary
-        case .route:
+        case .local, .gateway:
             return viewModel.isProxyActive ? .green : .orange
         case .server:
             return viewModel.localProxyRunning ? .green : .orange
@@ -321,9 +318,10 @@ struct TabStatusView: View {
 
     private var title: String {
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("Local")
-        case .route:
+        case .local:
+            let state = viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied")
+            return "\(L10n.t("Local")) \u{00b7} \(state)"
+        case .gateway:
             let state = viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied")
             return "\(L10n.t("Gateway")) \u{00b7} \(state)"
         case .server:

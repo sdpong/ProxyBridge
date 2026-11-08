@@ -28,11 +28,11 @@ struct SettingsTabView: View {
         ScrollView {
             VStack(spacing: 16) {
                 modeCard
-                // the routing options and the proxy server are two halves of
-                // the same choice, so only the one that is in use is shown
-                if viewModel.runtimeMode == .route {
-                    routeCard
-                }
+                // the routing options say where the traffic of this machine
+                // goes, and it is taken over in every mode
+                routeCard
+                // the proxy server is the service for the clients of the
+                // network, so it is only of use in its own mode
                 if viewModel.runtimeMode == .server {
                     serverCard
                 }
@@ -45,22 +45,21 @@ struct SettingsTabView: View {
 
     // MARK: - the running mode
 
-    // The card says what the modes are, and what each of them is doing right
-    // now.
+    // The card says what the modes are: the traffic of this machine is taken
+    // over in every one of them, and the mode says what is added on top of it
+    // for the other terminals of the network.
     //
-    // The two states under the picker belong to the mode: in the local mode
-    // the traffic of this machine is not taken over and the proxy server does
-    // not run, in the gateway mode the traffic of this machine is taken over
-    // and the server still does not run, and in the server mode it is the
-    // other way round. They say something different under every option, so
-    // they stay under the option they belong to.
+    // There is no row for the traffic of this machine any more: it is taken
+    // over in every mode, so a row that says the same thing under every
+    // option is noise. The line at the end of the row of the tabs says
+    // whether it is running.
     private var modeCard: some View {
         SettingsCard(icon: "switch.2", title: L10n.t("Running Mode")) {
             Form {
                 Section {
                     Picker(L10n.t("Running Mode"), selection: modeBinding) {
-                        Text(L10n.t("Local")).tag(RuntimeMode.off)
-                        Text(L10n.t("Gateway")).tag(RuntimeMode.route)
+                        Text(L10n.t("Local")).tag(RuntimeMode.local)
+                        Text(L10n.t("Gateway")).tag(RuntimeMode.gateway)
                         Text(L10n.t("Proxy Server")).tag(RuntimeMode.server)
                     }
                     .pickerStyle(.segmented)
@@ -75,20 +74,16 @@ struct SettingsTabView: View {
                     // the network. The forwarding of them is not there yet,
                     // and the card says so instead of letting the person
                     // wait for a traffic that never comes.
-                    if viewModel.runtimeMode == .route {
+                    if viewModel.runtimeMode == .gateway {
                         Text(L10n.t("Today only the traffic of this machine is taken over. The forwarding of the other terminals of the network is not there yet."))
                             .font(.caption)
                             .foregroundColor(.orange)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    HStack {
-                        Text(L10n.t("The Traffic of This Machine"))
-                        Spacer()
-                        Text(viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied"))
-                            .foregroundColor(viewModel.isProxyActive ? .green : .secondary)
-                    }
-
+                    // The server is the only thing that is on in one mode and
+                    // off in the others, so it is the only state a row is
+                    // still worth here.
                     HStack {
                         Text(L10n.t("Proxy Server"))
                         Spacer()
@@ -96,7 +91,7 @@ struct SettingsTabView: View {
                             .foregroundColor(viewModel.localProxyRunning ? .green : .secondary)
                     }
                 } footer: {
-                    Text(L10n.t("The gateway mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both."))
+                    Text(L10n.t("Every mode takes the traffic of this machine over. The gateway mode adds the gateway of the network, and the proxy server mode adds the server for the clients."))
                 }
             }
             .formStyle(.grouped)
@@ -108,12 +103,12 @@ struct SettingsTabView: View {
     // person has to know what the choice does before it is made.
     private var modeDescription: String {
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("The traffic of this machine goes on as it is. The extension is stopped and no port is open, so this machine costs nothing.")
-        case .route:
-            return L10n.t("This machine is the gateway of the network: the traffic of the other terminals goes through it. The rules decide, and the global mode is the answer for the traffic no rule names.")
+        case .local:
+            return L10n.t("The traffic of this machine goes through the proxy, and the rules decide where it goes. Nothing else is done here.")
+        case .gateway:
+            return L10n.t("The traffic of this machine goes through the proxy, and this machine is the gateway of the network: the traffic of the other terminals goes through it.")
         case .server:
-            return L10n.t("The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it.")
+            return L10n.t("The traffic of this machine goes through the proxy, and the proxy server waits for the clients of the network. The processor of the machine pays for both.")
         }
     }
 

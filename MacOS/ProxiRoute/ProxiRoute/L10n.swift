@@ -106,17 +106,16 @@ enum L10n {
         "Running Mode": "运行模式",
         "Gateway": "网关",
         "Options": "选项",
-        "The gateway mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both.": "网关模式与代理服务器不能同时开启。两者都会让本机持续工作，而处理器要同时为两份开销买单。",
-        "The Traffic of This Machine": "本机流量",
+        "Every mode takes the traffic of this machine over. The gateway mode adds the gateway of the network, and the proxy server mode adds the server for the clients.": "三种模式都接管本机的流量。网关模式再加上「做网络中其他终端的网关」，代理服务器模式再加上「给客户端当代理服务器」。",
         "Proxied": "已接管",
         "Not Proxied": "未接管",
         "State": "状态",
         "Not Running": "未运行",
-        "The traffic of this machine goes on as it is. The extension is stopped and no port is open, so this machine costs nothing.": "本机流量照旧走，不经过扩展。扩展停止，不监听任何端口，本机不产生任何开销。",
-        "This machine is the gateway of the network: the traffic of the other terminals goes through it. The rules decide, and the global mode is the answer for the traffic no rule names.": "这台机器是网络里其他终端的网关：它们的流量从这里过。规则优先决定去向，没有规则点名的流量由全局模式决定。",
+        "The traffic of this machine goes through the proxy, and the rules decide where it goes. Nothing else is done here.": "本机的流量走代理，规则决定去向。这里不做别的事。",
+        "The traffic of this machine goes through the proxy, and this machine is the gateway of the network: the traffic of the other terminals goes through it.": "本机的流量走代理，同时这台机器是网络里其他终端的网关：它们的流量从这里过。",
         "Today only the traffic of this machine is taken over. The forwarding of the other terminals of the network is not there yet.": "目前只有本机的流量被接管。网络里其他终端的转发还没有实现。",
-        "The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it.": "代理服务器等待网络中的客户端。本机流量不受影响，本机不为它付出开销。",
-        "The server listens when the running mode is Proxy Server. The gateway mode and the proxy server cannot be on at the same time.": "运行模式为「代理服务器」时服务器才监听。网关模式与代理服务器不能同时开启。",
+        "The traffic of this machine goes through the proxy, and the proxy server waits for the clients of the network. The processor of the machine pays for both.": "本机的流量走代理，同时代理服务器等待网络中的客户端。处理器要为两份开销买单。",
+        "The server listens when the running mode is Proxy Server. The traffic of this machine is taken over in every mode.": "运行模式为「代理服务器」时服务器才监听。本机的流量在每种模式下都被接管。",
         "Logging and DNS": "日志与 DNS",
         "The DNS proxy lets ProxiRoute learn which name belongs to which address. Host name rules and \"send hostname\" need it. Without it another program can use the one DNS proxy slot of macOS.": "DNS 代理让 ProxiRoute 知道哪个名字对应哪个地址。主机名规则和「发送主机名」需要它。关掉之后，macOS 唯一的 DNS 代理位置可以留给别的程序。",
         "Language": "语言",
@@ -134,9 +133,10 @@ enum L10n {
 
         // the tables are empty for a different reason in every mode, and the
         // reason is worth saying
-        "This machine is not taken over": "本机没有被接管",
-        "Nothing is taken over, so nothing is counted. Switch to the gateway mode to count the traffic of this machine.": "没有接管任何流量，所以这里没有统计。切到「网关」才会统计本机流量。",
-        "The extension is stopped, so no connection of this machine is proxied. Switch to the gateway mode to see the connections here.": "扩展已停止，本机的连接不会被代理。切到「网关」才会在这里看到连接。",
+        "The traffic of this machine goes through the proxy. Every proxy the traffic goes through gets a line here": "本机的流量走代理。流量经过的每个代理都会在这里占一行。",
+        "The traffic of this machine and of the other terminals goes through the proxy. Every proxy the traffic goes through gets a line here": "本机和其他终端的流量走代理。流量经过的每个代理都会在这里占一行。",
+        "The traffic of this machine goes through the proxy. Connections that are proxied show up here": "本机的流量走代理。被代理的连接会出现在这里。",
+        "The traffic of this machine and of the other terminals goes through the proxy. Connections that are proxied show up here": "本机和其他终端的流量走代理。被代理的连接会出现在这里。",
 
         // the menus macOS brings itself. their titles come from the
         // localization of the app bundle, and this app has no bundle of

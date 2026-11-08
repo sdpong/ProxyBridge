@@ -122,8 +122,6 @@ struct RouteSettingsForm: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Divider()
-
                 HStack {
                     Text(L10n.t("DNS Forwarding"))
                     Spacer()

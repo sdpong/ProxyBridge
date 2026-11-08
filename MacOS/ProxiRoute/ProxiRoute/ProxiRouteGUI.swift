@@ -477,9 +477,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var stateTitle: String {
         guard let viewModel = AppDelegate.viewModel else { return L10n.t("Proxy: Off") }
         switch viewModel.runtimeMode {
-        case .off:
-            return L10n.t("Proxy: Off")
-        case .route:
+        case .local, .gateway:
+            // the traffic of this machine is taken over in every mode
             return viewModel.isProxyActive ? L10n.t("Proxy: On") : L10n.t("Proxy: Off")
         case .server:
             return viewModel.localProxyRunning ? L10n.t("Proxy Server: On") : L10n.t("Proxy Server: Off")

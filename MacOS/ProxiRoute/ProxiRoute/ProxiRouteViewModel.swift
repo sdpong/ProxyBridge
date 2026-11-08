@@ -349,7 +349,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // The two things are exclusive. Both at the same time means the extension
     // carries every flow of this machine and the server relays the flows of
     // the network, and the processor of the machine pays for both.
-    @Published private(set) var runtimeMode: RuntimeMode = .route
+    @Published private(set) var runtimeMode: RuntimeMode = .local
 
     // The proxy server that runs inside this app, so that the other machines
     // of the network can send their traffic out through this one.
@@ -471,23 +471,20 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         RuntimeModeStore.save(mode)
         syncLocalProxyEnabled()
 
-        switch mode {
-        case .off:
-            stopLocalProxyServer()
-            stopTunnelIfRunning()
-            // the dns proxy is not a part of the tunnel: it has a switch of its
-            // own and it keeps running in this mode
-            applyDNSProxy()
-        case .route:
-            stopLocalProxyServer()
-            startTunnelIfNotRunning()
-            applyDNSProxy()
-        case .server:
-            stopTunnelIfRunning()
-            applyDNSProxy()
+        // The traffic of this machine is taken over in every mode: that is
+        // what the app does. The mode says which service is added for the
+        // other terminals of the network.
+        startTunnelIfNotRunning()
+        // the dns proxy is not a part of the tunnel: it has a switch of its
+        // own and it keeps running in every mode
+        applyDNSProxy()
+
+        if mode.runsLocalProxyServer {
             if !localProxyRunning {
                 startLocalProxyServer()
             }
+        } else {
+            stopLocalProxyServer()
         }
     }
 
@@ -506,11 +503,6 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         guard extensionReady else { return }
         guard !isProxyActive, tunnelSession == nil else { return }
         startProxy()
-    }
-
-    private func stopTunnelIfRunning() {
-        guard isProxyActive || tunnelSession != nil else { return }
-        stopProxy()
     }
 
     // The proxy server of the app.
@@ -2146,9 +2138,6 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
 
     private func restartTunnelNow() {
-        // there is no tunnel to restart when the mode says that the traffic
-        // of this machine is not taken over
-        guard runtimeMode.takesOverLocalTraffic else { return }
         addLog("INFO", L10n.t("The extension did not answer, so the tunnel is restarted to pick up the change."))
 
         // the same path the on/off switch uses: it stops the tunnel, clears what
@@ -2255,12 +2244,9 @@ extension ProxiRouteViewModel: OSSystemExtensionRequestDelegate {
             // the switch in System Settings is on now, the notice has nothing to say
             self.needsExtensionApproval = false
             self.stopApprovalWatch()
-            // The tunnel is only started when the mode says that the traffic
-            // of this machine is taken over. In the other modes the extension
-            // would carry every flow of this machine for nothing.
-            if self.runtimeMode.takesOverLocalTraffic {
-                self.startProxy()
-            }
+            // The traffic of this machine is taken over in every mode, so the
+            // tunnel starts as soon as the extension is there.
+            self.startProxy()
             self.applyDNSProxy()
         }
     }

@@ -202,9 +202,9 @@ and the processor of the machine pays for both. So the mode is **one choice**:
 
 | Mode | What happens |
 |------|--------------|
-| **Local** | The traffic of this machine goes on as it is. The extension is stopped and no port is open, so this machine costs nothing. |
-| **Gateway** | This machine is the gateway of the network: the traffic of the other terminals goes through it. The rules decide, and the global mode is the answer for the traffic no rule names. |
-| **Proxy Server** | The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it. |
+| **Local** | The traffic of this machine goes through the proxy, and the rules decide where it goes. Nothing else is done here. |
+| **Gateway** | The traffic of this machine goes through the proxy, and this machine is the gateway of the network: the traffic of the other terminals goes through it. |
+| **Proxy Server** | The traffic of this machine goes through the proxy, and the proxy server waits for the clients of the network. The processor of the machine pays for both. |
 
 The **Gateway** mode is meant to be the way in for the other terminals of the
 network. Today the extension only takes the traffic of this machine over - the
@@ -412,16 +412,14 @@ Everything else is in the **Settings** tab and the **Options** tab of the main
 window. The shortcut **⌘,** opens the settings.
 
 The row of tabs says what the app is doing right now, at its right end: the
-mode, and what it is doing in it - for example **Gateway · Proxied**. The two
-states of the app (the traffic of this machine, and the proxy server) live in
-the card of the running mode, under the option they belong to: they say
-something different under every mode.
+mode, and what it is doing in it - for example **Gateway · Proxied**. The
+traffic of this machine is taken over in every mode, so the card of the running
+mode has no row for it: a row that says the same thing under every option is
+noise.
 
 An empty table in the **Statistics** or the **Live Connections** tab says why
-it is empty: in the **Local** mode the extension is stopped, so no connection
-of this machine is proxied at all. The DNS proxy has nothing to do with the
-emptiness - it is a provider of its own, it runs in every mode, and the map of
-names it builds is needed the moment the traffic of this machine is proxied.
+it is empty: the traffic of this machine is taken over in every mode, so the
+table is empty because no traffic has gone through yet.
 
 ### Menu Bar Controls
 
