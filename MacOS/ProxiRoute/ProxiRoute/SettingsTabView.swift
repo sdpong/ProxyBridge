@@ -47,6 +47,7 @@ struct SettingsTabView: View {
                 windowsCard
             }
             .padding(16)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -84,13 +85,12 @@ struct SettingsTabView: View {
                         Text(viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running"))
                             .foregroundColor(viewModel.localProxyRunning ? .green : .secondary)
                     }
-                } header: {
-                    Text(L10n.t("Running Mode"))
                 } footer: {
                     Text(L10n.t("The route mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both."))
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -164,11 +164,11 @@ struct SettingsTabView: View {
                     Text(L10n.t("The DNS proxy lets ProxiRoute learn which name belongs to which address. Host name rules and \"send hostname\" need it. Without it another program can use the one DNS proxy slot of macOS."))
                         .font(.caption)
                         .foregroundColor(.secondary)
-                } header: {
-                    Text(L10n.t("Logging and DNS"))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -185,14 +185,14 @@ struct SettingsTabView: View {
                     }
                     .labelsHidden()
 
-                    Text(L10n.t("The menus macOS draws itself (Edit, Window, Help) change to the new language the next time ProxiRoute starts."))
+                    Text(L10n.t("The menus that macOS draws itself (Window, Help) follow the language that is chosen here."))
                         .font(.caption)
                         .foregroundColor(.secondary)
-                } header: {
-                    Text(L10n.t("Language"))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -220,13 +220,12 @@ struct SettingsTabView: View {
                             LoginItem.setEnabled($0)
                         }
                     ))
-                } header: {
-                    Text(L10n.t("Application"))
                 } footer: {
                     Text(L10n.t("Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit."))
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -243,13 +242,12 @@ struct SettingsTabView: View {
                     Button(L10n.t("Take Out Older ProxiRoute Extensions...")) {
                         NSApp.sendAction(#selector(AppDelegate.takeOutOlderExtensions), to: nil, from: nil)
                     }
-                } header: {
-                    Text(L10n.t("System Extension"))
                 } footer: {
                     Text(L10n.t("macOS asks for the approval of the system extension once. Until it is given, no traffic can be proxied."))
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -279,11 +277,10 @@ struct SettingsTabView: View {
                             NSApp.sendAction(#selector(AppDelegate.openDNSSettings), to: nil, from: nil)
                         }
                     }
-                } header: {
-                    Text(L10n.t("More Windows"))
                 }
             }
             .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -308,6 +305,7 @@ struct SettingsTabView: View {
 
             content()
         }
+        .frame(maxWidth: .infinity)
         .background(Color(NSColor.textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.25)))

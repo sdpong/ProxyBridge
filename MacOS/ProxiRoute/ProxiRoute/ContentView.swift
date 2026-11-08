@@ -151,6 +151,10 @@ struct ContentView: View {
                 selectedTab = 3
             }
             Spacer()
+            // what the app is doing right now, at the end of the row of the
+            // tabs. The mode is a thing a person wants to see without opening
+            // a tab for it.
+            TabStatusView(viewModel: viewModel)
         }
         .frame(height: 40)
         .background(Color(NSColor.controlBackgroundColor))
@@ -160,13 +164,17 @@ struct ContentView: View {
         Group {
             switch selectedTab {
             case 0:
-                ProxyTrafficView(rows: viewModel.proxyTraffic)
+                ProxyTrafficView(rows: viewModel.proxyTraffic,
+                                emptyTitle: emptyTrafficTitle,
+                                emptyHint: emptyTrafficHint)
             case 1:
                 LiveConnectionsView(
                     flows: viewModel.liveFlows,
                     canTerminate: viewModel.canTerminateFlows,
                     onKill: viewModel.killFlow,
-                    onKillProcess: viewModel.killFlows
+                    onKillProcess: viewModel.killFlows,
+                    emptyTitle: emptyFlowTitle,
+                    emptyHint: emptyFlowHint
                 )
             case 3:
                 SettingsTabView(viewModel: viewModel)
@@ -178,6 +186,29 @@ struct ContentView: View {
                 )
             }
         }
+    }
+
+    // The tables of the traffic are empty for different reasons in the
+    // different modes, and an empty table that does not say why is a table
+    // that looks broken.
+    private var emptyTrafficTitle: String {
+        viewModel.runtimeMode == .server ? L10n.t("No traffic from the clients yet") : L10n.t("No traffic yet")
+    }
+
+    private var emptyTrafficHint: String {
+        viewModel.runtimeMode == .server
+            ? L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
+            : L10n.t("Every proxy the traffic goes through gets a line here")
+    }
+
+    private var emptyFlowTitle: String {
+        viewModel.runtimeMode == .server ? L10n.t("No traffic from the clients yet") : L10n.t("No active connections")
+    }
+
+    private var emptyFlowHint: String {
+        viewModel.runtimeMode == .server
+            ? L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
+            : L10n.t("Connections that are proxied show up here")
     }
 
     private var filteredActivityLogs: [ProxiRouteViewModel.ActivityLog] {
@@ -213,6 +244,59 @@ struct TabButton: View {
     }
 }
 
+// What the app is doing right now, at the end of the row of the tabs.
+//
+// The mode is the one thing a person wants to know without opening a tab:
+// whether the traffic of this machine is taken over, whether the server waits
+// for the clients of the network, or whether the app does nothing at all.
+struct TabStatusView: View {
+    // the language of the app: the strings are read through it, so a change of
+    // the language redraws the window
+    @ObservedObject private var loc = LocalizationManager.shared
+    @ObservedObject var viewModel: ProxiRouteViewModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(title)
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.trailing, 16)
+        .help(L10n.t("Running Mode"))
+    }
+
+    // green when the app is doing what it was asked to do, orange when it was
+    // asked for something it cannot do at the moment
+    private var color: Color {
+        switch viewModel.runtimeMode {
+        case .off:
+            return .secondary
+        case .route:
+            return viewModel.isProxyActive ? .green : .orange
+        case .server:
+            return viewModel.localProxyRunning ? .green : .orange
+        }
+    }
+
+    private var title: String {
+        switch viewModel.runtimeMode {
+        case .off:
+            return L10n.t("Do Not Take Over")
+        case .route:
+            let state = viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied")
+            return "\(L10n.t("Route Mode")) · \(state)"
+        case .server:
+            let state = viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running")
+            let clients = viewModel.localProxyClients
+            return "\(L10n.t("Proxy Server")) · \(state) · \(L10n.f("Clients: %@", "\(clients)"))"
+        }
+    }
+}
+
 // The traffic of every proxy the traffic went through: one row for each, the way Proxifier
 // shows what a proxy carried.
 //
@@ -225,6 +309,10 @@ struct ProxyTrafficView: View {
     // the language redraws the window
     @ObservedObject private var loc = LocalizationManager.shared
     let rows: [ProxiRouteViewModel.ProxyTraffic]
+    // what the empty table says. The reason for the emptiness is not the
+    // same in the route mode and in the server mode.
+    var emptyTitle = L10n.t("No traffic yet")
+    var emptyHint = L10n.t("Every proxy the traffic goes through gets a line here")
 
     var body: some View {
         Group {
@@ -274,12 +362,14 @@ struct ProxyTrafficView: View {
             Image(systemName: "chart.bar.doc.horizontal")
                 .font(.system(size: 44))
                 .foregroundColor(.gray)
-            Text(L10n.t("No traffic yet"))
+            Text(emptyTitle)
                 .font(.title3)
                 .foregroundColor(.gray)
-            Text(L10n.t("Every proxy the traffic goes through gets a line here"))
+            Text(emptyHint)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -321,6 +411,9 @@ struct LiveConnectionsView: View {
     let canTerminate: Bool
     let onKill: (UInt64) -> Void
     let onKillProcess: (String) -> Void
+    // what the empty table says
+    var emptyTitle = L10n.t("No active connections")
+    var emptyHint = L10n.t("Connections that are proxied show up here")
     @State private var selection: UInt64?
 
     var body: some View {
@@ -389,12 +482,14 @@ struct LiveConnectionsView: View {
             Image(systemName: "point.3.connected.trianglepath.dotted")
                 .font(.system(size: 44))
                 .foregroundColor(.gray)
-            Text(L10n.t("No active connections"))
+            Text(emptyTitle)
                 .font(.title3)
                 .foregroundColor(.gray)
-            Text(L10n.t("Connections that are proxied show up here"))
+            Text(emptyHint)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

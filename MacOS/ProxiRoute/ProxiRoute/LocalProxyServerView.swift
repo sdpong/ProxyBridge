@@ -92,6 +92,7 @@ struct LocalProxyServerForm: View {
                     Text(L10n.t("The server listens when the running mode is Proxy Server. The route mode and the proxy server cannot be on at the same time."))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Picker(L10n.t("Speaks"), selection: $settings.protocolMode) {
@@ -182,6 +183,7 @@ struct LocalProxyServerForm: View {
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: .infinity)
     }
 
     // the upstream is a picker of three kinds, so it is kept in one string

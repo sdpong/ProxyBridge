@@ -85,6 +85,7 @@ struct RouteSettingsForm: View {
                     Text(L10n.t("The traffic that no rule names goes through this proxy. A rule that names a program still decides."))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             } header: {
                 Text(L10n.t("Where the Traffic Goes"))
@@ -101,6 +102,7 @@ struct RouteSettingsForm: View {
                 Text(L10n.t("The traffic to the proxy leaves through this interface. A Mac that is plugged in and also on a wireless network sends it the way you say here."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text(L10n.t("The Way Out"))
             }
@@ -111,12 +113,14 @@ struct RouteSettingsForm: View {
                 Text(L10n.t("Only a SOCKS5 proxy can carry UDP. When this is off, UDP always goes out directly."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Toggle(L10n.t("Keep Local Traffic Local"), isOn: $settings.localNetworkDirect)
 
                 Text(L10n.t("The addresses of this network and of this machine go out directly. A proxy on the internet cannot answer for a server here, and a program that asks the nameserver of your router would wait for an answer that never comes."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Divider()
 
@@ -130,11 +134,13 @@ struct RouteSettingsForm: View {
                 Text(L10n.t("DNS forwarding is in the DNS settings. With it on, the answers are seen, and the rules can name a host name."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text(L10n.t("UDP and DNS"))
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: .infinity)
     }
 
     // The kinds of the interfaces that are of use right now. The loopback is
