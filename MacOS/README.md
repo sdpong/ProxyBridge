@@ -177,15 +177,38 @@ ProxiRoute leverages macOS Network Extension framework to intercept and route ne
 
 ## Configuration
 
-### Proxy Settings
+### The Settings Tab
 
-Access proxy settings from **Menu Bar → Proxy → Proxy Settings**.
+Everything that is a setting lives in the **Settings** tab of the main window:
+the running mode, the routing options, the proxy server, the language and the
+switches of the app itself.
 
 <p align="center">
   <img src="../img/proxy-setting-mac.png" alt="Proxy Settings Configuration" width="600"/>
   <br/>
   <em>Proxy Settings Window</em>
 </p>
+
+#### The running mode
+
+ProxiRoute can either take the traffic of this machine over, or wait for the
+clients of the network. Both at the same time means the extension carries every
+flow of this machine while the server relays the flows of the whole network,
+and the processor of the machine pays for both. So the mode is **one choice**:
+
+| Mode | What happens |
+|------|--------------|
+| **Do Not Take Over** | The extension is stopped and no port is open. This machine costs nothing. |
+| **Route Mode** | The traffic of this machine goes out through the extension. The rules decide, and the global mode is the answer for the traffic no rule names. |
+| **Proxy Server** | The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it. |
+
+The mode is the only switch for the proxy server: it listens when the mode is
+**Proxy Server**, and it is quiet otherwise.
+
+### Proxy Settings
+
+Access proxy settings from **Settings → More Windows → Proxy Settings**, or
+from the **Window** menu of the menu bar.
 
 #### Supported Proxy Types
 - **HTTP** - Standard HTTP/HTTPS proxy
@@ -223,7 +246,8 @@ Password: (optional)
 
 ### Proxy Rules
 
-Access proxy rules from **Menu Bar → Proxy → Proxy Rules**.
+Access proxy rules from **Settings → More Windows → Proxy Rules**, or from the
+**Window** menu of the menu bar.
 
 <p align="center">
   <img src="../img/proxy-rule-mac.png" alt="Proxy Rules Management" width="800"/>
@@ -337,9 +361,10 @@ ProxiRoute allows you to export selected rules to a JSON file and import rules f
 
 1. Launch ProxiRoute from Applications
 2. The app runs in the menu bar
-3. Configure proxy settings and rules as needed
-4. Enable the system extension when prompted
-5. Traffic will be routed according to your rules
+3. Pick the running mode in the **Settings** tab of the main window
+4. Configure proxy settings and rules as needed
+5. Enable the system extension when prompted
+6. Traffic will be routed according to your rules
 
 ### Viewing Logs
 
@@ -350,11 +375,27 @@ Connection logs are available in the main window, showing:
 - Destination port
 - Action taken (PROXY/DIRECT/BLOCK)
 
+### The Menu Bar
+
+The menu bar of the app keeps what belongs to the documents and the help:
+
+- **ProxiRoute** - about, hide, quit
+- **Edit** - undo, redo, cut, copy, paste, delete, select all
+- **Profile** - the profiles, new, rename, delete, export, import
+- **Window** - open ProxiRoute, enter full screen, and the windows of the app
+- **Help** - documentation, check for updates
+
+Everything else is in the **Settings** tab of the main window. The shortcut
+**⌘,** opens it.
+
 ### Menu Bar Controls
 
-- **Proxy Settings** - Configure proxy server details
-- **Proxy Rules** - Manage traffic routing rules
-- **Help** - Check for updates and about information
+The item in the menu bar on the right side of the screen opens:
+
+- **Open ProxiRoute** - bring the main window back
+- **Settings...** - open the main window on the settings tab
+- A line that says what the app is doing right now
+- **Keep Proxy Running in Background** - whether closing the window stops the proxy
 - **Quit** - Exit ProxiRoute
 
 ### Command Line (CLI)
