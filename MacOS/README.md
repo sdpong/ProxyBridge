@@ -1,6 +1,6 @@
-# ProxyBridge for macOS
+# ProxiRoute for macOS
 
-ProxyBridge is a transparent proxy application for macOS that allows you to route network traffic through HTTP or SOCKS5 proxies with granular control using rules based on application, destination, and protocol.
+ProxiRoute is a transparent proxy application for macOS that allows you to route network traffic through HTTP or SOCKS5 proxies with granular control using rules based on application, destination, and protocol.
 
 ## Table of Contents
 
@@ -19,12 +19,12 @@ ProxyBridge is a transparent proxy application for macOS that allows you to rout
 
 ## Overview
 
-ProxyBridge leverages macOS Network Extension framework to intercept and route network traffic. It provides a GUI application for configuration and uses a system extension to handle traffic routing based on user-defined rules.
+ProxiRoute leverages macOS Network Extension framework to intercept and route network traffic. It provides a GUI application for configuration and uses a system extension to handle traffic routing based on user-defined rules.
 
 <p align="center">
-  <img src="../img/ProxyBridge-mac.png" alt="ProxyBridge macOS Main Interface" width="800"/>
+  <img src="../img/ProxyBridge-mac.png" alt="ProxiRoute macOS Main Interface" width="800"/>
   <br/>
-  <em>ProxyBridge Main Window</em>
+  <em>ProxiRoute Main Window</em>
 </p>
 
 ## Architecture
@@ -44,7 +44,7 @@ ProxyBridge leverages macOS Network Extension framework to intercept and route n
        ↓
 ┌──────────────────────┐
 │                      │
-│   ProxyBridge        │
+│   ProxiRoute        │
 │   Extension          │
 │   (System Extension) │
 │                      │
@@ -73,7 +73,7 @@ ProxyBridge leverages macOS Network Extension framework to intercept and route n
                                            │   │         │   │
                                            ↓   ↓         ↓   ↓
                                        ┌────────────────────────────┐
-                                       │  ProxyBridge Network       │
+                                       │  ProxiRoute Network       │
                                        │  Manager                   │
                                        │  (4e) Store original       │
                                        │       dest IP/port         │
@@ -146,7 +146,7 @@ ProxyBridge leverages macOS Network Extension framework to intercept and route n
 ### Traffic Flow Details
 
 1. **Application initiates connection** - Any application on the system makes a network request
-2. **Network Extension intercepts** - ProxyBridge extension receives the connection request via NETransparentProxyProvider
+2. **Network Extension intercepts** - ProxiRoute extension receives the connection request via NETransparentProxyProvider
 3. **Rule evaluation** - Extension checks configured rules against:
    - Application bundle identifier (package name)
    - Destination IP/hostname (TCP only)
@@ -166,13 +166,13 @@ ProxyBridge leverages macOS Network Extension framework to intercept and route n
 
 ## Installation
 
-1. Download the latest release from the [releases page](https://github.com/InterceptSuite/ProxyBridge/releases)
+1. Download the latest release from the [releases page](https://github.com/sdpong/ProxyBridge/releases)
 2. Open the downloaded `.pkg` file
 3. Follow the installation wizard
 4. Grant System Extension permissions when prompted
-5. Launch ProxyBridge from Applications folder
+5. Launch ProxiRoute from Applications folder
 
-**Note:** ProxyBridge requires system extension permissions. You need to allow the extension in **System Settings → General → Login Items & Extensions → Network Extension** on first launch.
+**Note:** ProxiRoute requires system extension permissions. You need to allow the extension in **System Settings → General → Login Items & Extensions → Network Extension** on first launch.
 
 
 ## Configuration
@@ -304,7 +304,7 @@ Action: PROXY
 
 #### Exporting and Importing Rules
 
-ProxyBridge allows you to export selected rules to a JSON file and import rules from previously exported files.
+ProxiRoute allows you to export selected rules to a JSON file and import rules from previously exported files.
 
 **Export Rules:**
 1. Select one or more rules using the checkboxes
@@ -333,9 +333,9 @@ ProxyBridge allows you to export selected rules to a JSON file and import rules 
 
 ## Usage
 
-### Starting ProxyBridge
+### Starting ProxiRoute
 
-1. Launch ProxyBridge from Applications
+1. Launch ProxiRoute from Applications
 2. The app runs in the menu bar
 3. Configure proxy settings and rules as needed
 4. Enable the system extension when prompted
@@ -355,11 +355,11 @@ Connection logs are available in the main window, showing:
 - **Proxy Settings** - Configure proxy server details
 - **Proxy Rules** - Manage traffic routing rules
 - **Help** - Check for updates and about information
-- **Quit** - Exit ProxyBridge
+- **Quit** - Exit ProxiRoute
 
 ### Command Line (CLI)
 
-ProxyBridge can run without a window, like the Windows CLI. There is **no second program**: the CLI is the same executable as the app, started with command line options. Started normally (Finder, Dock) it is the app.
+ProxiRoute can run without a window, like the Windows CLI. There is **no second program**: the CLI is the same executable as the app, started with command line options. Started normally (Finder, Dock) it is the app.
 
 The installer adds a short command, `proxybridge`, so it works from any folder in Terminal:
 
@@ -371,7 +371,7 @@ proxybridge --update                            # check for updates
 proxybridge --version
 ```
 
-If the command is not found, run the executable directly (it needs no setup): `/Applications/ProxyBridge.app/Contents/MacOS/ProxyBridge --cli --help`.
+If the command is not found, run the executable directly (it needs no setup): `/Applications/ProxiRoute.app/Contents/MacOS/ProxiRoute --cli --help`.
 
 | Option | |
 |--------|---|
@@ -428,28 +428,28 @@ It runs in the foreground until you press **Ctrl+C**, which clears the rules and
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/InterceptSuite/ProxyBridge.git
-   cd ProxyBridge/MacOS/ProxyBridge
+   git clone https://github.com/sdpong/ProxyBridge.git
+   cd ProxiRoute/MacOS/ProxiRoute
    ```
 
 2. Open the project:
    ```bash
-   open ProxyBridge.xcodeproj
+   open ProxiRoute.xcodeproj
    ```
 
 3. Configure code signing in Xcode:
-   - Select the ProxyBridge target
+   - Select the ProxiRoute target
    - Go to Signing & Capabilities
    - Select your development team
 
 4. Build the project:
    ```bash
-   xcodebuild -project ProxyBridge.xcodeproj -scheme ProxyBridge -configuration Release build
+   xcodebuild -project ProxiRoute.xcodeproj -scheme ProxiRoute -configuration Release build
    ```
 
 5. The built application will be in:
    ```
-   ~/Library/Developer/Xcode/DerivedData/ProxyBridge-*/Build/Products/Release/ProxyBridge.app
+   ~/Library/Developer/Xcode/DerivedData/ProxiRoute-*/Build/Products/Release/ProxiRoute.app
    ```
 
 ### Creating an Installer
