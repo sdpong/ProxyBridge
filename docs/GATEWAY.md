@@ -200,7 +200,7 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 
 | 阶段 | 内容 | 判定完成的标准 |
 |---|---|---|
-| **0 · 可行性实测**（**最要紧的一步，需要 sudo**） | 跑 `MacOS/ProxiRoute/tools/gateway-spike.sh`：PF 的 `rdr` 把一段连接重定向到本机端口，内核用 `DIOCNATLOOK` 说出它本来要去哪 | 脚本打印 `PASS`：原目的地址被正确读回来 |
+| **0 · 可行性实测**（**最要紧的一步，需要 sudo**） | 跑 `MacOS/ProxiRoute/tools/gateway-spike.sh`：PF 的 `rdr` 把一段连接重定向到本机端口，内核用 `DIOCNATLOOK` 说出它本来要去哪 | ✅ **已过**：脚本打印 `PASS`，`rdport` 就是原目的端口 |
 | **1 · 规则引擎的无程序分支** | App 侧规则引擎：跳过点名程序的规则（已有）、补协议维度（`protocolMode` 现在是死字段）、chain 的行为定死（`chain:<id>` 现在会静默直连）、域名匹配的来源定死 | 一条「不给程序、只给域名」的规则能让网关的流量按它走 |
 | **2 · root helper** | helper 二进制 + pkg postinstall 安装 + LaunchDaemon + PF anchor 的装载/卸载 + `sysctl` 转发开关 | app 点一下就能把 helper 装上并启停，卸载时清理干净 |
 | **3 · 透明代理的数据面** | app 侧的透明代理入口：接住重定向的连接 → 取原目的 → 按规则选上游 → 另开连接 → 双向倒 | 另一台机器把网关指过来，TCP 流量按规则走了代理 |
@@ -276,7 +276,7 @@ sudo ./gateway-spike.sh --forward    # 再加：把本机变成路由器，等�
 |---|---|---|---|
 | 1 | **macOS 上 `rdr` + `DIOCNATLOOK` 能不能读回原目的**（本机自测 + 转发流量两种） | **决定阶段 3 成不成立** | `sudo ./gateway-spike.sh` / `--forward`（阶段 0） |
 | 1b | **重定向本身成不成立** | **已验：成立** —— 实测里连接真的到了 helper（`accepted from 127.0.0.1:52807 to 127.0.0.1:18081`），客户端也正常收到页面 | 见 `FORK-NOTES.md`「实测跑通了」 |
-| 1c | **原目的怎么读回来** | **已查清**：ioctl 要发在 **`/dev/pf`** 上（socket 不认 pf 的 ioctl），用 **Apple 自己的 84 字节布局**（`pf_addr` 是 128 位！），方向要用 **`PF_OUT`**（`PF_IN` 那条分支不给出原目的），答案在 **`rdaddr`/`rdxport`** | 下一轮实测按这个问；**`pfctl -ss -o nat` 在 macOS 上不存在**（「读状态表」兜底不成立）→ **反查原目的必须 root → helper 背这个活** |
+| 1c | **原目的怎么读回来** | ✅ **已验**：ioctl 发在 **`/dev/pf`** 上，用 **Apple 自己的 84 字节布局**（`pf_addr` 是 128 位），方向 **`PF_OUT`**，答案在 **`rdaddr`/`rdxport`**（地址端口都是网络序） | 实测输出 `rdport=18080`，helper 用它连回去，客户端拿到页面 |
 | 2 | 那个 ioctl 的结构体是「老布局」还是「新布局」、端口是什么字节序 | 决定实现怎么写（虽然可以两种都试，但不能长期靠猜） | 阶段 0 的输出里每种布局的每种读法都打印了，对一下就知道 |
 | 3 | macOS 上 `route-to lo0` 的实际行为 | **可能要，也可能不要**：本方案让 helper 另开连接，理论上不需要它 | 阶段 3 做到一半才知道；阶段 0 的设计不需要它 |
 | 4 | 系统 Internet Sharing 的 NAT 规则与自定义 anchor 会不会打架 | 两条 NAT 路径可能互相覆盖 | 同时开 ICS 与自定义 anchor 观察 |

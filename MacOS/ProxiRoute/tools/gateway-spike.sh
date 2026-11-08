@@ -362,6 +362,10 @@ verdict() {
 
     if ! grep -q '^accepted from' "$log_file" 2>/dev/null; then
         say "   FAIL: the connection never came to the program."
+        if [ -s "$log_file" ]; then
+            say "        The program wrote this before that:"
+            sed 's/^/           /' "$log_file"
+        fi
         say "        The filter did not redirect it, so the rules are not in"
         say "        place. The output above says what the filter thinks it has."
         return
@@ -427,18 +431,10 @@ PY
         return
     fi
 
-    # the states of the filter are the other way of finding the place the
-    # traffic was going: the helper can read them as root, and it is slower
-    # but it works
-    states="$(cat "$TMP/states.txt" "$TMP/states-nat.txt" 2>/dev/null)"
-    if echo "$states" | grep -q "$TARGET_PORT"; then
-        say "   the states of the filter show the place the traffic was going:"
-        echo "$states" | grep "$TARGET_PORT" | sed 's/^/      /'
-        say "   PASS: the original destination can be read from the states."
-        say "         The helper can do it as root: it is slower than the"
-        say "         ioctl, but it works."
-        return
-    fi
+    # The states of the filter are not a way out: macOS shows the tuple
+    # after the redirect, without the place the traffic was going, and the
+    # text of the rules does hold the port of the test, which made a check
+    # on that text say yes for the wrong reason. The ioctl is the way.
 
     verdict_kind="${answer%%|*}"
     verdict_line="${answer#*|}"
