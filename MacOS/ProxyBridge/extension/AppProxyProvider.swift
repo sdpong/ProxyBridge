@@ -984,8 +984,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     //
     // The line is only written when something changed: a flow that opened or closed says so
     // on its own line, so a line that repeats the same numbers says nothing new.
-    private func reportOpenFlows() {
-        let flows = liveFlows.snapshot()
+    private func reportOpenFlows(_ flows: [LiveFlowRegistry.Snapshot]) {
         guard !flows.isEmpty else { return }
         let rows = flows.map { "\($0.id):\($0.bytesUp):\($0.bytesDown)" }.joined(separator: " ")
         reportLock.lock()
@@ -1005,8 +1004,20 @@ class AppProxyProvider: NETransparentProxyProvider {
     //
     // A flow that carries nothing is written every tenth round only: it says the same
     // thing every time, and it is still there when the app that missed it starts.
-    private func reportLiveFlows(writeEveryFlow: Bool) {
-        for flow in liveFlows.snapshot() {
+    private func reportLiveFlows(_ flows: [LiveFlowRegistry.Snapshot], writeEveryFlow: Bool) {
+        // The bytes of a flow that has ended are of no use any more. The flow
+        // ids are never used twice, so the entry would sit in the dictionary
+        // until the tunnel stops - and the dictionary would grow with every
+        // connection that ever was. The flows that are open right now are
+        // known, so everything else is dropped.
+        reportLock.lock()
+        let open = Set(flows.map { $0.id })
+        if lastReportedBytes.count > open.count {
+            lastReportedBytes = lastReportedBytes.filter { open.contains($0.key) }
+        }
+        reportLock.unlock()
+
+        for flow in flows {
             reportLock.lock()
             let last = lastReportedBytes[flow.id]
             let unchanged = !writeEveryFlow && last?.up == flow.bytesUp && last?.down == flow.bytesDown
@@ -1023,7 +1034,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     // that opened and closed before the app started is gone from the log by the time the
     // app looks. The extension keeps the numbers, so the table in the app is right from
     // the first second and does not lose a connection when the window is closed.
-    private func reportProxyTotals() {
+    private func reportProxyTotals(_ flows: [LiveFlowRegistry.Snapshot]) {
         counterLock.lock()
         let counters = proxyCounters
         counterLock.unlock()
@@ -1031,12 +1042,11 @@ class AppProxyProvider: NETransparentProxyProvider {
 
         // the flows that are open right now still have to be counted: their bytes have not
         // been added to the total yet, they only go there when they end
-        let open = liveFlows.snapshot()
         var records: [String] = []
         for (name, counter) in counters {
             var up = counter.finishedUp
             var down = counter.finishedDown
-            for flow in open where flow.proxy == name {
+            for flow in flows where flow.proxy == name {
                 up += flow.bytesUp
                 down += flow.bytesDown
             }
@@ -1105,9 +1115,13 @@ class AppProxyProvider: NETransparentProxyProvider {
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             self.reportRound += 1
-            self.reportOpenFlows()
-            self.reportLiveFlows(writeEveryFlow: self.reportRound % 10 == 0)
-            self.reportProxyTotals()
+            // One snapshot of the open flows for the whole round. The list is
+            // walked three times, and with many open flows the walk is the
+            // expensive part of the round.
+            let flows = self.liveFlows.snapshot()
+            self.reportOpenFlows(flows)
+            self.reportLiveFlows(flows, writeEveryFlow: self.reportRound % 10 == 0)
+            self.reportProxyTotals(flows)
         }
         timer.resume()
         flowReportTimer = timer
