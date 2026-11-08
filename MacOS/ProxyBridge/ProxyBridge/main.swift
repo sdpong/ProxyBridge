@@ -10,6 +10,12 @@ import SwiftUI
 // gone.
 PreferencesMigration.migrateIfNeeded()
 
+// the menus macOS brings itself are drawn by the system, in the language of
+// the app bundle. the bundle says which languages it speaks, and the language
+// the app is in is put in front of them, so that those menus follow the
+// language that was chosen in the app and not the one of the system.
+UserDefaults.standard.set([L10n.language.rawValue], forKey: "AppleLanguages")
+
 if CLIArguments.isCLI(CommandLine.arguments) {
     CLI.run(arguments: CommandLine.arguments)
 } else {

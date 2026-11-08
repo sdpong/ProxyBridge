@@ -1,0 +1,3 @@
+/* the strings of the app live in L10n.swift. this file only says that the app
+   speaks these languages, so that the menus macOS brings itself are in the
+   language of the system too. */

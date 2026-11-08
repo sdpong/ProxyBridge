@@ -187,6 +187,15 @@ struct ProxyBridgeGUIApp: App {
                     }
                 }
 
+                // the four menus of the menu bar are drawn by SwiftUI itself and
+                // not out of the menu, so they keep the language of the bundle
+                // until the app is started again. the person should know that,
+                // otherwise it looks like the change did not work
+                Divider()
+
+                Text(L10n.t("The menus macOS draws itself (Edit, View, Window, Help) change to the new language the next time ProxyBridge starts."))
+                    .foregroundColor(.secondary)
+
                 Divider()
 
                 Button(L10n.t("Approve ProxyBridge in System Settings...")) {

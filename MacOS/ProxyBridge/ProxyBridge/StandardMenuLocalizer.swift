@@ -1,8 +1,9 @@
 import AppKit
 import Foundation
 
-// The menus that macOS brings itself: Edit, View, Window, Help, and the items
-// of the application menu.
+// The items of the menus that macOS brings itself: Undo, Redo, Cut, Copy,
+// Paste, Delete, Select All, Minimize, Zoom, Bring All to Front, and the
+// items of the application menu.
 //
 // Their titles come from the localization of the app bundle. This app has no
 // bundle of resources - the strings live in L10n.swift instead - so the system
@@ -14,10 +15,15 @@ import Foundation
 //
 // The renaming cannot be a one time thing. SwiftUI builds the menu bar again
 // whenever something in the app changes, and it writes its own titles into it
-// again - "Edit" and "View" come back in English every time. So the menus are
+// again - "Undo" and "Cut" come back in English every time. So the menus are
 // watched: every change of an item is answered with a renaming of everything
 // that has to be renamed. That way the title is right at the moment it is
 // looked at, and not only at the moment the app started.
+//
+// The four menus of the menu bar itself (Edit, View, Window, Help) are drawn
+// by SwiftUI and not out of the menu, so they cannot be renamed here. They are
+// in the language of the bundle, and the bundle is put in the language of the
+// app when the app starts (see main.swift).
 enum StandardMenuLocalizer {
 
     // The name of the app, as the system menus put it in their titles.

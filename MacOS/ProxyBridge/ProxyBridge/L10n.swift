@@ -263,6 +263,8 @@ enum L10n {
 
         "A rule that names no program says to the proxy that the traffic is ProxyBridge's own: the bundle id of the extension is the name it sees. A proxy that routes by program can then send that traffic its own way.": "没有指定程式的规则会告诉代理：这些流量是 ProxyBridge 自己的流量，代理看到的是扩展的包标识名。按程式分流的代理因此可以把这类流量送到它该去的地方。",
 
+        "The menus macOS draws itself (Edit, View, Window, Help) change to the new language the next time ProxyBridge starts.": "macOS 自己画的四个菜单（编辑、显示、窗口、帮助）会在下次启动 ProxyBridge 时换成新的语言。",
+
         // the buttons
         "Add": "添加",
         "Add Rule": "添加规则",
@@ -474,6 +476,13 @@ final class LocalizationManager: ObservableObject {
     @Published var language: L10n.Language {
         didSet {
             UserDefaults.standard.set(language.rawValue, forKey: LocalizationManager.storageKey)
+            // The menus macOS draws itself (Edit, View, Window, Help) are drawn
+            // in the language of the app bundle, and the bundle reads that
+            // language once, when the process starts. The language of the app is
+            // put in front of them, so that they follow the choice that was
+            // made here and not the one of the system - from the next start of
+            // the app on, because the bundle does not read it again.
+            UserDefaults.standard.set([language.rawValue], forKey: "AppleLanguages")
         }
     }
 
