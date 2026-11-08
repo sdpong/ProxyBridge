@@ -75,9 +75,12 @@ final class LocalProxyServer {
     private var proxyTotals: [String: [String: (connections: Int, up: Int64, down: Int64)]] = [:]
 
     // the proxy list of the app, for the upstream that names one
-    var proxyConfigs: [LocalProxyEndpoint] = []
+    var proxyConfigs: [ProxyEndpoint] = []
     // the rules of the app, for the upstream that follows them
-    var rules: [LocalProxyRule] = []
+    var rules: [EngineRule] = []
+    // the chains of the app: the id of a chain and the proxies it walks
+    // through, in order
+    var chains: [String: [String]] = [:]
 
     // MARK: - the life of the server
 
@@ -273,23 +276,23 @@ final class LocalProxyServer {
     }
 
     // the address of a socks5 request: an ip, or a name with its length
-    private func readAddress(fd: Int32, type: UInt8) -> LocalProxyTarget? {
+    private func readAddress(fd: Int32, type: UInt8) -> FlowTarget? {
         switch type {
         case 0x01:
             guard let ip = LocalProxySocket.recvExact(fd, 4), ip.count == 4,
                   let port = LocalProxySocket.recvExact(fd, 2), port.count == 2 else { return nil }
             let host = ip.map { String($0) }.joined(separator: ".")
-            return LocalProxyTarget(host: host, port: (Int(port[0]) << 8) | Int(port[1]))
+            return FlowTarget(address: host, port: (Int(port[0]) << 8) | Int(port[1]))
         case 0x03:
             guard let length = LocalProxySocket.recvExact(fd, 1), let count = length.first,
                   let name = LocalProxySocket.recvExact(fd, Int(count)),
                   let port = LocalProxySocket.recvExact(fd, 2), port.count == 2 else { return nil }
-            return LocalProxyTarget(host: String(decoding: name, as: UTF8.self),
-                                    port: (Int(port[0]) << 8) | Int(port[1]))
+            return FlowTarget(name: String(decoding: name, as: UTF8.self),
+                              port: (Int(port[0]) << 8) | Int(port[1]))
         case 0x04:
             guard let ip = LocalProxySocket.recvExact(fd, 16), ip.count == 16,
                   let port = LocalProxySocket.recvExact(fd, 2), port.count == 2 else { return nil }
-            return LocalProxyTarget(host: textualIPv6(ip), port: (Int(port[0]) << 8) | Int(port[1]))
+            return FlowTarget(address: textualIPv6(ip), port: (Int(port[0]) << 8) | Int(port[1]))
         default:
             return nil
         }
@@ -322,7 +325,7 @@ final class LocalProxyServer {
         let url = parts[1]
 
         if method == "CONNECT" {
-            guard let target = LocalProxyTarget.parse(hostPort: url) else {
+            guard let target = FlowTarget.parse(hostPort: url) else {
                 _ = LocalProxySocket.sendAll(fd, Data("HTTP/1.1 400 Bad Request\r\n\r\n".utf8))
                 return
             }
@@ -331,7 +334,7 @@ final class LocalProxyServer {
         }
 
         // a plain request: the url says where it goes
-        guard let target = LocalProxyTarget.parse(url: url) else {
+        guard let target = FlowTarget.parse(url: url) else {
             _ = LocalProxySocket.sendAll(fd, Data("HTTP/1.1 400 Bad Request\r\n\r\n".utf8))
             return
         }
@@ -355,7 +358,7 @@ final class LocalProxyServer {
 
     // MARK: the way out
 
-    private func connect(fd: Int32, target: LocalProxyTarget, http: Bool = false, peer: String) {
+    private func connect(fd: Int32, target: FlowTarget, http: Bool = false, peer: String) {
         // the choice reads the settings on its own: locking here as well
         // would be a lock inside a lock, and the second one would wait for
         // ever
@@ -393,11 +396,12 @@ final class LocalProxyServer {
 
     // The upstream is decided by the setting: straight out, through one of
     // the proxies of the app, or through the rules of the app.
-    private func upstreamChoice(for target: LocalProxyTarget) -> LocalProxyUpstream {
+    private func upstreamChoice(for target: FlowTarget) -> RuleUpstream {
         stateLock.lock()
         let mode = settings.upstream
         let proxies = proxyConfigs
         let allRules = rules
+        let allChains = chains
         stateLock.unlock()
 
         switch mode {
@@ -410,17 +414,25 @@ final class LocalProxyServer {
             }
             return .proxy(config)
         case .rules:
-            return LocalProxyRules.upstream(rules: allRules, target: target, proxies: proxies)
+            let decision = ProxyRuleEngine.decide(rules: allRules, target: target,
+                                                   proxies: proxies, chains: allChains)
+            // the reason the traffic did not go where the rule said is worth
+            // a line in the log: a rule that points at something that is not
+            // there is a rule that does not do what it says
+            if let note = decision.note {
+                log(note, level: "WARN")
+            }
+            return decision.upstream
         }
     }
 
     // The connection to the far side: straight out, or through a proxy.
-    private func dial(_ upstream: LocalProxyUpstream, target: LocalProxyTarget) -> Int32? {
+    private func dial(_ upstream: RuleUpstream, target: FlowTarget) -> Int32? {
         switch upstream {
         case .blocked:
             return nil
         case .direct:
-            let result = LocalProxySocket.connect(host: target.host, port: target.port, timeout: 15)
+            let result = LocalProxySocket.connect(host: target.proxyHost, port: target.port, timeout: 15)
             return result.fd
         case .proxy(let endpoint):
             let result = LocalProxySocket.connect(host: endpoint.host, port: endpoint.port, timeout: 15)
@@ -432,7 +444,35 @@ final class LocalProxyServer {
                 return nil
             }
             return fd
+        case .chain(let hops):
+            return dialChain(hops, target: target)
         }
+    }
+
+    // A chain is walked through one proxy at a time: every proxy but the
+    // last one is asked to reach the next one, and the last one is asked
+    // to reach the place the client wants to go.
+    private func dialChain(_ hops: [ProxyEndpoint], target: FlowTarget) -> Int32? {
+        guard let first = hops.first else { return nil }
+        let result = LocalProxySocket.connect(host: first.host, port: first.port, timeout: 15)
+        guard let fd = result.fd else { return nil }
+        LocalProxySocket.clearTimeout(fd)
+        for i in 0..<(hops.count - 1) {
+            let next = hops[i + 1]
+            let ok = LocalProxyDialer.handshake(fd: fd, through: hops[i],
+                                                target: FlowTarget(host: next.host, port: next.port))
+            if !ok {
+                Darwin.close(fd)
+                return nil
+            }
+        }
+        let last = hops[hops.count - 1]
+        let ok = LocalProxyDialer.handshake(fd: fd, through: last, target: target)
+        if !ok {
+            Darwin.close(fd)
+            return nil
+        }
+        return fd
     }
 
     // MARK: the relay
@@ -532,22 +572,23 @@ final class LocalProxyServer {
     // The name a proxy is shown under. The names of the extension are used
     // here as well, so that the table of the window reads the same way in
     // both modes.
-    static func proxyName(_ upstream: LocalProxyUpstream) -> String {
+    static func proxyName(_ upstream: RuleUpstream) -> String {
         switch upstream {
         case .direct: return "Direct"
         case .blocked: return "BLOCK"
         case .proxy(let endpoint): return endpoint.name.isEmpty ? endpoint.label : endpoint.name
+        case .chain(let hops): return hops.map { $0.name.isEmpty ? $0.label : $0.name }.joined(separator: " -> ")
         }
     }
 
     // A connection opens a flow, and the flow is closed when it is over.
-    private func openFlow(peer: String, target: LocalProxyTarget, upstream: LocalProxyUpstream) -> UInt64 {
+    private func openFlow(peer: String, target: FlowTarget, upstream: RuleUpstream) -> UInt64 {
         let now = Date()
         trafficLock.lock()
         flowCounter += 1
         let id = flowCounter
         let name = LocalProxyServer.proxyName(upstream)
-        liveFlows[id] = ServerFlow(id: id, client: peer, destination: target.host,
+        liveFlows[id] = ServerFlow(id: id, client: peer, destination: target.proxyHost,
                                    port: target.port, proxy: name, bytesUp: 0, bytesDown: 0,
                                    startedAt: now, lastActivity: now)
         proxyTotals[peer, default: [:]][name, default: (connections: 0, up: 0, down: 0)].connections += 1

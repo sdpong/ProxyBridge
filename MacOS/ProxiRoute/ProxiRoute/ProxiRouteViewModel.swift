@@ -582,11 +582,12 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     func startLocalProxyServer() {
         localProxyServer.proxyConfigs = proxyConfigs.map { config in
-            LocalProxyEndpoint(id: config.id, name: config.name, type: config.type,
-                               host: config.host, port: config.port,
-                               username: config.username, password: config.password)
+            ProxyEndpoint(id: config.id, name: config.name, type: config.type,
+                          host: config.host, port: config.port,
+                          username: config.username, password: config.password)
         }
         localProxyServer.rules = localProxyRules()
+        localProxyServer.chains = localProxyChains()
         localProxyServer.logHandler = { [weak self] message, level in
             self?.addLog(level, message)
             // the unified log as well: the activity log of the app is only
@@ -659,7 +660,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // The rules of the app, in the shape the server needs. A client on the
     // network has no program, so the rules that name one are of no use to it.
-    private func localProxyRules() -> [LocalProxyRule] {
+    private func localProxyRules() -> [EngineRule] {
         let dicts = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
         return dicts.map { dict in
             let programs = (dict["processNames"] as? String ?? "")
@@ -668,12 +669,23 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 .split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             let ports = (dict["targetPorts"] as? String ?? "")
                 .split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            return LocalProxyRule(action: dict["action"] as? String ?? "DIRECT",
-                                  targetHosts: hosts, targetPorts: ports,
-                                  hasProgram: !programs.isEmpty,
-                                  enabled: dict["enabled"] as? Bool ?? true,
-                                  protocolMode: dict["protocol"] as? String ?? "BOTH")
+            return EngineRule(action: dict["action"] as? String ?? "DIRECT",
+                              hosts: hosts, ports: ports,
+                              hasProgram: !programs.isEmpty,
+                              enabled: dict["enabled"] as? Bool ?? true,
+                              protocolMode: dict["protocol"] as? String ?? "BOTH")
         }
+    }
+
+    // The chains of the app, in the shape the rule engine needs them: the
+    // id of a chain and the proxies it walks through, in order. A rule that
+    // points at a chain is read by that id.
+    private func localProxyChains() -> [String: [String]] {
+        var out: [String: [String]] = [:]
+        for chain in chains {
+            out[chain.id] = chain.proxyIds
+        }
+        return out
     }
 
     private func sendRouteOptionsToExtension(_ settings: RouteSettings) {

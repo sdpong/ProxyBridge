@@ -372,38 +372,38 @@ check("the upstream is kept", stored.upstream == .direct)
 
 // the rules of the app: a client on the network has no program, so a rule
 // that names one is not about it
-let rules = LocalProxyRules.upstream(
-    rules: [LocalProxyRule(action: "DIRECT", targetHosts: [], targetPorts: [], hasProgram: true, enabled: true, protocolMode: "BOTH")],
-    target: LocalProxyTarget(host: "example.com", port: 80), proxies: [])
-check("a rule with a program is skipped", rules == .direct)
+let rules = ProxyRuleEngine.decide(
+    rules: [EngineRule(action: "DIRECT", hasProgram: true)],
+    target: FlowTarget(host: "example.com", port: 80), proxies: [], chains: [:])
+check("a rule with a program is skipped", rules.upstream == .direct)
 
-let blocked = LocalProxyRules.upstream(
-    rules: [LocalProxyRule(action: "BLOCK", targetHosts: ["*.example.com"], targetPorts: [], hasProgram: false, enabled: true, protocolMode: "BOTH")],
-    target: LocalProxyTarget(host: "www.example.com", port: 80), proxies: [])
-check("a rule that names a host blocks the traffic", blocked == .blocked)
+let blocked = ProxyRuleEngine.decide(
+    rules: [EngineRule(action: "BLOCK", hosts: ["*.example.com"])],
+    target: FlowTarget(host: "www.example.com", port: 80), proxies: [], chains: [:])
+check("a rule that names a host blocks the traffic", blocked.upstream == .blocked)
 
-let allowed = LocalProxyRules.upstream(
-    rules: [LocalProxyRule(action: "DIRECT", targetHosts: ["*.example.com"], targetPorts: [], hasProgram: false, enabled: true, protocolMode: "BOTH")],
-    target: LocalProxyTarget(host: "www.example.com", port: 80), proxies: [])
-check("a rule that names a host matches the traffic", allowed == .direct)
+let allowed = ProxyRuleEngine.decide(
+    rules: [EngineRule(action: "DIRECT", hosts: ["*.example.com"])],
+    target: FlowTarget(host: "www.example.com", port: 80), proxies: [], chains: [:])
+check("a rule that names a host matches the traffic", allowed.upstream == .direct)
 
-let other = LocalProxyRules.upstream(
-    rules: [LocalProxyRule(action: "BLOCK", targetHosts: ["*.example.com"], targetPorts: [], hasProgram: false, enabled: true, protocolMode: "BOTH")],
-    target: LocalProxyTarget(host: "www.other.com", port: 80), proxies: [])
-check("a rule that names another host does not match", other == .direct)
+let other = ProxyRuleEngine.decide(
+    rules: [EngineRule(action: "BLOCK", hosts: ["*.example.com"])],
+    target: FlowTarget(host: "www.other.com", port: 80), proxies: [], chains: [:])
+check("a rule that names another host does not match", other.upstream == .direct)
 
 // the patterns of the rules
-check("a host pattern with a star matches", LocalProxyRule.host("*.example.com", matches: "www.example.com"))
-check("a host pattern with a star does not match the other one", !LocalProxyRule.host("*.example.com", matches: "www.other.com"))
-check("a plain host matches itself", LocalProxyRule.host("example.com", matches: "example.com"))
-check("a port range matches", LocalProxyRule.port("8000-9000", matches: 8443))
-check("a port range does not match the other one", !LocalProxyRule.port("8000-9000", matches: 7000))
-check("a single port matches", LocalProxyRule.port("443", matches: 443))
+check("a host pattern with a star matches", EngineRule.host("*.example.com", matches: "www.example.com"))
+check("a host pattern with a star does not match the other one", !EngineRule.host("*.example.com", matches: "www.other.com"))
+check("a plain host matches itself", EngineRule.host("example.com", matches: "example.com"))
+check("a port range matches", EngineRule.port("8000-9000", matches: 8443))
+check("a port range does not match the other one", !EngineRule.port("8000-9000", matches: 7000))
+check("a single port matches", EngineRule.port("443", matches: 443))
 
 // the targets of the http client
-check("an url is read", LocalProxyTarget.parse(url: "http://example.com/x") == LocalProxyTarget(host: "example.com", port: 80))
-check("an url with a port is read", LocalProxyTarget.parse(url: "http://example.com:8080/x") == LocalProxyTarget(host: "example.com", port: 8080))
-check("a connect line is read", LocalProxyTarget.parse(hostPort: "example.com:443") == LocalProxyTarget(host: "example.com", port: 443))
+check("an url is read", FlowTarget.parse(url: "http://example.com/x") == FlowTarget(host: "example.com", port: 80))
+check("an url with a port is read", FlowTarget.parse(url: "http://example.com:8080/x") == FlowTarget(host: "example.com", port: 8080))
+check("a connect line is read", FlowTarget.parse(hostPort: "example.com:443") == FlowTarget(host: "example.com", port: 443))
 
 // the traffic of a connection that is still open
 //
