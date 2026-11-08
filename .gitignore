@@ -21,6 +21,10 @@ MacOS/ProxyBridge/.env
 MacOS/ProxyBridge/output/
 MacOS/ProxyBridge/build/
 MacOS/ProxyBridge/provision/**
+MacOS/ProxiRoute/.env
+MacOS/ProxiRoute/output/
+MacOS/ProxiRoute/build/
+MacOS/ProxiRoute/provision/**
 
 # Signing configuration files (sensitive)
 MacOS/ProxyBridge/Signing-App.xcconfig
@@ -86,6 +90,8 @@ Temporary Items
 .apdisk
 MacOS/ProxyBridge/build/
 MacOS/ProxyBridge/output/
+MacOS/ProxiRoute/build/
+MacOS/ProxiRoute/output/
 
 # Linux/**
 MacOS/ProxyBridge/Signing-Config.xcconfig
