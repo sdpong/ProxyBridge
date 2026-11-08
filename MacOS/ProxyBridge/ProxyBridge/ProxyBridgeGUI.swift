@@ -457,6 +457,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         return false
     }
 
+    // the app is opened again - from the dock, from Finder, from a second copy
+    // of the command in a terminal - has to bring the window back.
+    //
+    // without this the app stays in the menu bar with no way to get to its
+    // window: it runs as an accessory (no dock icon) once the window was
+    // closed, and AppKit does nothing on a reopen when there is no dock icon
+    // to click. the window is still there, it only has to be shown again.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showMainWindow()
+        return true
+    }
+
     // close-to-menu-bar off: the window closes. whether the app quits with it
     // is the "keep the proxy running in the background" setting: on (the
     // default) the app stays and the tunnel keeps running, off quits.
