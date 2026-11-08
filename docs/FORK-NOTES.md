@@ -981,6 +981,32 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
   `LocalProxyUpstream.swift:265` 的 `if rule.hasProgram { continue }`），Windows/Linux 要对齐。
   域名能不能匹配取决于数据面能不能拿到原目的（拿到域名就能按域名分流，只拿到 IP 就不能）。
 
+### 网关模式（只做 macOS）的几条实测事实
+
+> 方案见 [docs/GATEWAY.md](GATEWAY.md)。这里是**查过的事实**，别再查第二遍。
+
+- **macOS 上没有 tproxy**：原目的地址只能靠 `DIOCNATLOOK` 反查，**只支持 IPv4 TCP**。
+- **macOS 不公开 `<net/pfvar.h>`**：本机 SDK（`/Applications/Xcode.app/.../MacOSX.sdk/usr/include/net/`）
+  里只有 `bpf.h` 和 `pfkeyv2.h`，**没有 `pfvar.h`**；
+  `/usr/share/man/man4/` 里也**没有 `pf.4`**（只有 `pflog.4`）。
+  → 结构体和 ioctl 号只能**探测**：结构体的大小进了 ioctl 号，
+  猜错了内核会用 `ENOTTY` 挡回来，不会读错。实测工具：
+  `MacOS/ProxiRoute/tools/gateway-natlook.c`（两种布局都试，端口的两种读法都打印）。
+- **重定向规则要挂在 `rdr-anchor` 上**：普通 `anchor` 里的 `rdr` 规则**不会被求值**
+  （rdr 规则走的是重定向那条链，地址转换走的是 `nat-anchor` 那条链）。
+  这跟直觉相反，是这次写实测脚本时才踩出来的。
+- **本机 `/etc/pf.conf` 里没有 `set skip on lo0`**：所以本机自己发的包也会进过滤器，
+  「重定向 + 反查原目的」**可以在这台机器上自测**，不必先找第二台机器。
+  （Apple 的默认 pf.conf 本来就没有这一句，`set skip on lo0` 是 OpenWrt 那类的写法。）
+- **本机的 pf 规则集很简单**：`/etc/pf.anchors/com.apple` 只有 AirDrop 和应用防火墙两个子 anchor；
+  深信服留下的 `com.sangfor.*` anchor 文件都是 **0 字节占位**。
+  → 在主规则集里挂一个自己的 anchor 是可控的（实测脚本会先存下原规则集再还原）。
+- **NAT 可能根本不需要**：TCP 走的是 helper **另开**的连接，不是包的地址转换；
+  只有「不代理、直出」的那部分（UDP、ICMP）才需要 NAT。
+  → 社区做法里的 `route-to lo0` 也是同一个道理：本方案**不需要**它。
+- **实测脚本要 root，而开发环境没有 sudo**（`sudo -n` 回「需要密码」）→
+  这一步必须由人在本机跑一次，输出贴回来。
+
 ### 本机当代理服务器
 
 - **用 BSD socket 而不是 Network.framework**：`NWListener` 不能绑定到指定地址（EINVAL），

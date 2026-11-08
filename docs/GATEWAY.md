@@ -15,7 +15,10 @@
 |---|---|
 | 转发后走不走代理 | **走**：透明代理，按规则选上游（不是只做 NAT 直出） |
 | 特权 | **接受**：安装时装一个 root 特权 helper，启用网关时授权一次 |
-| 范围 | **三端一起**：macOS + Windows + Linux |
+| 范围 | **只做 macOS**（Windows / Linux 的网关模式不在这一轮里） |
+
+> 范围收窄到 macOS 之后，方案里仍然留着 Windows / Linux 的调研结论
+> （那一节写的是「如果哪天要做，从哪起步」），但**阶段划分里已经没有它们**。
 
 ## 一、三条硬事实（决定了整个形状）
 
@@ -107,9 +110,12 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
    转发路径若能拿到原目的（域名），就能按域名分流；只拿到 IP 就只能按 IP。
    → **这是三端数据面设计的硬约束，不是 UI 能补的**。
 
-## 四、数据面（每端各写各的）
+## 四、数据面（这一轮只有 macOS）
 
-### Windows（第一刀：最短路径）
+> Windows / Linux 的调研结论保留在下面两节里：**如果哪天要做，从哪起步**。
+> 这一轮不做它们。
+
+### Windows（以后要做时的起步处）
 
 1. 服务已是 SYSTEM → 直接开 IP 转发（注册表 `HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\IpEnableRouter=1`）。
 2. WinDivert 已有 **NETWORK 层**句柄（`ProxyBridge.c:1348`）→ 在这一层加一条过滤器抓**转发包**。
@@ -117,25 +123,43 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 4. 上游握手与中继：Windows 端已有 SOCKS4/5、HTTP CONNECT 的引擎握手，
    规则引擎加「无程序维度」分支即可复用。
 
-### Linux
+### Linux（以后要做时的起步处）
 
 1. 已有 root + `CAP_NET_ADMIN` → 开 `net.ipv4.ip_forward=1`。
 2. 新增 `tc` egress（clsact）或 XDP 钩子，把转发包送进用户态。
 3. 用 `nftables` tproxy 或 `SO_ORIGINAL_DST` **保留原目的地址**交给本地 socket。
 4. UDP 可以真透明代理（Linux 才有这个能力）。
 
-### macOS
+### macOS（这一轮的全部）
+
+**形状**：别的终端的包进来 → PF 把它们**重定向到本机的一个端口** → app 侧那个端口上的程序
+问内核「这段流量本来要去哪」→ 按规则选上游（直连 / 某个代理 / 链）→ **另开一条连接**出去 →
+两边来回倒。这跟 redsocks 是一个路子，也跟 Linux 的 tproxy 是同一个意思。
 
 1. **root helper**（新）：只做四件事 —— `sysctl` 转发开关、PF anchor 的规则装载/卸载、
    状态回读、helper 的启停。**规则匹配和代理连接留在非特权的 app 侧**，不把整个 app 提权。
 2. **PF 规则**：入向 `rdr` 到本地端口 → app 侧透明代理入口；
-   `route-to lo0` 让出向包回到 lo0 才看得见；`no rdr` 排除临时端口避免回环；
-   UID 级别的回环规避（`pass out quick on lo0 … user <uid>`）。
+   `no rdr` 排除本程序自己的连接（用源端口区间，或按源地址排除）避免回环。
+   **注意**：重定向规则必须挂在 `rdr-anchor` 上才会被求值，
+   地址转换规则必须挂在 `nat-anchor` 上 —— 挂在普通 `anchor` 里是不走那条链的。
 3. **原目的地址**：`DIOCNATLOOK` 反查 —— **只支持 IPv4 TCP**。
+   macOS **不公开** `<net/pfvar.h>`（本机 SDK 里没有这个头文件），
+   所以结构体和 ioctl 号只能**探测**（见下面的实测脚本）：
+   结构体的大小进了 ioctl 号，猜错了会被内核用 `ENOTTY` 挡回来，不会读错。
 4. **UDP/QUIC**：macOS 上做不了透明 UDP → 只能**封 UDP 443 逼客户端回落 TCP**
    （ProxiRoute 已有这个语义的雏形：`RouteSettings.proxyUDP`、`MacOS/ProxiRoute/ProxiRoute/RouteSettings.swift:25`）。
 5. **DNS**：别的终端的 DNS 查询不会到 `NEDNSProxyProvider`（那只管本机）。
    网关要按域名分流，就得自带 DNS 劫持（PF `rdr` 53 → 本地 DNS）或要求终端手动设 DNS。
+6. **NAT 可能根本不需要**：TCP 走的是 helper **另开**的连接，不是包的地址转换。
+   只有「不代理、直出」的那部分流量（UDP、ICMP）才需要 NAT。
+
+**本机的两个好消息**（实测）：
+
+- `/etc/pf.conf` **没有** `set skip on lo0` → 本机自己发的包也会进过滤器，
+  所以「重定向 + 反查原目的」这件事**可以在这台机器上自测**，不必先找第二台机器。
+- `/etc/pf.anchors/com.apple` 只有 AirDrop 和应用防火墙两个子 anchor，基本是空的；
+  深信服留下的那几个 `com.sangfor.*` anchor 文件都是 0 字节占位。
+  所以在主规则集里挂一个自己的 anchor 是可控的（实测脚本会先把原规则集存下来再还原）。
 
 ## 五、特权组件与打包
 
@@ -169,32 +193,60 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
    要新的显示名（终端地址？还是终端名？）；`showsSource` 的条件（`:174`）现在是 `!= .local`，
    网关模式**要显示**来源列
 
-## 七、阶段划分
+## 七、阶段划分（只有 macOS）
 
 | 阶段 | 内容 | 判定完成的标准 |
 |---|---|---|
-| **A · Windows 打通全链路** | SYSTEM 服务开转发 + WinDivert NETWORK 层抓转发包 + 取原目的 + 按规则选上游 + 中继 + 统计里出现「转发」来源 | Windows 上另一台机器把网关指向这台机器，流量按 host 规则走了代理，统计里能看到 |
-| **B · 规则引擎的无程序分支** | 三端规则引擎统一：跳过点名程序的规则、补协议维度、chain 的行为定死（支持还是明确不支持）、域名能不能匹配 | 三端同一套规则写法，三端行为一致 |
-| **C · Linux** | `tc`/XDP 钩子 + nftables tproxy + 保留原目的 + UDP 真透明 | 同 A 的判定标准 |
-| **D · macOS 的 root helper** | helper 二进制 + pkg postinstall + LaunchDaemon + PF anchor（转发 + NAT + rdr） + app 侧透明代理入口 | 另一台机器把网关指过来，TCP 流量按规则走了代理 |
-| **E · macOS 的 UDP/QUIC 策略** | 封 UDP 443 逼回落 + DNS 劫持（若要按域名分流） | 客户端的 QUIC 被挡、回落 TCP 后仍按规则走代理 |
-| **F · UI 收口** | 第三种来源在统计/活动连接里的显示、终止权限、网关状态卡片的橙字改成真话 | 设置页不再写「转发还没有实现」 |
+| **0 · 可行性实测**（**最要紧的一步，需要 sudo**） | 跑 `MacOS/ProxiRoute/tools/gateway-spike.sh`：PF 的 `rdr` 把一段连接重定向到本机端口，内核用 `DIOCNATLOOK` 说出它本来要去哪 | 脚本打印 `PASS`：原目的地址被正确读回来 |
+| **1 · 规则引擎的无程序分支** | App 侧规则引擎：跳过点名程序的规则（已有）、补协议维度（`protocolMode` 现在是死字段）、chain 的行为定死（`chain:<id>` 现在会静默直连）、域名匹配的来源定死 | 一条「不给程序、只给域名」的规则能让网关的流量按它走 |
+| **2 · root helper** | helper 二进制 + pkg postinstall 安装 + LaunchDaemon + PF anchor 的装载/卸载 + `sysctl` 转发开关 | app 点一下就能把 helper 装上并启停，卸载时清理干净 |
+| **3 · 透明代理的数据面** | app 侧的透明代理入口：接住重定向的连接 → 取原目的 → 按规则选上游 → 另开连接 → 双向倒 | 另一台机器把网关指过来，TCP 流量按规则走了代理 |
+| **4 · UDP/QUIC 与 DNS** | 封 UDP 443 逼回落 + DNS 劫持（若要按域名分流） | 客户端的 QUIC 被挡、回落 TCP 后仍按规则走代理 |
+| **5 · UI 收口** | 第三种来源在统计/活动连接里的显示、终止权限、网关状态卡片那句橙字改成真话 | 设置页不再写「转发还没有实现」 |
 
-**阶段 A 之前不需要碰 macOS 的特权问题**，所以可以先把最容易出成果的那端做出来，
-同时用阶段 B 把三端的规则语义钉死。
+**为什么第 0 阶段在最前面**：macOS 没有 tproxy，原目的地址只能靠 `DIOCNATLOOK` 反查，
+而这个 ioctl 的结构体在 macOS 上**没有公开**（SDK 里没有 `<net/pfvar.h>`）。
+结构体的大小进了 ioctl 号，猜错了会被内核挡回来（`ENOTTY`）而不是读错，
+但**万一这条路整个不通**（比如这个内核版本不认），后面三个阶段的写法全要改。
+所以先花一次 sudo 把这件事验掉，再动手写代码。
+
+## 七之二、可行性实测（阶段 0 的东西）
+
+| 文件 | 做什么 |
+|---|---|
+| `MacOS/ProxiRoute/tools/gateway-spike.sh` | 整个实测：装规则、开测试服务、发连接、看结果、**把机器恢复原样**（原规则集、转发开关、过滤器开关全还原） |
+| `MacOS/ProxiRoute/tools/gateway-natlook.c` | 那个「接住被重定向的连接」的小程序：问内核原目的 → 连过去 → 倒字节 |
+
+跑法：
+
+```bash
+cd /Volumes/mydata/Downloads/ProxyBridge-src/MacOS/ProxiRoute/tools
+sudo ./gateway-spike.sh              # 本机自测：重定向 + 反查原目的
+sudo ./gateway-spike.sh --forward    # 再加：把本机变成路由器，等另一台机器连过来
+```
+
+安全上的几条约定（都写在脚本里了）：
+
+- 只用自己的 anchor（`com.sdpong.spike`），**不碰** `com.apple` 和别人的 anchor；
+- 动手前先把主规则集存下来，**结束时原样放回**；
+- 过滤器原来关着就还关着，转发开关原来什么值就还原成什么值；
+- 中途 Ctrl-C 也会走还原（`trap`）。
+
+**这个脚本要 root，而我这个环境没有 sudo**（`sudo -n` 说「需要密码」），所以**要你跑一次**，
+把输出贴给我 —— 输出里 `NATLOOK layout=...` 那几行就决定了后面怎么写。
 
 ## 八、待实测（结论没把握、必须先验的）
 
 | # | 待验 | 为什么重要 | 怎么验 |
 |---|---|---|---|
-| 1 | WinDivert NETWORK 层能否看到**转发**包、能取到原目的地址 | 决定阶段 A 成不成立 | Windows 上开 ICS，WinDivert NETWORK 层抓包看有没有别的机器的 IP |
-| 2 | `tc` egress / XDP 上转发包的可见性与原目的地址 | 决定阶段 C 的具体钩子 | Linux 上开转发 + 抓包 |
-| 3 | macOS 上 `rdr` + `DIOCNATLOOK` 能否在**转发**流量上恢复原目的 | 决定阶段 D 的透明代理成立与否 | 网关配好后 `pfctl -ss` 看 state |
-| 4 | macOS 上 `route-to lo0` 在 macOS 26/27 的实际行为 | 社区文档提过 macOS 26 VM 验证，但无 Apple 文档 | 按社区配方在目标 OS 上复现 |
-| 5 | 系统 Internet Sharing 的 NAT 规则与自定义 anchor 会不会打架 | 两条 NAT 路径可能互相覆盖 | 同时开 ICS 与自定义 anchor 观察 |
-| 6 | `NETransparentProxyProvider` 会不会意外看到转发流 | 若会，macOS 的数据面能省一大截 | 转发流量时看扩展日志里有没有 flow |
-| 7 | ad-hoc 签名下 `SMAppService.register()` 的确切错误码 | 确认「只能走 pkg postinstall」 | 本机跑一次 register 看 `SMAppService.status` |
-| 8 | 网关客户端的**进程名**怎么表达 | ProxiRoute 的 UI 一贯是程序名维度 | 产品决定（见下面的待定项） |
+| 1 | **macOS 上 `rdr` + `DIOCNATLOOK` 能不能读回原目的**（本机自测 + 转发流量两种） | **决定阶段 3 成不成立** | `sudo ./gateway-spike.sh` / `--forward`（阶段 0） |
+| 2 | 那个 ioctl 的结构体是「老布局」还是「新布局」、端口是什么字节序 | 决定实现怎么写（虽然可以两种都试，但不能长期靠猜） | 阶段 0 的输出里两种读法都打印了，对一下就知道 |
+| 3 | macOS 上 `route-to lo0` 的实际行为 | **可能要，也可能不要**：本方案让 helper 另开连接，理论上不需要它 | 阶段 3 做到一半才知道；阶段 0 的设计不需要它 |
+| 4 | 系统 Internet Sharing 的 NAT 规则与自定义 anchor 会不会打架 | 两条 NAT 路径可能互相覆盖 | 同时开 ICS 与自定义 anchor 观察 |
+| 5 | `NETransparentProxyProvider` 会不会意外看到转发流 | 若会，macOS 的数据面能省一大截 | 转发流量时看扩展日志里有没有 flow |
+| 6 | ad-hoc 签名下 `SMAppService.register()` 的确切错误码 | 确认「只能走 pkg postinstall」 | 本机跑一次 register 看 `SMAppService.status` |
+| 7 | 网关客户端的**进程名**怎么表达 | ProxiRoute 的 UI 一贯是程序名维度 | 产品决定（见下面的待定项） |
+| 8 | Windows / Linux 的同类结论 | 这一轮不做，但结论别丢 | 已在上面两节里存档 |
 
 ## 九、还没定的事
 
