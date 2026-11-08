@@ -53,6 +53,13 @@ struct SettingsTabView: View {
 
     // MARK: - the running mode
 
+    // The card says what the modes are. It does not say whether they are
+    // running: the two states that go with the mode are the same in every
+    // mode, so they said the same thing under every option, and a row that
+    // says the same thing three times is noise.
+    //
+    // The states live at the end of the row of the tabs now, where they can
+    // be seen without opening the settings.
     private var modeCard: some View {
         card(icon: "switch.2", title: L10n.t("Running Mode")) {
             Form {
@@ -69,22 +76,6 @@ struct SettingsTabView: View {
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    Divider()
-
-                    HStack {
-                        Text(L10n.t("The Traffic of This Machine"))
-                        Spacer()
-                        Text(viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied"))
-                            .foregroundColor(viewModel.isProxyActive ? .green : .secondary)
-                    }
-
-                    HStack {
-                        Text(L10n.t("Proxy Server"))
-                        Spacer()
-                        Text(viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running"))
-                            .foregroundColor(viewModel.localProxyRunning ? .green : .secondary)
-                    }
                 } footer: {
                     Text(L10n.t("The route mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both."))
                 }
@@ -165,6 +156,17 @@ struct SettingsTabView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    // The switch says what the person asked for. The DNS proxy
+                    // belongs to the traffic of this machine, so it only runs
+                    // in the route mode - and a switch that says "on" while
+                    // the proxy is off is a switch that lies.
+                    if viewModel.runtimeMode != .route {
+                        Text(L10n.t("The DNS proxy belongs to the traffic of this machine, so it runs in the route mode only. It is off now, and the host name rules do not work."))
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .formStyle(.grouped)

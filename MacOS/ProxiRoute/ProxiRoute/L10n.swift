@@ -130,6 +130,14 @@ enum L10n {
         "No traffic from the clients yet": "还没有客户端的流量",
         "The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.": "代理服务器转发客户端的流量。客户端一连上，这里就会出现记录。",
         "The route mode is off, so the traffic of this machine is not counted here. The proxy server counts the traffic of the clients.": "路由模式已关闭，本机流量不在这里统计。代理服务器统计的是客户端的流量。",
+        "The running mode is %@": "运行模式：%@",
+
+        // the tables are empty for a different reason in every mode, and the
+        // reason is worth saying
+        "This machine is not taken over": "本机没有被接管",
+        "Nothing is taken over, so nothing is counted. Switch to the route mode to count the traffic of this machine.": "没有接管任何流量，所以这里没有统计。切到「路由模式」才会统计本机流量。",
+        "The extension is stopped, so no connection of this machine is proxied. Switch to the route mode to see the connections here.": "扩展已停止，本机的连接不会被代理。切到「路由模式」才会在这里看到连接。",
+        "The DNS proxy belongs to the traffic of this machine, so it runs in the route mode only. It is off now, and the host name rules do not work.": "DNS 代理服务于本机流量，只在「路由模式」下运行。现在它是关的，主机名规则不会生效。",
 
         // the menus macOS brings itself. their titles come from the
         // localization of the app bundle, and this app has no bundle of
@@ -259,7 +267,7 @@ enum L10n {
         "Configuration saved": "配置已保存",
         "DNS proxy setup failed: %@. Host name rules and send hostname will not work.": "DNS 代理设置失败：%@。主机名规则和 send hostname 将无法工作。",
         "DNS proxy enabled": "DNS 代理已启用",
-        "DNS proxy is off (Enable DNS in the Proxy menu). Host name rules and send hostname do not work.": "DNS 代理已关闭（在「代理」菜单中启用 DNS）。主机名规则和 send hostname 无法工作。",
+        "DNS proxy is off (Enable DNS in the settings tab). It runs in the route mode only, and host name rules and send hostname do not work.": "DNS 代理已关闭（在「设置」标签页里启用 DNS）。它只在「路由模式」下运行，主机名规则和 send hostname 无法工作。",
         "Could not switch the DNS proxy off: %@": "无法关闭 DNS 代理：%@",
         "The DNS proxy entry was off in the system. It is being written again, so host names are known again.": "系统里的 DNS 代理条目是关闭的。正在重新写入，主机名因此又能被认出来。",
         "Failed to reload preferences: %@": "无法重新载入设置：%@",

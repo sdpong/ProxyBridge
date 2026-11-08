@@ -1211,7 +1211,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                     }
                 }
             } else {
-                let note = L10n.t("DNS proxy is off (Enable DNS in the Proxy menu). Host name rules and send hostname do not work.")
+                let note = L10n.t("DNS proxy is off (Enable DNS in the settings tab). It runs in the route mode only, and host name rules and send hostname do not work.")
                 guard loadError == nil, ours, manager.isEnabled else {
                     DispatchQueue.main.async { self.addLog("INFO", note) }
                     return

@@ -192,23 +192,47 @@ struct ContentView: View {
     // different modes, and an empty table that does not say why is a table
     // that looks broken.
     private var emptyTrafficTitle: String {
-        viewModel.runtimeMode == .server ? L10n.t("No traffic from the clients yet") : L10n.t("No traffic yet")
+        switch viewModel.runtimeMode {
+        case .off:
+            return L10n.t("This machine is not taken over")
+        case .server:
+            return L10n.t("No traffic from the clients yet")
+        case .route:
+            return L10n.t("No traffic yet")
+        }
     }
 
     private var emptyTrafficHint: String {
-        viewModel.runtimeMode == .server
-            ? L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
-            : L10n.t("Every proxy the traffic goes through gets a line here")
+        switch viewModel.runtimeMode {
+        case .off:
+            return L10n.t("Nothing is taken over, so nothing is counted. Switch to the route mode to count the traffic of this machine.")
+        case .server:
+            return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
+        case .route:
+            return L10n.t("Every proxy the traffic goes through gets a line here")
+        }
     }
 
     private var emptyFlowTitle: String {
-        viewModel.runtimeMode == .server ? L10n.t("No traffic from the clients yet") : L10n.t("No active connections")
+        switch viewModel.runtimeMode {
+        case .off:
+            return L10n.t("This machine is not taken over")
+        case .server:
+            return L10n.t("No traffic from the clients yet")
+        case .route:
+            return L10n.t("No active connections")
+        }
     }
 
     private var emptyFlowHint: String {
-        viewModel.runtimeMode == .server
-            ? L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
-            : L10n.t("Connections that are proxied show up here")
+        switch viewModel.runtimeMode {
+        case .off:
+            return L10n.t("The extension is stopped, so no connection of this machine is proxied. Switch to the route mode to see the connections here.")
+        case .server:
+            return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
+        case .route:
+            return L10n.t("Connections that are proxied show up here")
+        }
     }
 
     private var filteredActivityLogs: [ProxiRouteViewModel.ActivityLog] {
@@ -246,9 +270,14 @@ struct TabButton: View {
 
 // What the app is doing right now, at the end of the row of the tabs.
 //
-// The mode is the one thing a person wants to know without opening a tab:
-// whether the traffic of this machine is taken over, whether the server waits
-// for the clients of the network, or whether the app does nothing at all.
+// The two things the app can do are here: it can take the traffic of this
+// machine over, and it can wait for the clients of the network.
+//
+// They used to sit in the settings, under the running mode. But they are the
+// same in every mode - they said the same thing under every option of the
+// picker, and a row that says the same thing three times is noise. Here they
+// can be seen without opening the settings, and they say what is happening
+// and not only what was chosen.
 struct TabStatusView: View {
     // the language of the app: the strings are read through it, so a change of
     // the language redraws the window
@@ -256,43 +285,55 @@ struct TabStatusView: View {
     @ObservedObject var viewModel: ProxiRouteViewModel
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 16) {
+            chip(
+                title: L10n.t("The Traffic of This Machine"),
+                state: viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied"),
+                on: viewModel.isProxyActive
+            )
+            chip(
+                title: L10n.t("Proxy Server"),
+                state: viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running"),
+                on: viewModel.localProxyRunning,
+                extra: viewModel.localProxyRunning
+                    ? L10n.f("Clients: %@", "\(viewModel.localProxyClients)")
+                    : nil
+            )
+        }
+        .padding(.trailing, 16)
+        .help(L10n.f("The running mode is %@", modeName))
+    }
+
+    // One of the two things the app does, and whether it is doing it.
+    private func chip(title: String, state: String, on: Bool, extra: String? = nil) -> some View {
+        HStack(spacing: 5) {
             Circle()
-                .fill(color)
+                .fill(on ? Color.green : Color.secondary)
                 .frame(width: 8, height: 8)
             Text(title)
                 .font(.callout)
                 .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(state)
+                .font(.callout)
+                .foregroundColor(on ? Color.green : Color.secondary)
+            if let extra {
+                Text(extra)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            }
         }
-        .padding(.trailing, 16)
-        .help(L10n.t("Running Mode"))
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    // green when the app is doing what it was asked to do, orange when it was
-    // asked for something it cannot do at the moment
-    private var color: Color {
-        switch viewModel.runtimeMode {
-        case .off:
-            return .secondary
-        case .route:
-            return viewModel.isProxyActive ? .green : .orange
-        case .server:
-            return viewModel.localProxyRunning ? .green : .orange
-        }
-    }
-
-    private var title: String {
+    // the name of the mode, for the tooltip
+    private var modeName: String {
         switch viewModel.runtimeMode {
         case .off:
             return L10n.t("Do Not Take Over")
         case .route:
-            let state = viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied")
-            return "\(L10n.t("Route Mode")) · \(state)"
+            return L10n.t("Route Mode")
         case .server:
-            let state = viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running")
-            let clients = viewModel.localProxyClients
-            return "\(L10n.t("Proxy Server")) · \(state) · \(L10n.f("Clients: %@", "\(clients)"))"
+            return L10n.t("Proxy Server")
         }
     }
 }

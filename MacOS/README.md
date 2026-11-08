@@ -402,9 +402,14 @@ taken out - this app has one window and no row of tabs.
 Everything else is in the **Settings** tab of the main window. The shortcut
 **⌘,** opens it.
 
-The row of tabs says what the app is doing right now: the running mode, and
-whether the traffic of this machine is taken over or the server waits for
-the clients of the network.
+The row of tabs says what the app is doing right now, at its right end: two
+lines, **the traffic of this machine** (taken over or not) and **the proxy
+server** (running or not). They used to sit in the settings, under the running
+mode, where they said the same thing under every mode.
+
+An empty table in the **Statistics** or the **Live Connections** tab says why
+it is empty: in the **Do Not Take Over** mode the extension is stopped, so no
+connection of this machine is proxied at all.
 
 ### Menu Bar Controls
 
