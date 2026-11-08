@@ -95,6 +95,10 @@ struct ProxiRouteGUIApp: App {
                     openDNSSettingsWindow()
                 }
 
+                Button(L10n.t("Routing...")) {
+                    openRoutingWindow()
+                }
+
                 Divider()
                 
                 Toggle(L10n.t("Enable Traffic Logging"), isOn: Binding(
@@ -237,6 +241,12 @@ struct ProxiRouteGUIApp: App {
         }
         .defaultPosition(.center)
         
+        Window(L10n.t("Routing"), id: "routing") {
+            RouteSettingsView(viewModel: viewModel)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         Window(L10n.t("About ProxiRoute"), id: "about") {
             AboutView()
         }
@@ -260,6 +270,10 @@ struct ProxiRouteGUIApp: App {
 
     private func openDNSSettingsWindow() {
         NSApp.sendAction(#selector(AppDelegate.openDNSSettings), to: nil, from: nil)
+    }
+
+    private func openRoutingWindow() {
+        NSApp.sendAction(#selector(AppDelegate.openRouting), to: nil, from: nil)
     }
 
     private func openProxyChainsWindow() {
@@ -599,7 +613,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // again: it fills itself with the settings that are stored right now
         AppDelegate.viewModel?.noteDNSSettingsOpened()
     }
-    
+
+    @objc func openRouting() {
+        openWindow(title: L10n.t("Routing"), size: NSSize(width: 620, height: 440)) {
+            RouteSettingsView(viewModel: AppDelegate.viewModel!)
+        }
+    }
+
     @objc func openAbout() {
         openWindow(title: L10n.t("About ProxiRoute"), size: NSSize(width: 400, height: 350)) {
             AboutView()

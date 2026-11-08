@@ -403,6 +403,33 @@ class AppProxyProvider: NETransparentProxyProvider {
     // that names no program: the virtual process name. The proxy sees one
     // program for that traffic, and the person can write a rule for that name.
     static let proxyBridgeBundleId = Bundle.main.bundleIdentifier ?? "com.sdpong.proxiroute.extension"
+
+    // The queue the connections that are bound to an interface run on. They
+    // are the modern Network framework connections, and they need a queue of
+    // their own: the callbacks they make are not the ones of the old wrapper.
+    private let connectionQueue = DispatchQueue(label: "com.sdpong.proxiroute.upstream", qos: .utility)
+
+    // The connection to the upstream proxy.
+    //
+    // The user can say which interface the traffic has to leave through, and
+    // only the modern connection can be told that. Without an interface the
+    // old wrapper is used, which is the connection the extension has always
+    // made: changing it would change the behaviour of every existing setup.
+    private func makeUpstreamConnection(host: String, port: String) -> UpstreamConnection {
+        let options = currentRouteOptions()
+        if !options.outboundInterface.isEmpty {
+            let interface = InterfaceWatcher.shared.interface(named: options.outboundInterface)
+                ?? InterfaceWatcher.shared.interface(ofKind: options.outboundInterface)
+            if let interface = interface {
+                return BoundUpstreamConnection(host: host, port: port, interface: interface, queue: connectionQueue)
+            }
+            // the interface is gone (the cable was pulled, the network changed).
+            // the traffic still has to go somewhere, so the system decides.
+            warnOnce("interface:\(options.outboundInterface)",
+                     "The interface \(options.outboundInterface) is not there, the system picks the way out")
+        }
+        return createTCPConnection(to: NWHostEndpoint(hostname: host, port: port), enableTLS: false, tlsParameters: nil, delegate: nil)
+    }
     
     // one log entry, kept as an enum so we don't allocate a dictionary per line,
     // the dict is only built when the gui drains a batch
@@ -519,6 +546,24 @@ class AppProxyProvider: NETransparentProxyProvider {
     // a chain is a list of proxy ids, walked through in order
     private var storedChains: [String: [String]] = [:]
     private let proxyLock = NSLock()
+
+    // The switches that sit above the rules: the global mode, the interface
+    // the traffic leaves through, and whether udp may go through a proxy.
+    // They are read on every flow, so they have their own lock.
+    private var routeOptions = RouteOptions.default
+    private let routeOptionsLock = NSLock()
+
+    private func currentRouteOptions() -> RouteOptions {
+        routeOptionsLock.lock()
+        defer { routeOptionsLock.unlock() }
+        return routeOptions
+    }
+
+    private func setRouteOptions(_ options: RouteOptions) {
+        routeOptionsLock.lock()
+        routeOptions = options
+        routeOptionsLock.unlock()
+    }
     // The health of the proxies the chains walk through. a hop that does not
     // answer is skipped, until a probe says it answers again.
     private var chainHealth: [String: ChainHealth.State] = [:]
@@ -594,6 +639,9 @@ class AppProxyProvider: NETransparentProxyProvider {
         startUDPSweepTimer()
         startFlowReportTimer()
         startChainHealthTimer()
+        // the interface list is needed as soon as a connection has to be bound
+        // to one. it arrives a moment after the monitor starts.
+        InterfaceWatcher.shared.start()
         diag("Tunnel starting")
         // the rules and the proxy list can come with the configuration itself. they
         // do when the provider channel does not open, which is what happens on a
@@ -638,7 +686,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     // down together when any side goes away
     private final class UDPAssociation {
         let clientFlow: NEAppProxyUDPFlow
-        let controlConnection: NWTCPConnection  // socks5 tcp control channel, keeps the association alive
+        let controlConnection: UpstreamConnection  // socks5 tcp control channel, keeps the association alive
         let udpSession: NWUDPSession            // relay channel to the socks server
         let displayName: String
         var loggedDestinations = Set<String>()  // dedupe connection logs, bounded
@@ -676,7 +724,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             udpSession.cancel()
         }
 
-        init(clientFlow: NEAppProxyUDPFlow, controlConnection: NWTCPConnection, udpSession: NWUDPSession, displayName: String) {
+        init(clientFlow: NEAppProxyUDPFlow, controlConnection: UpstreamConnection, udpSession: NWUDPSession, displayName: String) {
             self.clientFlow = clientFlow
             self.controlConnection = controlConnection
             self.udpSession = udpSession
@@ -709,36 +757,36 @@ class AppProxyProvider: NETransparentProxyProvider {
     private var flowDescriptors: [ObjectIdentifier: FlowDescriptor] = [:]
     private let liveMapLock = NSLock()
 
-    private func setFlowDescriptor(_ descriptor: FlowDescriptor, for connection: NWTCPConnection) {
+    private func setFlowDescriptor(_ descriptor: FlowDescriptor, for connection: UpstreamConnection) {
         liveMapLock.lock()
         flowDescriptors[ObjectIdentifier(connection)] = descriptor
         liveMapLock.unlock()
     }
 
-    private func takeFlowDescriptor(for connection: NWTCPConnection) -> FlowDescriptor? {
+    private func takeFlowDescriptor(for connection: UpstreamConnection) -> FlowDescriptor? {
         liveMapLock.lock(); defer { liveMapLock.unlock() }
         return flowDescriptors.removeValue(forKey: ObjectIdentifier(connection))
     }
 
-    private func setTCPFlowId(_ id: UInt64, for connection: NWTCPConnection) {
+    private func setTCPFlowId(_ id: UInt64, for connection: UpstreamConnection) {
         liveMapLock.lock()
         tcpFlowIds[ObjectIdentifier(connection)] = id
         liveMapLock.unlock()
     }
 
-    private func peekTCPFlowId(for connection: NWTCPConnection) -> UInt64? {
+    private func peekTCPFlowId(for connection: UpstreamConnection) -> UInt64? {
         liveMapLock.lock(); defer { liveMapLock.unlock() }
         return tcpFlowIds[ObjectIdentifier(connection)]
     }
 
-    private func takeTCPFlowId(for connection: NWTCPConnection) -> UInt64? {
+    private func takeTCPFlowId(for connection: UpstreamConnection) -> UInt64? {
         liveMapLock.lock(); defer { liveMapLock.unlock() }
         return tcpFlowIds.removeValue(forKey: ObjectIdentifier(connection))
     }
 
     // The relay is running, so the flow is a live connection: give it an id the app can address
     // and remember which proxy connection it belongs to.
-    private func registerLiveTCPFlow(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection) {
+    private func registerLiveTCPFlow(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection) {
         guard let descriptor = takeFlowDescriptor(for: proxyConnection) else { return }
         let id = liveFlows.register(proto: "TCP", process: descriptor.process, destination: descriptor.destination,
                                      port: descriptor.port, proxy: descriptor.proxy) { [weak self] in
@@ -749,7 +797,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         if let flow = liveFlows.snapshot(id: id) { reportFlowOpen(flow) }
     }
 
-    private func noteFlowBytes(_ connection: NWTCPConnection, up: Int64, down: Int64) {
+    private func noteFlowBytes(_ connection: UpstreamConnection, up: Int64, down: Int64) {
         guard let id = peekTCPFlowId(for: connection) else { return }
         liveFlows.note(id: id, up: up, down: down)
     }
@@ -781,13 +829,13 @@ class AppProxyProvider: NETransparentProxyProvider {
     // entries are checked by the shared sweep timer, no per-flow timer is
     // scheduled (a timer closure would hold the flow for its full delay even
     // after the handshake succeeded, which adds up with quic churn)
-    private var pendingHandshakes: [ObjectIdentifier: (deadline: Date, flow: NEAppProxyFlow, connection: NWTCPConnection)] = [:]
+    private var pendingHandshakes: [ObjectIdentifier: (deadline: Date, flow: NEAppProxyFlow, connection: UpstreamConnection)] = [:]
     private let handshakeLock = NSLock()
     private static let handshakeTimeout: TimeInterval = 20
     // grace between a client FIN and tearing the relay down, lets the upstream FIN flush
     private static let halfCloseTimeout: TimeInterval = 3
 
-    private func armHandshakeTimeout(flow: NEAppProxyFlow, connection: NWTCPConnection) {
+    private func armHandshakeTimeout(flow: NEAppProxyFlow, connection: UpstreamConnection) {
         let deadline = Date().addingTimeInterval(AppProxyProvider.handshakeTimeout)
         handshakeLock.lock()
         pendingHandshakes[ObjectIdentifier(connection)] = (deadline, flow, connection)
@@ -795,7 +843,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
 
     // false means the sweep already timed it out and tore everything down
-    private func completeHandshake(_ connection: NWTCPConnection) -> Bool {
+    private func completeHandshake(_ connection: UpstreamConnection) -> Bool {
         handshakeLock.lock()
         defer { handshakeLock.unlock() }
         return pendingHandshakes.removeValue(forKey: ObjectIdentifier(connection)) != nil
@@ -944,7 +992,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         return hops.filter { usableIds.contains($0.id) }
     }
 
-    private func closeRelay(_ flow: NEAppProxyTCPFlow, _ connection: NWTCPConnection, error: Error? = nil) {
+    private func closeRelay(_ flow: NEAppProxyTCPFlow, _ connection: UpstreamConnection, error: Error? = nil) {
         connection.cancel()
         flow.closeReadWithError(error)
         flow.closeWriteWithError(error)
@@ -1269,6 +1317,28 @@ class AppProxyProvider: NETransparentProxyProvider {
             DNSPolicyStore.shared.publish(DNSPolicy.fromDictionary(policy))
             log("DNS policy updated")
         }
+        if let options = payload["routeOptions"] as? [String: Any] {
+            let route = RouteOptions.fromDictionary(options)
+            setRouteOptions(route)
+            diag(routeSummary(route))
+        }
+    }
+
+    // what the routing options say, in one line for the log
+    private func routeSummary(_ options: RouteOptions) -> String {
+        var parts: [String] = []
+        if options.globalMode {
+            parts.append("everything goes to \(options.globalProxyId)")
+        } else {
+            parts.append("the rules decide")
+        }
+        if !options.outboundInterface.isEmpty {
+            parts.append("out through \(options.outboundInterface)")
+        }
+        if !options.proxyUDP {
+            parts.append("udp stays direct")
+        }
+        return "Routing: " + parts.joined(separator: ", ")
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -1341,6 +1411,20 @@ class AppProxyProvider: NETransparentProxyProvider {
                 applyProxyConfigs(configs, chains: message["chains"] as? [[String: Any]] ?? [])
             }
             completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok"]))
+
+        case "setRouteOptions":
+            // the switches above the rules: the global mode, the interface the
+            // traffic leaves through, and whether udp may use a proxy. they
+            // take effect at once, without restarting the tunnel.
+            if let raw = message["options"] as? [String: Any] {
+                let route = RouteOptions.fromDictionary(raw)
+                setRouteOptions(route)
+                log(routeSummary(route))
+            }
+            completionHandler?(try? JSONSerialization.data(withJSONObject: ["status": "ok"]))
+
+        case "getRouteOptions":
+            completionHandler?(try? JSONSerialization.data(withJSONObject: currentRouteOptions().toDictionary()))
 
         case "addRule":
             if let ruleData = try? JSONSerialization.data(withJSONObject: message),
@@ -1495,26 +1579,36 @@ class AppProxyProvider: NETransparentProxyProvider {
         // skipped whenever no proxy was configured, so a lone BLOCK rule did nothing)
         let matched = findMatchingRule(bundleId: processPath, processName: processName, destination: destination, port: portNum, connectionProtocol: .tcp, checkIpPort: true, domains: domains)
         let matchedRule = matched?.rule
-        // whether the rule names the programs it is for. it decides what the proxy
-        // server is told about the traffic
-        let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
+        // The global mode sits above the rules: everything goes one way and the
+        // rules are not looked at. It is the switch a "routing mode" is.
+        let route = currentRouteOptions()
+        let globalAction = route.globalMode ? route.globalProxyId : nil
+        // what the traffic does is decided by one thing: the global mode, or
+        // the rule that matched
+        let action = globalAction ?? matchedRule?.action
+        // the rule that decided is only known when the rules decided
+        let decidingRuleId = globalAction == nil ? matchedRule?.ruleId : nil
+        // Whether the rule names the programs it is for. It decides what the
+        // proxy server is told about the traffic. In the global mode there is
+        // no rule at all, and the traffic is ProxiRoute's own.
+        let ruleHasProcessFilter = globalAction == nil ? (matched?.matcher.hasProcessFilter ?? false) : false
 
-        if let rule = matchedRule {
-            switch rule.action {
+        if let action = action {
+            switch action {
             case "DIRECT":
-                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
+                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: decidingRuleId)
                 return false
             case "BLOCK":
-                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "BLOCK", rule: matchedRule?.ruleId)
+                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "BLOCK", rule: decidingRuleId)
                 flow.closeReadWithError(nil)
                 flow.closeWriteWithError(nil)
                 return true
             default:
                 proxyLock.lock()
-                let config = storedProxyConfigs[rule.action]
+                let config = storedProxyConfigs[action]
                 // a chain walks through several proxies, one after the other
-                let chainIds = ChainAction.isChain(rule.action)
-                    ? ChainPlan.proxyIds(forAction: rule.action, chains: storedChains)
+                let chainIds = ChainAction.isChain(action)
+                    ? ChainPlan.proxyIds(forAction: action, chains: storedChains)
                     : []
                 let hops = chainIds.compactMap { id -> ChainHop? in
                     guard let config = storedProxyConfigs[id] else { return nil }
@@ -1543,16 +1637,16 @@ class AppProxyProvider: NETransparentProxyProvider {
                 }
                 proxyLock.unlock()
 
-                if ChainAction.isChain(rule.action) {
+                if ChainAction.isChain(action) {
                     guard !hops.isEmpty else {
-                        warnOnce("missing-chain:\(rule.action)", "A rule routes to a chain that has no usable proxy in it, its traffic is going direct")
-                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
+                        warnOnce("missing-chain:\(action)", "A rule routes to a chain that has no usable proxy in it, its traffic is going direct")
+                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: decidingRuleId)
                         return false
                     }
                     let problems = ChainPlan.problems(withProxyIds: chainIds, proxyTypes: chainTypes)
                     if !problems.isEmpty {
-                        warnOnce("broken-chain:\(rule.action)", "A rule routes to a chain that cannot work: \(problems.joined(separator: "; ")). Its traffic is going direct.")
-                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
+                        warnOnce("broken-chain:\(action)", "A rule routes to a chain that cannot work: \(problems.joined(separator: "; ")). Its traffic is going direct.")
+                        sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: decidingRuleId)
                         return false
                     }
                     // a hop that the probe found down is skipped, the rest of the
@@ -1562,9 +1656,9 @@ class AppProxyProvider: NETransparentProxyProvider {
                         let skipped = hops.filter { hop in !walk.contains { $0.id == hop.id } }
                             .map { $0.config.type.uppercased() + " " + $0.config.host + ":" + String($0.config.port) }
                             .joined(separator: ", ")
-                        diag("Chain \(rule.action): \(skipped) does not answer, the chain is walked without it", level: "WARN")
+                        diag("Chain \(action): \(skipped) does not answer, the chain is walked without it", level: "WARN")
                     }
-                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(walk), rule: matchedRule?.ruleId)
+                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: chainLabel(walk), rule: decidingRuleId)
                     proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: walk, appIdentity: appIdentity)
                     return true
                 }
@@ -1572,16 +1666,16 @@ class AppProxyProvider: NETransparentProxyProvider {
                 guard let config = config else {
                     // rule points at a proxy that no longer exists. it still goes
                     // direct, but say so instead of leaking silently
-                    warnOnce("missing:\(rule.action)", "A rule routes to a proxy that no longer exists, its traffic is going direct")
-                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
+                    warnOnce("missing:\(action)", "A rule routes to a proxy that no longer exists, its traffic is going direct")
+                    sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: decidingRuleId)
                     return false
                 }
-                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: proxyLabel(config), rule: matchedRule?.ruleId)
-                proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: [ChainHop(id: rule.action, config: config, sendAppId: config.sendAppId)], appIdentity: appIdentity)
+                sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: proxyLabel(config), rule: decidingRuleId)
+                proxyTCPFlow(flow, destination: destination, displayDestination: logDest, port: portNum, process: displayName, hops: [ChainHop(id: action, config: config, sendAppId: config.sendAppId)], appIdentity: appIdentity)
                 return true
             }
         } else {
-            sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: matchedRule?.ruleId)
+            sendLogToApp(protocol: "TCP", process: displayName, destination: logDest, port: portStr, proxy: "Direct", rule: decidingRuleId)
             return false
         }
     }
@@ -1635,14 +1729,23 @@ class AppProxyProvider: NETransparentProxyProvider {
         // proxy configuration below has a name of its own
         let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
 
-        if let rule = matchedRule {
-            let action = rule.action
+        // The global mode and the udp switch sit above the rules here as well.
+        let route = currentRouteOptions()
+        if !route.proxyUDP {
+            // udp is not allowed to use a proxy: everything goes out directly
+            return false
+        }
+        let globalAction = route.globalMode ? route.globalProxyId : nil
+        let action = globalAction ?? matchedRule?.action
+        let decidingRuleId = globalAction == nil ? matchedRule?.ruleId : nil
+
+        if let action = action {
             switch action {
             case "DIRECT":
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: matchedRule?.ruleId)
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: decidingRuleId)
                 return false
             case "BLOCK":
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "BLOCK", rule: matchedRule?.ruleId)
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "BLOCK", rule: decidingRuleId)
                 // a handled flow that is never closed stays pinned in the extension
                 flow.closeReadWithError(nil)
                 flow.closeWriteWithError(nil)
@@ -1673,7 +1776,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                         return
                     }
                     // pass the resolved display name (curl), not the raw signing id (curl-<hash>)
-                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
+                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: globalAction == nil && ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
                 }
                 return true
             }
@@ -1681,7 +1784,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             // no rule matched. as before, only log it when udp proxying is possible
             // at all, otherwise every mDNS/NTP flow would fill the log
             if hasAnySocks5 {
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: matchedRule?.ruleId)
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: decidingRuleId)
             }
             return false
         }
@@ -1689,7 +1792,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     
     // handshake failed before an association existed, so drop the control
     // connection and close the flow instead of leaking them
-    private func failUDPHandshake(_ clientFlow: NEAppProxyUDPFlow, _ tcpConnection: NWTCPConnection, _ reason: String) {
+    private func failUDPHandshake(_ clientFlow: NEAppProxyUDPFlow, _ tcpConnection: UpstreamConnection, _ reason: String) {
         log(reason, level: "ERROR")
         tcpConnection.cancel()
         clientFlow.closeReadWithError(nil)
@@ -1697,8 +1800,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
 
     private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow, displayName: String, socksHost: String, socksPort: Int, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload? = nil, allowAppIdRetry: Bool = true) {
-        let proxyEndpoint = NWHostEndpoint(hostname: socksHost, port: String(socksPort))
-        let tcpConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
+        let tcpConnection = makeUpstreamConnection(host: socksHost, port: String(socksPort))
         armHandshakeTimeout(flow: clientFlow, connection: tcpConnection)
 
         // offer username/password auth when we have credentials, same as the tcp path.
@@ -1764,7 +1866,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
 
-    private func sendSOCKS5UDPAuth(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, displayName: String, username: String, password: String, onAuthRefused: (() -> Void)? = nil) {
+    private func sendSOCKS5UDPAuth(clientFlow: NEAppProxyUDPFlow, tcpConnection: UpstreamConnection, socksHost: String, displayName: String, username: String, password: String, onAuthRefused: (() -> Void)? = nil) {
         let user = Array(username.utf8), pass = Array(password.utf8)
         guard user.count <= 255, pass.count <= 255 else {
             self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP credentials too long")
@@ -1811,7 +1913,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
 
-    private func sendSOCKS5UDPAssociate(clientFlow: NEAppProxyUDPFlow, tcpConnection: NWTCPConnection, socksHost: String, displayName: String) {
+    private func sendSOCKS5UDPAssociate(clientFlow: NEAppProxyUDPFlow, tcpConnection: UpstreamConnection, socksHost: String, displayName: String) {
         var request = Data()
         request.append(0x05)
         request.append(0x03)
@@ -1858,7 +1960,7 @@ class AppProxyProvider: NETransparentProxyProvider {
 
     // reads exactly n bytes, never more, so nothing the server sends after what we
     // asked for (a banner from a server-first protocol) is consumed here
-    private func readExact(_ connection: NWTCPConnection, _ n: Int, completion: @escaping (Data?, Error?) -> Void) {
+    private func readExact(_ connection: UpstreamConnection, _ n: Int, completion: @escaping (Data?, Error?) -> Void) {
         connection.readMinimumLength(n, maximumLength: n) { data, error in
             if let error = error { completion(nil, error); return }
             guard let data = data, data.count == n else { completion(nil, nil); return }
@@ -1870,7 +1972,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     // ipv4, 22 for ipv6, variable for a domain), reading a fixed 10 used to leave
     // part of an ipv6/domain reply in the client's data and could swallow the
     // first bytes the real server sent
-    private func readSOCKS5Reply(_ connection: NWTCPConnection, completion: @escaping (SOCKS5Reply) -> Void) {
+    private func readSOCKS5Reply(_ connection: UpstreamConnection, completion: @escaping (SOCKS5Reply) -> Void) {
         readExact(connection, 4) { [weak self] header, error in
             guard let self = self else { return }
             if let error = error { completion(.failed(error.localizedDescription)); return }
@@ -1904,7 +2006,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     // reads an http proxy's reply up to the end of its headers. returns the status
     // code and whatever the server already sent after the headers, which belongs to
     // the tunnel and has to reach the client first
-    private func readHTTPConnectResponse(_ connection: NWTCPConnection, buffer: Data = Data(), completion: @escaping (Int?, Data, String) -> Void) {
+    private func readHTTPConnectResponse(_ connection: UpstreamConnection, buffer: Data = Data(), completion: @escaping (Int?, Data, String) -> Void) {
         connection.readMinimumLength(1, maximumLength: 8192) { [weak self] data, error in
             guard let self = self else { return }
             if let error = error { completion(nil, Data(), error.localizedDescription); return }
@@ -1975,7 +2077,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         return ("0.0.0.0", 0)
     }
     
-    private func relayUDPThroughSOCKS5(clientFlow: NEAppProxyUDPFlow, relayHost: String, relayPort: UInt16, tcpConnection: NWTCPConnection, displayName: String) {
+    private func relayUDPThroughSOCKS5(clientFlow: NEAppProxyUDPFlow, relayHost: String, relayPort: UInt16, tcpConnection: UpstreamConnection, displayName: String) {
         guard completeHandshake(tcpConnection) else { return }
         let relayEndpoint = NWHostEndpoint(hostname: relayHost, port: String(relayPort))
         let udpSession = self.createUDPSession(to: relayEndpoint, from: nil)
@@ -2257,14 +2359,13 @@ class AppProxyProvider: NETransparentProxyProvider {
             flow.closeWriteWithError(FlowFailure.refused)
             return
         }
-        let proxyEndpoint = NWHostEndpoint(hostname: first.config.host, port: String(first.config.port))
-        let proxyConnection = createTCPConnection(to: proxyEndpoint, enableTLS: false, tlsParameters: nil, delegate: nil)
+        let proxyConnection = makeUpstreamConnection(host: first.config.host, port: String(first.config.port))
         armHandshakeTimeout(flow: flow, connection: proxyConnection)
         // remember what this flow is, so the relay can register it as a live connection later
         setFlowDescriptor(FlowDescriptor(process: process, destination: displayDestination, port: port, proxy: chainLabel(hops)), for: proxyConnection)
         // the proxy server does not want the authentication the id needs, so the walk
         // starts again without it. it happens once: the second refusal ends the flow.
-        let onAuthRefused: ((NWTCPConnection) -> Void)? = allowAppIdRetry ? { [weak self] connection in
+        let onAuthRefused: ((UpstreamConnection) -> Void)? = allowAppIdRetry ? { [weak self] connection in
             self?.retryChainWithoutAppId(flow, connection: connection, destination: originalDestination, displayDestination: displayDestination, port: port, process: process, hops: hops)
         } : nil
         connectHop(flow: flow, proxyConnection: proxyConnection, hops: hops, index: 0, destination: originalDestination, port: port, appIdentity: appIdentity, onAuthRefused: onAuthRefused)
@@ -2274,7 +2375,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     //
     // The connection that was refused is given up, but the flow stays open: the new
     // walk needs it, and it uses a connection of its own.
-    private func retryChainWithoutAppId(_ flow: NEAppProxyTCPFlow, connection: NWTCPConnection, destination: String, displayDestination: String, port: UInt16, process: String, hops: [ChainHop]) {
+    private func retryChainWithoutAppId(_ flow: NEAppProxyTCPFlow, connection: UpstreamConnection, destination: String, displayDestination: String, port: UInt16, process: String, hops: [ChainHop]) {
         abandonConnection(connection)
         let withoutId = hops.map { hop in
             ChainHop(id: hop.id, config: hop.config, sendAppId: false)
@@ -2286,7 +2387,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     //
     // The pending handshake has to go as well: the sweep would otherwise time it out
     // and close the flow that the new walk is about to use.
-    private func abandonConnection(_ connection: NWTCPConnection) {
+    private func abandonConnection(_ connection: UpstreamConnection) {
         handshakeLock.lock()
         pendingHandshakes.removeValue(forKey: ObjectIdentifier(connection))
         handshakeLock.unlock()
@@ -2296,7 +2397,7 @@ class AppProxyProvider: NETransparentProxyProvider {
 
     // the handshake with one hop of the chain. the tunnel it opens is either the
     // way to the next proxy or, for the last hop, the way to the destination.
-    private func connectHop(flow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, hops: [ChainHop], index: Int, destination: String, port: UInt16, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((NWTCPConnection) -> Void)? = nil) {
+    private func connectHop(flow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, hops: [ChainHop], index: Int, destination: String, port: UInt16, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((UpstreamConnection) -> Void)? = nil) {
         guard index < hops.count else { return }
         let hop = hops[index]
         let config = hop.config
@@ -2365,7 +2466,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     
     // SOCKS4 and SOCKS4a. there is no method negotiation, only a user id in
     // the request, and the reply is eight bytes.
-    private func handleSOCKS4Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((NWTCPConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
+    private func handleSOCKS4Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, destination: String, port: UInt16, username: String?, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((UpstreamConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
         // the user id is the one that is configured, or the application id when there is none
         let userId = ProxyAppIdentity.socks4UserId(payload: appIdentity, username: username)
         // only a request that carried the application id can be tried again without it
@@ -2418,7 +2519,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
 
-    private func handleSOCKS5Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((NWTCPConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
+    private func handleSOCKS5Proxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, destination: String, port: UInt16, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload?, onAuthRefused: ((UpstreamConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
         let hasCredentials = (username != nil && password != nil)
         // the greeting offers the methods the server may pick. when the application
         // id is to be sent, the user/password method is offered on its own: a server
@@ -2489,7 +2590,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
 
-    private func sendSOCKS5Auth(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String, password: String, onAuthRefused: ((NWTCPConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
+    private func sendSOCKS5Auth(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, destination: String, port: UInt16, username: String, password: String, onAuthRefused: ((UpstreamConnection) -> Void)? = nil, onEstablished: ((Data?) -> Void)? = nil) {
         let user = Array(username.utf8), pass = Array(password.utf8)
         guard user.count <= 255, pass.count <= 255 else {
             log("SOCKS5 credentials too long", level: "ERROR")
@@ -2536,7 +2637,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func sendSOCKS5ConnectRequest(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, onEstablished: ((Data?) -> Void)? = nil) {
+    private func sendSOCKS5ConnectRequest(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, destination: String, port: UInt16, onEstablished: ((Data?) -> Void)? = nil) {
         var request = Data()
         request.append(0x05)
         request.append(0x01)
@@ -2590,7 +2691,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func handleHTTPProxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, destination: String, port: UInt16, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload?, onEstablished: ((Data?) -> Void)? = nil) {
+    private func handleHTTPProxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, destination: String, port: UInt16, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload?, onEstablished: ((Data?) -> Void)? = nil) {
         // ipv6 literals must be bracketed in the request line and Host header
         let host = IPv6Address(destination) != nil ? "[\(destination)]" : destination
         var request = "CONNECT \(host):\(port) HTTP/1.1\r\n"
@@ -2644,7 +2745,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func relayData(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection, initialData: Data? = nil) {
+    private func relayData(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection, initialData: Data? = nil) {
         guard completeHandshake(proxyConnection) else { return }
         // the channel is live now: register it so the app can list it and terminate it
         registerLiveTCPFlow(clientFlow: clientFlow, proxyConnection: proxyConnection)
@@ -2673,7 +2774,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func relayClientToProxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection) {
+    private func relayClientToProxy(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection) {
         clientFlow.readData { [weak self] data, error in
             if let error = error {
                 // ignore expected errors
@@ -2711,7 +2812,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func relayProxyToClient(clientFlow: NEAppProxyTCPFlow, proxyConnection: NWTCPConnection) {
+    private func relayProxyToClient(clientFlow: NEAppProxyTCPFlow, proxyConnection: UpstreamConnection) {
         proxyConnection.readMinimumLength(1, maximumLength: 65536) { [weak self] data, error in
             if let error = error {
                 let code = (error as NSError).code

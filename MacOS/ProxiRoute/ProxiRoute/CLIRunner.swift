@@ -435,6 +435,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         // the DNS policy as well: the rules that name a host need the map that the
         // DNS proxy builds with it, and the policy is what tells the DNS proxy how
         if let policy = profile.dnsPolicy, !policy.isEmpty { payload["dnsPolicy"] = policy }
+        // the switches above the rules. they are a property of the machine and
+        // not of the profile, so the command line uses the ones that are stored
+        payload["routeOptions"] = RouteSettings.load().toDictionary()
         return ["proxiroute": payload]
     }
 

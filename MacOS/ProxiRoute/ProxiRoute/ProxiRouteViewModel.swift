@@ -325,6 +325,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // resolver answers them and whether the proxy server resolves them itself
     @Published var dnsPolicy = DNSPolicySettings()
 
+    // The switches above the rules: the global mode, the interface the
+    // traffic leaves through, and whether udp may use a proxy.
+    @Published var routeSettings = RouteSettings.load()
+
     private func loadDNSPolicySetting() {
         let d = UserDefaults.standard
         if let data = d.data(forKey: "dnsPolicy"),
@@ -396,6 +400,25 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         let message: [String: Any] = [
             "action": "setDNSPolicy",
             "policy": dnsPolicy.toDictionary()
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        try? session.sendProviderMessage(data) { _ in }
+    }
+
+    // The routing options are sent to the extension as soon as they change,
+    // so that they take effect without restarting the tunnel.
+    func updateRouteSettings(_ settings: RouteSettings) {
+        routeSettings = settings
+        settings.save()
+        sendRouteOptionsToExtension(settings)
+        addLog("INFO", L10n.t("Routing settings saved"))
+    }
+
+    private func sendRouteOptionsToExtension(_ settings: RouteSettings) {
+        guard let session = tunnelSession else { return }
+        let message: [String: Any] = [
+            "action": "setRouteOptions",
+            "options": settings.toDictionary()
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         try? session.sendProviderMessage(data) { _ in }
@@ -901,6 +924,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // DNS proxy builds with it, and the policy is what tells the DNS proxy how
         let policy = dnsPolicy.toDictionary()
         if !policy.isEmpty { payload["dnsPolicy"] = policy }
+        // the switches above the rules. they go with the configuration, because
+        // a tunnel that is set up by the system (and not by a message from the
+        // app) has to know them too
+        payload["routeOptions"] = routeSettings.toDictionary()
         return ["proxiroute": payload]
     }
 

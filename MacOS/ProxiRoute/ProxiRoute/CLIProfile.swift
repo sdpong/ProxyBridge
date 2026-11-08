@@ -192,7 +192,17 @@ enum CLIProfileLoader {
                 out.append("rule \(i + 1) sends traffic to a proxy that is not in this profile, it will go direct")
             }
         }
-        if profile.rules.isEmpty { out.append("the profile has no rules, nothing will be redirected") }
+        // a profile without rules redirects nothing, unless the global mode is
+        // on: then everything goes to the proxy the global mode names, and the
+        // rules are not looked at
+        let globalMode = RouteSettings.load().globalMode
+        if profile.rules.isEmpty {
+            if globalMode {
+                out.append("the profile has no rules, but the global mode sends everything to \(RouteSettings.load().globalProxyId)")
+            } else {
+                out.append("the profile has no rules, nothing will be redirected")
+            }
+        }
         if !profile.dnsEnabled {
             for (i, rule) in profile.rules.enumerated() where hasHostName(rule["targetHosts"] as? String ?? "") {
                 out.append("rule \(i + 1) uses a host name, but DNS is off in this profile, so it will not match")
