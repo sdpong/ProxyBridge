@@ -218,7 +218,7 @@ Windows / Android 走各自的平台机制，但语义要对齐。
 
 | 阶段 | 内容 | 判定完成的标准 |
 |---|---|---|
-| **0** | **可行性实测**（要 sudo）：PF 的 `rdr` 重定向 + `DIOCNATLOOK` 读回原目的地址。脚本：`MacOS/ProxiRoute/tools/gateway-spike.sh` | 脚本打印 `PASS` |
+| **0** | **可行性实测**（要 sudo）：PF 的 `rdr` 重定向 + `DIOCNATLOOK` 读回原目的地址。脚本：`MacOS/ProxiRoute/tools/gateway-spike.sh`（`--dry-run` 不需要 root） | 脚本打印 `PASS` |
 | 1 | **规则引擎的无程序分支**（跳过点名程序的规则、补协议维度、chain 行为定死、域名匹配的来源） | 一条「只给域名」的规则能让网关的流量按它走 |
 | 2 | **root helper**（helper + pkg postinstall + LaunchDaemon + PF anchor + 转发开关） | app 点一下能装上并启停，卸载清理干净 |
 | 3 | **透明代理的数据面**（接住重定向 → 取原目的 → 按规则选上游 → 另开连接 → 中继） | 另一台机器把网关指过来，TCP 流量按规则走了代理 |
@@ -228,6 +228,8 @@ Windows / Android 走各自的平台机制，但语义要对齐。
 > **阶段 0 在最前面**：macOS 没有 tproxy，原目的地址只能靠 `DIOCNATLOOK` 反查，
 > 而这个 ioctl 的结构体在 macOS 上**没有公开**（SDK 里没有 `<net/pfvar.h>`）。
 > 万一这条路整个不通，后面三个阶段的写法全要改 —— 所以先花一次 sudo 验掉。
+> 第一次实测因为规则放错了段（translation 必须排在 filtering 之前）而没跑起来，
+> 教训和改法记在 `FORK-NOTES.md`。
 
 > **规则引擎有一条硬约束**：别的终端的流量**没有进程身份**，
 > 点名程序的规则对网关客户端一律跳过，不能把 MAC / 主机名伪装成程序名。

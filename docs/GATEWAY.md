@@ -206,7 +206,9 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 
 **为什么第 0 阶段在最前面**：macOS 没有 tproxy，原目的地址只能靠 `DIOCNATLOOK` 反查，
 而这个 ioctl 的结构体在 macOS 上**没有公开**（SDK 里没有 `<net/pfvar.h>`）。
-结构体的大小进了 ioctl 号，猜错了会被内核挡回来（`ENOTTY`）而不是读错，
+结构体的大小进了 ioctl 号，但**不能只靠这个来认布局**：第一次实测发现没有状态可查时，
+内核对三种布局一律回 `ENXIO`，并不会用 `ENOTTY` 把错的布局挡回来 ——
+所以实现上必须**按值判断**（拿地址和端口去比对），不能靠报错来挑布局。
 但**万一这条路整个不通**（比如这个内核版本不认），后面三个阶段的写法全要改。
 所以先花一次 sudo 把这件事验掉，再动手写代码。
 
@@ -221,26 +223,44 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 
 ```bash
 cd /Volumes/mydata/Downloads/ProxyBridge-src/MacOS/ProxiRoute/tools
+./gateway-spike.sh --dry-run         # 不需要 root：只看会装什么规则，让 pfctl 读一遍
 sudo ./gateway-spike.sh              # 本机自测：重定向 + 反查原目的
 sudo ./gateway-spike.sh --forward    # 再加：把本机变成路由器，等另一台机器连过来
 ```
 
+### 第一次实测教出来的三件事（都写进脚本了）
+
+1. **规则要放进 translation 段，不能追加到文件末尾。**
+   PF 的段序是 `options → normalization → queueing → translation → filtering`，
+   过滤段的规则一旦出现，后面再出现 translation 的规则就直接被拒：
+   `Rules must be in order: ...`。所以脚本把实测用的 `rdr` / `nat` 规则插到
+   **第一条 `anchor` 之前**，而不是追加到文件末尾。
+2. **还原要以 `/etc/pf.conf` 为准，不能用 `pfctl -sr`。**
+   `pfctl -sr` 只打印**过滤段**的规则，翻译段（`nat` / `rdr`）的 anchor 不在里面，
+   拿它还原会把系统自己的翻译钩子弄丢。所以脚本读 `/etc/pf.conf`（系统自己读的那份），
+   结束时原样装回去。
+3. **`pfctl -n -f` 只解析、不动过滤器，而且不需要 root。**
+   实测脚本在装规则之前先用 `-n` 让 pfctl 读一遍文件：文件被拒就在**机器还没被动过**之前停下；
+   顺带也能让人用 `--dry-run` 不加 sudo 先看规则长什么样。
+
 安全上的几条约定（都写在脚本里了）：
 
-- 只用自己的 anchor（`com.sdpong.spike`），**不碰** `com.apple` 和别人的 anchor；
+- 实测规则放在自己的 translation 规则里，**不碰** `com.apple` 和别人的 anchor；
 - 动手前先把主规则集存下来，**结束时原样放回**；
 - 过滤器原来关着就还关着，转发开关原来什么值就还原成什么值；
-- 中途 Ctrl-C 也会走还原（`trap`）。
+- 中途 Ctrl-C 也会走还原（`trap`）；
+- 实测程序自己的流量靠**源端口段**（20000–20099，低于系统自动分配端口的起点 49152）
+  绕开重定向，不靠运气。
 
 **这个脚本要 root，而我这个环境没有 sudo**（`sudo -n` 说「需要密码」），所以**要你跑一次**，
-把输出贴给我 —— 输出里 `NATLOOK layout=...` 那几行就决定了后面怎么写。
+把输出贴给我 —— 输出里 `NATLOOK ok ...` 那几行就决定了后面怎么写。
 
 ## 八、待实测（结论没把握、必须先验的）
 
 | # | 待验 | 为什么重要 | 怎么验 |
 |---|---|---|---|
 | 1 | **macOS 上 `rdr` + `DIOCNATLOOK` 能不能读回原目的**（本机自测 + 转发流量两种） | **决定阶段 3 成不成立** | `sudo ./gateway-spike.sh` / `--forward`（阶段 0） |
-| 2 | 那个 ioctl 的结构体是「老布局」还是「新布局」、端口是什么字节序 | 决定实现怎么写（虽然可以两种都试，但不能长期靠猜） | 阶段 0 的输出里两种读法都打印了，对一下就知道 |
+| 2 | 那个 ioctl 的结构体是「老布局」还是「新布局」、端口是什么字节序 | 决定实现怎么写（虽然可以两种都试，但不能长期靠猜） | 阶段 0 的输出里每种布局的每种读法都打印了，对一下就知道 |
 | 3 | macOS 上 `route-to lo0` 的实际行为 | **可能要，也可能不要**：本方案让 helper 另开连接，理论上不需要它 | 阶段 3 做到一半才知道；阶段 0 的设计不需要它 |
 | 4 | 系统 Internet Sharing 的 NAT 规则与自定义 anchor 会不会打架 | 两条 NAT 路径可能互相覆盖 | 同时开 ICS 与自定义 anchor 观察 |
 | 5 | `NETransparentProxyProvider` 会不会意外看到转发流 | 若会，macOS 的数据面能省一大截 | 转发流量时看扩展日志里有没有 flow |

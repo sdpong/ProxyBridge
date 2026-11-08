@@ -1574,6 +1574,64 @@ macOS 侧到现在**只接管本机流量**（`NEFilterDataProvider`），
 | 菜单栏 | `Apple, ProxiRoute, 配置, 窗口, 帮助`（没被这轮改动影响） |
 | 逻辑测试 | 21 套全绿（`l10n_tests` 抓到了漏译与失效词条） |
 
+## 本轮：网关模式可行性实测，第一次跑砸了，教训三条
+
+网关模式只做 macOS（用户拍板），所以第一件事是验掉一个致命前提：
+**别的终端的流量被 PF `rdr` 重定向到本机后，helper 能不能读回原目的地址**
+（macOS 没有 tproxy，原目的只能靠 `DIOCNATLOOK` 反查，而 SDK 里没有 `<net/pfvar.h>`）。
+
+实测工具：`MacOS/ProxiRoute/tools/gateway-spike.sh` + `gateway-natlook.c`
+（放 `tools/` 不放 `scripts/`：`build.sh` 是 `pkgbuild --scripts scripts`，
+会把整个 `scripts/` 目录打进安装包）。
+
+### 第一次跑的失败，和它教出来的三件事
+
+第一次跑的结果：清理逻辑全对（原规则集还原、过滤器关回去、转发开关回 0），
+但**规则根本没装上**：
+
+```
+main.rules:6/8: Rules must be in order: options, normalization, queueing, translation, filtering
+pfctl: Syntax error in config file: pf rules not loaded
+```
+
+而且那个 FAIL 是**误导性的** —— helper 只打印了 `listening on 127.0.0.1:18081`，
+连接根本没到它手里，机制本身压根没被测到。
+
+**教训一：translation 段的规则不能追加到文件末尾。**
+PF 的段序是 `options → normalization → queueing → translation → filtering`，
+过滤段的 `anchor` 一出现，后面再出现 translation 的规则就被拒。
+实测规则必须插到**第一条 `anchor` 之前**。
+
+**教训二：还原要以 `/etc/pf.conf` 为基准，不能用 `pfctl -sr`。**
+`pfctl -sr` 只打印过滤段的规则，翻译段（`nat`/`rdr`）的 anchor 不在里面，
+拿它还原会把系统自己的翻译钩子（`com.apple/*`）弄丢。
+
+**教训三：`pfctl -n -f` 只解析、不动过滤器，而且不需要 root。**
+这是个好东西：装规则之前先用 `-n` 读一遍，文件被拒就在**机器还没被动过**之前停下；
+顺带让人能不加 sudo 先看规则长什么样（脚本的 `--dry-run`）。
+
+### 顺带查清的几件事
+
+| 事实 | 怎么查的 | 为什么重要 |
+|---|---|---|
+| `no rdr` 后面**不能跟 `pass`** | `pfctl -n -f` 试出来的：`"pass" not valid with "no"` | 写错就是一条废规则 |
+| macOS 自动分配端口从 **49152** 起 | `sysctl net.inet.ip.portrange.first` | helper 自己绕开重定向要用的源端口段必须低于它，否则会跟别的程序撞 |
+| 没有状态可查时，内核对**三种布局一律回 `ENXIO`**，不会用 `ENOTTY` 挡回错布局 | 空跑 helper，三种 ioctl 全是 errno 6 | **不能靠报错挑布局**，实现上必须按值（地址+端口）判断；实测工具因此扫描内核返回的**每一行** |
+| 内核写回的结构体是它自己那个尺寸 | 由上一条推出 | 所有探测共用一个大缓冲区，否则可能写越界 |
+
+### 现在的状态
+
+实测脚本已重写并自测过（`--dry-run` 两种模式的规则都过了 pfctl 预检，
+判定逻辑用伪造的内核返回验过四种情形：答对 / 只答回重定向目标 / 答不出来 / 客户端流量）。
+**但真正的结论还是要你跑一次 sudo**：这个环境没有免密 sudo，AI 无法自证。
+
+```bash
+cd /Volumes/mydata/Downloads/ProxyBridge-src/MacOS/ProxiRoute/tools
+./gateway-spike.sh --dry-run          # 不用 root，先看规则
+sudo ./gateway-spike.sh                # 本机自测
+sudo ./gateway-spike.sh --forward      # 再加：等另一台机器连过来
+```
+
 ## 已知限制
 
 - **本机（macOS）没有 MSVC / mingw 交叉编译器**，Windows 侧改动只能逐行人工复核 +

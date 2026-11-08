@@ -7,8 +7,8 @@
 #
 # This script tests both, in the smallest way that can be undone:
 #
-#   1. it puts one rule of its own into the packet filter, in its own anchor,
-#      and puts the old ruleset back when it is done;
+#   1. it puts one rule of its own into the packet filter, and puts the old
+#      ruleset back when it is done;
 #   2. it sends a connection to a place, lets the filter redirect it, and asks
 #      the kernel where that connection was going (DIOCNATLOOK);
 #   3. it prints whether the answer came back.
@@ -21,17 +21,20 @@
 #   sudo ./gateway-spike.sh
 #   sudo ./gateway-spike.sh --forward
 #
+# And without root, to only look at the rules it would load:
+#
+#   ./gateway-spike.sh --dry-run
+#
 # The script needs: clang (or cc), python3, curl, pfctl. It cleans up after
 # itself, also when it is interrupted.
 
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ANCHOR="com.sdpong.spike"
 TARGET_PORT=18080
 REDIRECT_PORT=18081
-SRC_PORT=61000
-SRC_PORT_LAST=61019
+SRC_PORT_BASE=20000
+SRC_PORT_LAST=20099
 FORWARD=0
 
 TMP="$(mktemp -d /tmp/proxiroute-spike.XXXXXX)"
@@ -39,18 +42,24 @@ TARGET_PID=""
 HELPER_PID=""
 WAS_ENABLED="no"
 OLD_FORWARDING=""
+RULES_LOADED="no"
+FORWARDING_TURNED_ON="no"
 
 usage() {
-    echo "usage: sudo $0 [--forward]"
+    echo "usage: sudo $0 [--forward] [--dry-run]"
     echo
     echo "  (no option)  test the redirect and the original destination locally"
     echo "  --forward    also turn the machine into a router and wait for a"
     echo "               client of the network (needs a second machine)"
+    echo "  --dry-run    only show the rules and let the filter read them"
+    echo "               without changing anything (no root needed)"
 }
 
+DRY_RUN=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --forward) FORWARD=1 ;;
+        --dry-run) DRY_RUN=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1"; usage; exit 2 ;;
     esac
@@ -70,16 +79,17 @@ cleanup() {
     sleep 1
     [ -n "$TARGET_PID" ] && kill -9 "$TARGET_PID" 2>/dev/null
     [ -n "$HELPER_PID" ] && kill -9 "$HELPER_PID" 2>/dev/null
+    pkill -f "gateway-natlook $REDIRECT_PORT" 2>/dev/null
 
-    if [ -f "$TMP/main.rules.untouched" ]; then
+    if [ "$RULES_LOADED" = "yes" ] && [ -f "$TMP/base.rules.untouched" ]; then
         echo "-- the old ruleset"
-        pfctl -f "$TMP/main.rules.untouched" 2>&1 | sed 's/^/   /'
+        pfctl -f "$TMP/base.rules.untouched" 2>&1 | sed 's/^/   /'
     fi
-    if [ "$WAS_ENABLED" = "no" ]; then
+    if [ "$RULES_LOADED" = "yes" ] && [ "$WAS_ENABLED" = "no" ]; then
         echo "-- the filter goes back to the way it was (off)"
         pfctl -d 2>&1 | sed 's/^/   /'
     fi
-    if [ -n "$OLD_FORWARDING" ]; then
+    if [ -n "$OLD_FORWARDING" ] && [ "$FORWARDING_TURNED_ON" = "yes" ]; then
         echo "-- the forwarding goes back to $OLD_FORWARDING"
         sysctl -w "net.inet.ip.forwarding=$OLD_FORWARDING" 2>&1 | sed 's/^/   /'
     fi
@@ -93,7 +103,7 @@ trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------- the checks
 
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ] && [ "$DRY_RUN" = "0" ]; then
     say "this test reads and writes the packet filter, so it has to run as root:"
     say "    sudo $0"
     exit 1
@@ -129,8 +139,26 @@ say "   the forwarding of the other terminals is ${OLD_FORWARDING:-?} (it goes b
 
 step "the rules that are in place now (they are put back at the end)"
 pfctl -sr 2>&1 | sed 's/^/   /'
-pfctl -sr > "$TMP/main.rules"
-cp "$TMP/main.rules" "$TMP/main.rules.untouched"
+
+# The rules of the machine are taken from the file the system itself reads,
+# and that file is what puts them back at the end.
+#
+# "pfctl -sr" is not enough for that: it prints the filtering rules only, so
+# the anchors of the translation (nat and rdr) would be lost on the way.
+BASE_RULES="/etc/pf.conf"
+if [ ! -f "$BASE_RULES" ]; then
+    pfctl -sr > "$TMP/base.rules"
+    BASE_RULES="$TMP/base.rules"
+    say "   /etc/pf.conf is not there, the rules that are in place now are used"
+else
+    say "   the rules come from $BASE_RULES, and they go back to it"
+fi
+cp "$BASE_RULES" "$TMP/base.rules.untouched"
+
+if grep -q "set skip on lo0" "$BASE_RULES" 2>/dev/null; then
+    say "   the rules say 'set skip on lo0': the traffic of this machine does"
+    say "   not go through the filter, so the local test cannot work here."
+fi
 
 # ---------------------------------------------------------------- the build
 
@@ -141,9 +169,15 @@ say "   ok"
 
 # ---------------------------------------------------------------- the rules
 
-cat > "$TMP/spike.rules" <<RULES
+# The rules of this test, in the translation part of the ruleset.
+#
+# The rule that lets the program out is the one that keeps its own traffic
+# away from the redirect: it is the only way out of a redirect on macOS, and
+# the ports of the range are below the range the system hands out by itself
+# (49152 and up), so the traffic of the other programs is never caught by it.
+cat > "$TMP/translation.rules" <<RULES
 # The traffic of the program itself must not be redirected again.
-no rdr pass on lo0 proto tcp from any port $SRC_PORT:$SRC_PORT_LAST to any
+no rdr on lo0 proto tcp from any port $SRC_PORT_BASE:$SRC_PORT_LAST to any
 # A connection to the test place goes to the program instead.
 rdr pass on lo0 proto tcp from any to 127.0.0.1 port $TARGET_PORT -> 127.0.0.1 port $REDIRECT_PORT
 RULES
@@ -154,57 +188,225 @@ import ipaddress, sys
 try:
     net = ipaddress.ip_network(f"{sys.argv[1]}/{sys.argv[2]}", strict=False)
     print(net)
-except Exception as exc:
+except Exception:
     print("")
 PY
 )"
     [ -n "$SUBNET" ] || { say "the network of this machine could not be read, the test stops"; exit 1; }
-    cat >> "$TMP/spike.rules" <<RULES
-# The traffic of this machine itself must not be redirected.
-no rdr pass on $IFACE proto tcp from $LAN_IP to any
+    # The traffic of this machine itself must not be redirected: it is the
+    # traffic of the local proxy mode, and it goes to the proxy by itself.
+    cat >> "$TMP/translation.rules" <<RULES
+no rdr on $IFACE from $LAN_IP to any
+no nat on $IFACE from $LAN_IP to any
 # The traffic that comes in from the network is redirected to the program.
 rdr pass on $IFACE proto tcp from $SUBNET to any -> 127.0.0.1 port $REDIRECT_PORT
-RULES
-    cat > "$TMP/nat.rules" <<RULES
+# The clients keep their own address on the way out, so that the way back
+# comes through this machine.
 nat on $IFACE from $SUBNET to any -> ($IFACE)
 RULES
 fi
 
-{
-    echo "# the rules of the machine, with the anchor of this test added"
-    echo "# the redirect rules are only looked at in the redirect chain, and the"
-    echo "# address rules only in the address chain, so both get their own anchor"
-    echo "rdr-anchor \"$ANCHOR/rdr\""
-    echo "load anchor \"$ANCHOR/rdr\" from \"$TMP/spike.rules\""
-    if [ "$FORWARD" = "1" ]; then
-        echo "nat-anchor \"$ANCHOR/nat\""
-        echo "load anchor \"$ANCHOR/nat\" from \"$TMP/nat.rules\""
-    fi
-} >> "$TMP/main.rules"
+# The rules of this test go into the rules of the machine.
+#
+# They go into the translation part, which has to come before the filtering
+# part: the filter refuses a file where a rule of the filtering part comes
+# before a rule of the translation part. That is why they are put in front
+# of the first filtering rule and not at the end of the file.
+python3 - "$BASE_RULES" "$TMP/translation.rules" "$TMP/main.rules" <<'PY'
+import re
+import sys
+
+base = open(sys.argv[1]).read().splitlines(keepends=True)
+ours = open(sys.argv[2]).read().splitlines(keepends=True)
+
+out = []
+placed = False
+for line in base:
+    text = line.strip()
+    if not placed and text and not text.startswith('#'):
+        if re.match(r'^(anchor|pass|block|match)\b', text):
+            out.extend(ours)
+            placed = True
+    out.append(line)
+if not placed:
+    out.extend(ours)
+
+open(sys.argv[3], 'w').writelines(out)
+PY
+
+step "the rules that will be loaded"
+grep -v '^#' "$TMP/main.rules" | grep -v '^$' | sed 's/^/   /'
+
+# The file is checked before it is loaded: pfctl reads the file without
+# touching the filter when it is given -n. A file that the filter would
+# refuse is caught here, and the machine is left alone.
+step "checking the rules (the filter is not touched yet)"
+pfctl -n -f "$TMP/main.rules" > "$TMP/parse.log" 2>&1
+PARSE_RC=$?
+sed 's/^/   /' "$TMP/parse.log"
+if [ "$PARSE_RC" -ne 0 ]; then
+    say "   the filter would refuse this file, so nothing was changed."
+    exit 1
+fi
+say "   the file is good"
+
+if [ "$DRY_RUN" = "1" ]; then
+    echo
+    say "   nothing was changed (this was a dry run)"
+    exit 0
+fi
 
 step "putting the rules in place"
-pfctl -f "$TMP/main.rules" 2>&1 | sed 's/^/   /'
-pfctl -E 2>&1 | sed 's/^/   /'
-if [ "$FORWARD" = "1" ]; then
-    echo "the forwarding of the other terminals goes on"
-    sysctl -w net.inet.ip.forwarding=1 2>&1 | sed 's/^/   /'
+pfctl -f "$TMP/main.rules" > "$TMP/load.log" 2>&1
+LOAD_RC=$?
+sed 's/^/   /' "$TMP/load.log"
+if [ "$LOAD_RC" -ne 0 ]; then
+    say "   the filter refused the rules, so the machine was left alone."
+    exit 1
 fi
+RULES_LOADED="yes"
+pfctl -E 2>&1 | sed 's/^/   /'
 say "the rules that are in place now:"
-pfctl -a "$ANCHOR/rdr" -sr 2>&1 | sed 's/^/   /'
-pfctl -a "$ANCHOR/nat" -sr 2>&1 | sed 's/^/   /'
+pfctl -sr 2>&1 | sed 's/^/   /'
+say "   (the filter does not print the rules of the translation part here,"
+say "    so the rule that redirects to port $REDIRECT_PORT is checked by the"
+say "    test below, where it either works or it does not)"
 
 # ---------------------------------------------------------------- the test
 
 step "starting the test place and the program that takes the redirected traffic"
 python3 -m http.server "$TARGET_PORT" --bind 127.0.0.1 > "$TMP/target.log" 2>&1 &
 TARGET_PID=$!
-"$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" "$SRC_PORT" > "$TMP/helper.log" 2>&1 &
+"$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" "$SRC_PORT_BASE" > "$TMP/helper.log" 2>&1 &
 HELPER_PID=$!
 sleep 2
 say "   the test place is on 127.0.0.1:$TARGET_PORT, the program listens on 127.0.0.1:$REDIRECT_PORT"
 
+# ---------------------------------------------------------------- the local test
+
+step "a connection goes to the test place"
+curl -s --max-time 20 "http://127.0.0.1:$TARGET_PORT/" -o "$TMP/client.out" 2>"$TMP/client.err"
+say "   the client got $(wc -c < "$TMP/client.out" | tr -d ' ') bytes"
+if [ -s "$TMP/helper.log" ]; then
+    say "   the program took the connection:"
+    grep -E '^(accepted|NATLOOK|going|no way)' "$TMP/helper.log" | sed 's/^/      /'
+else
+    say "   the program took nothing: the redirect did not happen."
+fi
+
+sleep 1
+say
+say "the states of the filter (this is the official view of where the traffic was going):"
+pfctl -ss 2>&1 | head -20 | sed 's/^/   /'
+
+# ---------------------------------------------------------------- the verdict
+
+verdict() {
+    which_test="$1"
+    echo
+    echo "== the verdict ($which_test) =="
+
+    if ! grep -q '^accepted from' "$TMP/helper.log" 2>/dev/null; then
+        say "   FAIL: the connection never came to the program."
+        say "        The filter did not redirect it, so the rules are not in"
+        say "        place. The output above says what the filter thinks it has."
+        return
+    fi
+
+    # Every answer of the kernel is looked at, not only the first one: the
+    # layout that this kernel uses is not known, and a layout that is not
+    # the right one can answer with something that makes no sense.
+    answer="$(python3 - "$TMP/helper.log" "$TARGET_PORT" "$REDIRECT_PORT" "$which_test" <<'PY'
+import re
+import sys
+
+log, target, redirect, mode = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+
+lines = [l for l in open(log).read().splitlines() if l.startswith('NATLOOK ok')]
+if not lines:
+    print('none')
+    sys.exit(0)
+
+addr_re = re.compile(r'\b(saddr|daddr|rsaddr|rdaddr)=([0-9.]+)/([0-9.]+)')
+port_re = re.compile(r'\b(sport|dport|rsport|rdport)=([0-9]+)/([0-9]+)')
+
+
+def read(line):
+    """The addresses and the ports of the destination, in both readings."""
+    addrs, ports = [], []
+    for name, a, b in addr_re.findall(line):
+        if name in ('daddr', 'rdaddr'):
+            addrs += [a, b]
+    for name, a, b in port_re.findall(line):
+        if name in ('dport', 'rdport'):
+            ports += [int(a), int(b)]
+    return addrs, ports
+
+
+for line in lines:
+    addrs, ports = read(line)
+    if mode == 'local':
+        if '127.0.0.1' in addrs and target in ports:
+            print('pass|' + line)
+            sys.exit(0)
+    else:
+        for a in addrs:
+            if a not in ('127.0.0.1', '0.0.0.0', '255.255.255.255'):
+                print('pass|' + line)
+                sys.exit(0)
+
+for line in lines:
+    addrs, ports = read(line)
+    if redirect in ports and '127.0.0.1' in addrs:
+        print('redirect|' + line)
+        sys.exit(0)
+
+print('other|' + lines[0])
+PY
+)"
+    if [ -z "$answer" ] || [ "$answer" = "none" ]; then
+        say "   FAIL: the connection came, but the kernel did not say where it"
+        say "        was going. The answer of the kernel is in the output above."
+        say "        The way out then is to read the states of the filter"
+        say "        instead, which the helper can do as root: it is slower,"
+        say "        but it works."
+        return
+    fi
+
+    verdict_kind="${answer%%|*}"
+    verdict_line="${answer#*|}"
+    say "   the kernel answered: $verdict_line"
+
+    case "$verdict_kind" in
+        pass)
+            say "   PASS: the original destination came back right."
+            say "         The program can take the traffic of the other terminals"
+            say "         and send it on by the rule that says where it was going."
+            ;;
+        redirect)
+            say "   FAIL: the kernel gave back the place the traffic was"
+            say "        redirected to, not the place it was going."
+            say "        The way out then is to read the states of the filter"
+            say "        instead, which the helper can do as root."
+            ;;
+        *)
+            say "   HALF: the kernel answered, but not with the place we asked for."
+            say "         we asked for 127.0.0.1:$TARGET_PORT, it said something else"
+            say "         (the numbers are printed in both readings, because the"
+            say "          byte order is a convention the program cannot know)"
+            ;;
+    esac
+}
+
+verdict local
+
+# ---------------------------------------------------------------- the forwarding
+
 if [ "$FORWARD" = "1" ]; then
     step "the machine is a router now: wait for a client of the network"
+    say "   the forwarding of the other terminals goes on"
+    sysctl -w net.inet.ip.forwarding=1 2>&1 | sed 's/^/   /'
+    FORWARDING_TURNED_ON="yes"
     say "   on another machine of $SUBNET:"
     say "      set the gateway to $LAN_IP"
     say "      then open any page and come back here"
@@ -212,45 +414,14 @@ if [ "$FORWARD" = "1" ]; then
     echo
     printf "   press enter when you are done: "
     read -r _ignored
-else
-    step "a connection goes to the test place"
-    curl -s --max-time 15 "http://127.0.0.1:$TARGET_PORT/" -o "$TMP/client.out" 2>"$TMP/client.err"
-    say "   the client got $(wc -c < "$TMP/client.out" | tr -d ' ') bytes"
-fi
 
-sleep 1
-step "what the kernel said"
-say "the program wrote:"
-sed 's/^/   /' "$TMP/helper.log"
-say
-say "the states of the filter (this is the official view of where the traffic was going):"
-pfctl -ss 2>&1 | head -20 | sed 's/^/   /'
-
-# ---------------------------------------------------------------- the verdict
-
-step "the verdict"
-NATLOOK_LINE="$(grep -m1 '^NATLOOK ' "$TMP/helper.log" 2>/dev/null || true)"
-if [ -z "$NATLOOK_LINE" ]; then
-    say "   FAIL: the kernel did not say where the connection was going."
-    say "        The redirect itself worked (the connection came through), but"
-    say "        the original destination could not be read."
-    say "        The way out then is to read the states of the filter instead,"
-    say "        which the helper can do as root: it is slower, but it works."
-else
-    say "   the kernel answered: $NATLOOK_LINE"
-    ADDR="$(echo "$NATLOOK_LINE" | sed -n 's/.*addr=\([0-9.]*\).*/\1/p')"
-    PORT_HOST="$(echo "$NATLOOK_LINE" | sed -n 's/.*port_host=\([0-9]*\).*/\1/p')"
-    PORT_NET="$(echo "$NATLOOK_LINE" | sed -n 's/.*port_net=\([0-9]*\).*/\1/p')"
-    if [ "$ADDR" = "127.0.0.1" ] && { [ "$PORT_HOST" = "$TARGET_PORT" ] || [ "$PORT_NET" = "$TARGET_PORT" ]; }; then
-        say "   PASS: the original destination came back right."
-        say "         The program can take the traffic of the other terminals and"
-        say "         send it on by the rule that says where it was going."
-    else
-        say "   HALF: the kernel answered, but not with the place we asked for."
-        say "         we asked for 127.0.0.1:$TARGET_PORT, it said ${ADDR:-?}:${PORT_HOST:-?}"
-        say "         (the ports are printed in both readings, because the byte"
-        say "         order of the ports is a convention the program cannot know)"
-    fi
+    sleep 1
+    step "what the kernel said about the traffic of the client"
+    grep -E '^(accepted|NATLOOK|going|no way)' "$TMP/helper.log" | sed 's/^/   /'
+    echo
+    say "the states of the filter:"
+    pfctl -ss 2>&1 | head -20 | sed 's/^/   /'
+    verdict client
 fi
 
 echo
