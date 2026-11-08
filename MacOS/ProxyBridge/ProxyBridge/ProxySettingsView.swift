@@ -257,6 +257,9 @@ struct ProxyConfigEditorView: View {
                         Text(L10n.t("A SOCKS5 proxy that needs a user name of its own keeps it: there is only one user name field."))
                             .font(.caption)
                             .foregroundColor(.secondary)
+                        Text(L10n.t("A rule that names no program says to the proxy that the traffic is ProxyBridge's own: the bundle id of the extension is the name it sees. A proxy that routes by program can then send that traffic its own way."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 8)
 

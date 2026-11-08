@@ -261,6 +261,8 @@ enum L10n {
 
         "DNS proxy entry": "DNS 代理条目",
 
+        "A rule that names no program says to the proxy that the traffic is ProxyBridge's own: the bundle id of the extension is the name it sees. A proxy that routes by program can then send that traffic its own way.": "没有指定程式的规则会告诉代理：这些流量是 ProxyBridge 自己的流量，代理看到的是扩展的包标识名。按程式分流的代理因此可以把这类流量送到它该去的地方。",
+
         // the buttons
         "Add": "添加",
         "Add Rule": "添加规则",

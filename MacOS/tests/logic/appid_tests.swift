@@ -60,5 +60,36 @@ t("the name is used when there is no user id", ProxyAppIdentity.socks4UserId(pay
 t("an empty user id is no user id", ProxyAppIdentity.socks4UserId(payload: payload, username: "") == "com.example.app")
 t("without a name there is no user id", ProxyAppIdentity.socks4UserId(payload: nil, username: nil) == nil)
 
+// what the rule that matched decides
+let bridge = "com.sdpong.proxybridge.extension"
+
+// a rule that names the program tells the proxy which program it is
+let withFilter = ProxyAppIdentity.payload(bundleId: "com.example.app",
+                                          processName: "Example",
+                                          ruleHasProcessFilter: true,
+                                          proxyBridgeBundleId: bridge)
+t("a rule with a program filter names the program", withFilter.bundleId == "com.example.app")
+t("a rule with a program filter keeps the name of the program", withFilter.processName == "Example")
+t("a rule with a program filter sends the program", withFilter.value == "com.example.app")
+
+// a rule that names no program says that the traffic is ProxyBridge's own
+let withoutFilter = ProxyAppIdentity.payload(bundleId: "com.example.app",
+                                             processName: "Example",
+                                             ruleHasProcessFilter: false,
+                                             proxyBridgeBundleId: bridge)
+t("a rule without a program filter names ProxyBridge", withoutFilter.bundleId == bridge)
+t("a rule without a program filter sends the name of ProxyBridge", withoutFilter.value == bridge)
+t("a rule without a program filter sends no program name", withoutFilter.processName.isEmpty)
+t("a rule without a program filter is not empty", !withoutFilter.isEmpty)
+
+// the header of the virtual name
+let virtualLines = ProxyAppIdentity.httpHeaderLines(for: withoutFilter)
+t("the virtual name is in the header", virtualLines.contains("ProxyBridge-App-Id: \(bridge)"))
+t("the virtual name is the only header", virtualLines.count == 1)
+
+// the socks5 user name of the virtual name
+let virtualCreds = ProxyAppIdentity.socks5Credentials(payload: withoutFilter, username: nil, password: nil)
+t("the virtual name is the socks5 user name", virtualCreds?.username == bridge)
+
 print(fails == 0 ? "appid tests: ALL PASS" : "appid tests: \(fails) FAILED")
 exit(fails == 0 ? 0 : 1)

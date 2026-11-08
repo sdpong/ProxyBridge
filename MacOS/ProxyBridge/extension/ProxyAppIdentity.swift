@@ -124,4 +124,33 @@ enum ProxyAppIdentity {
         guard let payload = payload, !payload.value.isEmpty else { return nil }
         return payload.value
     }
+
+    // The identity that goes to the proxy server.
+    //
+    // The rule that matched decides what the proxy is told:
+    //
+    //   * A rule that names the programs it is for is about one program, so the
+    //     proxy is told which program the traffic comes from. A proxy that
+    //     routes by program - a local Clash with an "IN-USER" rule, a gateway
+    //     that bills per app - can then send that program's traffic its own
+    //     way.
+    //
+    //   * A rule that names no program is not about one program. There is
+    //     nothing to say about it, so ProxyBridge says that the traffic is its
+    //     own: the bundle id of the extension. That is the virtual process
+    //     name. A proxy that routes by program sees one program for all of
+    //     that traffic, and the person can write a rule for that name.
+    //
+    // The rule decides, and not the flow: the same program that goes through
+    // two rules is told to the proxy as the program in the first one and as
+    // ProxyBridge in the second one, exactly as the rules say.
+    static func payload(bundleId: String,
+                        processName: String?,
+                        ruleHasProcessFilter: Bool,
+                        proxyBridgeBundleId: String) -> Payload {
+        guard ruleHasProcessFilter else {
+            return Payload(bundleId: proxyBridgeBundleId, processName: "")
+        }
+        return Payload(bundleId: bundleId, processName: processName ?? "")
+    }
 }

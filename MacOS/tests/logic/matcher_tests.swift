@@ -51,5 +51,15 @@ t("list of ip and domain", matcher("*", "1.2.3.4;*.github.com", "*").matchesHost
 t("domain rule without any known name", matcher("*", "*.github.com", "*").matchesHost(ip: "9.9.9.9", domains: []), false)
 t("all hosts", matcher("*", "*", "*").matchesHost(ip: "9.9.9.9", domains: []), true)
 
+// whether the rule names the programs it is for. it decides what the proxy
+// server is told about the traffic: a rule without a program filter says that
+// the traffic is ProxyBridge's own.
+t("an empty program filter names no program", matcher("", "*", "*").hasProcessFilter, false)
+t("a star names no program", matcher("*", "*", "*").hasProcessFilter, false)
+t("a program names a program", matcher("safari", "*", "*").hasProcessFilter, true)
+t("a list of programs names programs", matcher("safari; curl", "*", "*").hasProcessFilter, true)
+t("a star in a list names no program", matcher("safari; *", "*", "*").hasProcessFilter, false)
+t("a rule that names nothing but separators still counts as a filter", matcher(";", "*", "*").hasProcessFilter, true)
+
 print(fails == 0 ? "matcher tests: ALL PASS" : "matcher tests: \(fails) FAILED")
 exit(fails == 0 ? 0 : 1)

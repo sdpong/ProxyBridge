@@ -353,6 +353,11 @@ extension ProxyRule {
 
         var hasHostFilter: Bool { !hostAll }
         var hasPortFilter: Bool { !portAll }
+        // whether the rule names the programs it is for. a rule with an empty
+        // filter or with "*" is not about one program: the traffic it takes is
+        // not bound to a program, and the proxy is told that it is ProxyBridge's
+        // own traffic instead of the name of a program.
+        var hasProcessFilter: Bool { !processAll }
 
         func matchesProcess(_ flow: FlowProcess) -> Bool {
             if processAll { return true }
@@ -391,6 +396,13 @@ class AppProxyProvider: NETransparentProxyProvider {
     // another number is an older build, and its rules and proxies would be
     // ignored in silence. The app and the extension must agree on this number.
     static let protocolAPI = 2
+
+    // The bundle id of the extension itself.
+    //
+    // It is the name that the proxy server is given for the traffic of a rule
+    // that names no program: the virtual process name. The proxy sees one
+    // program for that traffic, and the person can write a rule for that name.
+    static let proxyBridgeBundleId = Bundle.main.bundleIdentifier ?? "com.interceptsuite.ProxyBridge.extension"
     
     // one log entry, kept as an enum so we don't allocate a dictionary per line,
     // the dict is only built when the gui drains a batch
@@ -1458,7 +1470,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         // rules are always evaluated. a proxy config is only needed by a rule that
         // routes to one, BLOCK and DIRECT rules work without any (they used to be
         // skipped whenever no proxy was configured, so a lone BLOCK rule did nothing)
-        let matchedRule = findMatchingRule(bundleId: processPath, processName: processName, destination: destination, port: portNum, connectionProtocol: .tcp, checkIpPort: true, domains: domains)
+        let matched = findMatchingRule(bundleId: processPath, processName: processName, destination: destination, port: portNum, connectionProtocol: .tcp, checkIpPort: true, domains: domains)
+        let matchedRule = matched?.rule
+        // whether the rule names the programs it is for. it decides what the proxy
+        // server is told about the traffic
+        let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
 
         if let rule = matchedRule {
             switch rule.action {
@@ -1483,9 +1499,16 @@ class AppProxyProvider: NETransparentProxyProvider {
                 }
                 // the application the traffic belongs to. a proxy server that is told
                 // about it can route by application, the way proxifier lets a rule pick
-                // the proxy but does not tell the proxy who is talking
-                let appIdentity = ProxyAppIdentity.Payload(bundleId: processPath,
-                                                           processName: processName ?? "")
+                // the proxy but does not tell the proxy who is talking.
+                //
+                // the rule decides what is told: a rule that names the programs it is
+                // for names the program, a rule that names no program says that the
+                // traffic is ProxyBridge's own
+                let appIdentity = ProxyAppIdentity.payload(
+                    bundleId: processPath,
+                    processName: processName,
+                    ruleHasProcessFilter: ruleHasProcessFilter,
+                    proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId)
                 // the type of every proxy the chain names. a chain may name the
                 // same proxy twice, so the map is built by hand: the initializer
                 // that demands unique keys would trap on that
@@ -1580,7 +1603,12 @@ class AppProxyProvider: NETransparentProxyProvider {
         let hasAnySocks5 = storedProxyConfigs.values.contains { $0.type.lowercased() == "socks5" }
         proxyLock.unlock()
 
-        let matchedRule = findMatchingRule(bundleId: processPath, processName: processName, destination: "", port: 0, connectionProtocol: .udp, checkIpPort: false)
+        let matched = findMatchingRule(bundleId: processPath, processName: processName, destination: "", port: 0, connectionProtocol: .udp, checkIpPort: false)
+        let matchedRule = matched?.rule
+        // whether the rule names the programs it is for. it decides what the proxy
+        // server is told about the traffic, and it is taken out here because the
+        // proxy configuration below has a name of its own
+        let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
 
         if let rule = matchedRule {
             let action = rule.action
@@ -1620,7 +1648,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                         return
                     }
                     // pass the resolved display name (curl), not the raw signing id (curl-<hash>)
-                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.Payload(bundleId: processPath, processName: processName ?? "") : nil)
+                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
                 }
                 return true
             }
@@ -2686,7 +2714,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    private func findMatchingRule(bundleId: String, processName: String?, destination: String, port: UInt16, connectionProtocol: RuleProtocol, checkIpPort: Bool, domains: [String] = []) -> ProxyRule? {
+    // The rule that matched, with what the matcher knows about it.
+    //
+    // The matcher is needed as well: whether the rule names the programs it is
+    // for decides what the proxy server is told about the traffic.
+    private func findMatchingRule(bundleId: String, processName: String?, destination: String, port: UInt16, connectionProtocol: RuleProtocol, checkIpPort: Bool, domains: [String] = []) -> CompiledRule? {
         rulesLock.lock()
         let currentRules = rules
         rulesLock.unlock()
@@ -2695,7 +2727,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         let flowProcess = ProxyRule.FlowProcess(bundleId: bundleId, processName: processName)
         let domainChars = domains.map { (name: $0, chars: Array($0)) }
 
-        var wildcardRule: ProxyRule? = nil
+        var wildcardRule: CompiledRule? = nil
 
         for (rule, m) in currentRules {
             guard rule.enabled else { continue }
@@ -2708,14 +2740,14 @@ class AppProxyProvider: NETransparentProxyProvider {
                 if m.hasHostFilter || m.hasPortFilter {
                     // udp has no destination here, so a filtered wildcard can't match
                     if checkIpPort, m.matchesHost(ip: destination, domains: domainChars), m.matchesPort(port) {
-                        return rule
+                        return (rule, m)
                     }
                     continue
                 }
 
                 // pure wildcard, keep the first one as a fallback
                 if wildcardRule == nil {
-                    wildcardRule = rule
+                    wildcardRule = (rule, m)
                 }
                 continue
             }
@@ -2723,11 +2755,11 @@ class AppProxyProvider: NETransparentProxyProvider {
             if m.matchesProcess(flowProcess) {
                 if checkIpPort {
                     if m.matchesHost(ip: destination, domains: domainChars) && m.matchesPort(port) {
-                        return rule
+                        return (rule, m)
                     }
                 } else {
                     // udp matches on process alone
-                    return rule
+                    return (rule, m)
                 }
             }
         }
