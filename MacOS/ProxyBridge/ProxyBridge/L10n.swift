@@ -90,7 +90,6 @@ enum L10n {
         "Run at Startup": "开机启动",
         "Approve ProxyBridge in System Settings...": "在系统设置中授权 ProxyBridge…",
         "Take Out Older ProxyBridge Extensions...": "移除较旧的 ProxyBridge 扩展…",
-        "Language": "语言",
 
         // the buttons
         "Add": "添加",

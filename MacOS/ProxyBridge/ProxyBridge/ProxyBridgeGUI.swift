@@ -162,20 +162,22 @@ struct ProxyBridgeGUIApp: App {
 
                 // the language of the app. english and chinese for now
                 //
-                // a menu of buttons and not a picker: a picker in a menu bar
-                // menu opens a submenu of its own that the system draws, and it
-                // does not always open where the person expects it.
-                Menu(L10n.t("Language")) {
-                    ForEach(L10n.Language.allCases) { language in
-                        Button {
-                            localization.language = language
-                        } label: {
-                            // a checkmark marks the language the app is in
-                            if language == localization.language {
-                                Label(language.displayName, systemImage: "checkmark")
-                            } else {
-                                Text(language.displayName)
-                            }
+                // the two languages are two entries of the menu and not a menu
+                // of their own. a submenu in a menu bar menu only opens when
+                // the pointer rests on it, and a person who moves the pointer
+                // too fast gets a submenu that closes again before it can be
+                // read. an entry that is right there cannot be missed.
+                Divider()
+
+                ForEach(L10n.Language.allCases) { language in
+                    Button {
+                        localization.language = language
+                    } label: {
+                        // a checkmark marks the language the app is in
+                        if language == localization.language {
+                            Label(language.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(language.displayName)
                         }
                     }
                 }
