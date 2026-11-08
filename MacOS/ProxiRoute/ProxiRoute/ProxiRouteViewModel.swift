@@ -242,6 +242,9 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // What one proxy carried: how many connections went through it and how many bytes it carried.
     // One row for every proxy the traffic went through, the way Proxifier shows what a proxy did.
     struct ProxyTraffic: Identifiable {
+        // The traffic of this machine and the traffic of the clients of the
+        // network are counted apart: they are told apart by the source.
+        let source: TrafficMerge.Source
         let id: String
         let proxy: String
         let connections: Int
@@ -1830,9 +1833,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         if runtimeMode == .server {
             // The traffic of this machine goes through the tunnel, and the
             // traffic of the clients of the network goes through the proxy
-            // server. Both leave the machine by the proxies of the rules, so
-            // they are counted together: this machine is a client of its own
-            // proxy as well.
+            // server. Both leave the machine by the proxies of the rules, and
+            // every one of them gets a line of its own: this machine is a
+            // client of its own proxy as well, and the clients are told
+            // apart by their address.
             rows = mergedTrafficRows()
         } else if !extensionTotals.isEmpty {
             // the numbers the extension counted itself. they are the ones that are right: the
@@ -1842,6 +1846,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 // a blocked connection moves no traffic and is not a proxy, so it has no row
                 guard total.proxy != "BLOCK" else { continue }
                 rows.append(ProxyTraffic(
+                    source: .machine,
                     id: total.proxy,
                     proxy: total.proxy,
                     connections: total.connections,
@@ -1871,6 +1876,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             for name in names {
                 guard name != "BLOCK" else { continue }
                 rows.append(ProxyTraffic(
+                    source: .machine,
                     id: name,
                     proxy: name,
                     connections: proxyConnections[name] ?? 0,
@@ -1880,12 +1886,21 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 ))
             }
         }
-        // the busiest proxy first, the same way Proxifier puts the traffic it moved on top
+        // The machine first, then the clients of the network by address; the
+        // busiest proxy of a source on top, the same way Proxifier puts the
+        // traffic it moved on top
+        var sourceOrder: [TrafficMerge.Source: Int] = [:]
+        for (index, source) in TrafficMerge.Source.ordered(rows.map { $0.source }).enumerated() {
+            sourceOrder[source] = index
+        }
         rows.sort { lhs, rhs in
+            let left = sourceOrder[lhs.source] ?? 0
+            let right = sourceOrder[rhs.source] ?? 0
+            if left != right { return left < right }
             if lhs.connections != rhs.connections { return lhs.connections > rhs.connections }
-            let left = lhs.bytesUp + lhs.bytesDown
-            let right = rhs.bytesUp + rhs.bytesDown
-            if left != right { return left > right }
+            let leftBytes = lhs.bytesUp + lhs.bytesDown
+            let rightBytes = rhs.bytesUp + rhs.bytesDown
+            if leftBytes != rightBytes { return leftBytes > rightBytes }
             return lhs.proxy < rhs.proxy
         }
         proxyTraffic = rows
@@ -1894,15 +1909,17 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // The rows of the traffic when the proxy server runs: the traffic of this
     // machine, counted by the extension, and the traffic of the clients of the
-    // network, counted by the server, counted together per proxy.
+    // network, counted by the server. Every source gets a line of its own for
+    // every proxy it went through.
     //
     // They are the same traffic as far as the way out is concerned: both go
     // through the proxies of the rules. This machine is a client of its own
-    // proxy as well, and the table says what each proxy carried for both.
+    // proxy as well, and the table says who carried what.
     private func mergedTrafficRows() -> [ProxyTraffic] {
         // the traffic of this machine, counted by the extension
         let machine = extensionTotals.map { total in
             TrafficMerge.Total(
+                source: .machine,
                 proxy: total.proxy,
                 connections: total.connections,
                 bytesUp: total.up,
@@ -1917,6 +1934,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // relayed as well
         let clients = serverTotals.map { total in
             TrafficMerge.Total(
+                source: .client(total.client),
                 proxy: total.proxy,
                 connections: total.connections,
                 bytesUp: total.bytesUp,
@@ -1926,7 +1944,8 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
         return TrafficMerge.rows(machine: machine, clients: clients).map { total in
             ProxyTraffic(
-                id: total.proxy,
+                source: total.source,
+                id: "\(total.source.key)|\(total.proxy)",
                 proxy: total.proxy,
                 connections: total.connections,
                 bytesUp: total.bytesUp,

@@ -171,6 +171,7 @@ struct ContentView: View {
             switch selectedTab {
             case 0:
                 ProxyTrafficView(rows: viewModel.proxyTraffic,
+                                showsSource: viewModel.runtimeMode != .local,
                                 emptyTitle: emptyTrafficTitle,
                                 emptyHint: emptyTrafficHint)
             case 1:
@@ -340,6 +341,10 @@ struct ProxyTrafficView: View {
     // the language redraws the window
     @ObservedObject private var loc = LocalizationManager.shared
     let rows: [ProxiRouteViewModel.ProxyTraffic]
+    // Whether the traffic of this machine and the traffic of the clients of
+    // the network are told apart. The local mode has only this machine, so
+    // there is nothing to tell apart there.
+    var showsSource = false
     // what the empty table says. The reason for the emptiness is not the
     // same in the gateway mode and in the server mode.
     var emptyTitle = L10n.t("No traffic yet")
@@ -349,12 +354,26 @@ struct ProxyTrafficView: View {
         Group {
             if rows.isEmpty {
                 emptyState
+            } else if showsSource {
+                tableWithSource
             } else {
                 table
             }
         }
     }
 
+    // The name of the source of a row: this machine, or the address of the
+    // client the traffic came from.
+    private func sourceName(_ source: TrafficMerge.Source) -> String {
+        if let address = source.clientAddress { return address }
+        return L10n.t("This machine")
+    }
+
+    // The table without the source.
+    //
+    // The two tables are written out both: a table that has a column of its
+    // own only in some of the modes cannot be built with one set of columns,
+    // and SwiftUI only allows a column to come and go with macOS 14.4.
     private var table: some View {
         Table(rows) {
             TableColumn(L10n.t("Proxy")) { row in
@@ -362,6 +381,47 @@ struct ProxyTrafficView: View {
                     .foregroundColor(row.proxy == "Direct" ? .secondary : .primary)
             }
             .width(min: 150, ideal: 260)
+
+            TableColumn(L10n.t("Connections")) { row in
+                Text("\(row.connections)")
+            }
+            .width(90)
+
+            TableColumn(L10n.t("Sent")) { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp) : L10n.t("not seen"))
+                    .foregroundColor(row.bytesKnown ? .primary : .secondary)
+            }
+            .width(90)
+
+            TableColumn(L10n.t("Received")) { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesDown) : L10n.t("not seen"))
+                    .foregroundColor(row.bytesKnown ? .primary : .secondary)
+            }
+            .width(90)
+
+            TableColumn(L10n.t("Total")) { row in
+                Text(row.bytesKnown ? TrafficFormat.bytes(row.bytesUp + row.bytesDown) : L10n.t("not seen"))
+                    .foregroundColor(row.bytesKnown ? .primary : .secondary)
+            }
+            .width(90)
+        }
+    }
+
+    // The table with the source: every client of the network has a line of
+    // its own, next to the line of this machine.
+    private var tableWithSource: some View {
+        Table(rows) {
+            TableColumn(L10n.t("Source")) { row in
+                Text(sourceName(row.source))
+                    .foregroundColor(.secondary)
+            }
+            .width(min: 110, ideal: 150)
+
+            TableColumn(L10n.t("Proxy")) { row in
+                Text(row.proxy)
+                    .foregroundColor(row.proxy == "Direct" ? .secondary : .primary)
+            }
+            .width(min: 130, ideal: 220)
 
             TableColumn(L10n.t("Connections")) { row in
                 Text("\(row.connections)")

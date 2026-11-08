@@ -291,6 +291,15 @@ check("what came back is counted", (direct?.bytesDown ?? 0) >= 10)
 check("the open connections leave the list when they are over", snapshot.flows.isEmpty)
 check("a direct connection is named Direct", LocalProxyServer.proxyName(.direct) == "Direct")
 check("a blocked connection is named BLOCK", LocalProxyServer.proxyName(.blocked) == "BLOCK")
+// the traffic of every client is counted apart: the table of the window says
+// who carried what, and a client on the network has an address of its own
+check("the traffic knows the client it came from", !(direct?.client.isEmpty ?? true))
+check("every client and proxy has a line of its own", {
+    let pairs = snapshot.totals.map { "\($0.client)|\($0.proxy)" }
+    return Set(pairs).count == pairs.count
+}())
+check("the clients of the network are counted apart",
+      snapshot.totals.filter { $0.proxy == "Direct" }.allSatisfy { !$0.client.isEmpty })
 
 // the udp association of socks5
 //

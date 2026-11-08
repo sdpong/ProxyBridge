@@ -36,8 +36,10 @@ final class LocalProxyServer {
         var lastActivity: Date
     }
 
-    // The traffic that went through one proxy of the app.
+    // The traffic that went through one proxy of the app, for one client.
     struct ServerProxyTotal {
+        // the address of the client the traffic came from
+        let client: String
         let proxy: String
         let connections: Int
         let bytesUp: Int64
@@ -66,8 +68,11 @@ final class LocalProxyServer {
     private var liveFlows: [UInt64: ServerFlow] = [:]
     // the number of the last flow, so that every flow has its own name
     private var flowCounter: UInt64 = 0
-    // the traffic of every proxy the traffic went through
-    private var proxyTotals: [String: (connections: Int, up: Int64, down: Int64)] = [:]
+    // The traffic of every proxy the traffic went through, per client.
+    //
+    // The clients are counted apart: each of them has an address of its own,
+    // and the table of the window says who carried what.
+    private var proxyTotals: [String: [String: (connections: Int, up: Int64, down: Int64)]] = [:]
 
     // the proxy list of the app, for the upstream that names one
     var proxyConfigs: [LocalProxyEndpoint] = []
@@ -545,7 +550,7 @@ final class LocalProxyServer {
         liveFlows[id] = ServerFlow(id: id, client: peer, destination: target.host,
                                    port: target.port, proxy: name, bytesUp: 0, bytesDown: 0,
                                    startedAt: now, lastActivity: now)
-        proxyTotals[name, default: (connections: 0, up: 0, down: 0)].connections += 1
+        proxyTotals[peer, default: [:]][name, default: (connections: 0, up: 0, down: 0)].connections += 1
         trafficLock.unlock()
         return id
     }
@@ -564,18 +569,23 @@ final class LocalProxyServer {
     }
 
     // The flow is over: it leaves the list of the open ones, and what it
-    // carried goes into the total of its proxy.
+    // carried goes into the total of its proxy, under its own client.
     private func closeFlow(_ flow: UInt64) {
         trafficLock.lock()
         defer { trafficLock.unlock() }
         guard let entry = liveFlows.removeValue(forKey: flow) else { return }
-        var total = proxyTotals[entry.proxy, default: (connections: 0, up: 0, down: 0)]
+        var byProxy = proxyTotals[entry.client] ?? [:]
+        var total = byProxy[entry.proxy, default: (connections: 0, up: 0, down: 0)]
         total.up += entry.bytesUp
         total.down += entry.bytesDown
-        proxyTotals[entry.proxy] = total
+        byProxy[entry.proxy] = total
+        proxyTotals[entry.client] = byProxy
     }
 
     // The traffic of the server, as the window shows it.
+    //
+    // Every client has a line of its own: the clients of the network are
+    // counted apart from each other and from the traffic of this machine.
     func trafficSnapshot() -> (flows: [ServerFlow], totals: [ServerProxyTotal]) {
         trafficLock.lock()
         defer { trafficLock.unlock() }
@@ -587,16 +597,26 @@ final class LocalProxyServer {
         // the two are of the same kind.
         var totals = proxyTotals
         for flow in liveFlows.values {
-            var total = totals[flow.proxy, default: (connections: 0, up: 0, down: 0)]
+            var byProxy = totals[flow.client] ?? [:]
+            var total = byProxy[flow.proxy, default: (connections: 0, up: 0, down: 0)]
             total.up += flow.bytesUp
             total.down += flow.bytesDown
-            totals[flow.proxy] = total
+            byProxy[flow.proxy] = total
+            totals[flow.client] = byProxy
         }
 
-        let rows = totals
-            .map { ServerProxyTotal(proxy: $0.key, connections: $0.value.connections,
-                                    bytesUp: $0.value.up, bytesDown: $0.value.down) }
-            .sorted { $0.proxy < $1.proxy }
+        var rows: [ServerProxyTotal] = []
+        for (client, byProxy) in totals {
+            for (proxy, total) in byProxy {
+                rows.append(ServerProxyTotal(client: client, proxy: proxy,
+                                             connections: total.connections,
+                                             bytesUp: total.up, bytesDown: total.down))
+            }
+        }
+        rows.sort { lhs, rhs in
+            if lhs.client != rhs.client { return lhs.client < rhs.client }
+            return lhs.proxy < rhs.proxy
+        }
         return (flows, rows)
     }
 

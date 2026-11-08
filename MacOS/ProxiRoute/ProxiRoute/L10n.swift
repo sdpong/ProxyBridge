@@ -366,6 +366,8 @@ enum L10n {
         "Auth": "认证",
         "Action": "动作",
         "Application": "应用程序",
+        "Source": "来源",
+        "This machine": "本机",
         "Bundle ID": "包标识",
         "Proto": "协议",
         "Protocol": "协议",
