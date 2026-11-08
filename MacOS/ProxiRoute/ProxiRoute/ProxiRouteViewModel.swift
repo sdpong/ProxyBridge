@@ -475,7 +475,8 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         case .off:
             stopLocalProxyServer()
             stopTunnelIfRunning()
-            // the one DNS proxy slot of macOS is of use to somebody else again
+            // the dns proxy is not a part of the tunnel: it has a switch of its
+            // own and it keeps running in this mode
             applyDNSProxy()
         case .route:
             stopLocalProxyServer()
@@ -1174,11 +1175,23 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // started, the ip -> name map stays empty, and every host name rule misses.
     func applyDNSProxy(attempt: Int = 0) {
         guard extensionReady else { return }
-        // The DNS proxy belongs to the traffic of this machine: it teaches the
-        // extension which name belongs to which address. When that traffic is
-        // not taken over, the proxy has nothing to do, and the one DNS proxy
-        // slot of macOS is better free for somebody else.
-        let enable = isDNSEnabled && runtimeMode.takesOverLocalTraffic
+        // The DNS proxy is a provider of its own and not a part of the tunnel:
+        // it answers the queries of the system and remembers which name belongs
+        // to which address.
+        //
+        // The running mode does not decide it. The map it builds is needed the
+        // moment the traffic of this machine is proxied, and the proxy server
+        // uses it as well, so it is of use in every mode - and the person asked
+        // for it with a switch of its own. The switch decides, the mode does
+        // not.
+        let enable = isDNSEnabled
+        // the entry can be turned off by the system at any time, and it is
+        // watched for as long as the person wants it
+        if enable {
+            startDNSCheckTimer()
+        } else {
+            stopDNSCheckTimer()
+        }
         let manager = NEDNSProxyManager.shared()
         manager.loadFromPreferences { [weak self] loadError in
             guard let self = self else { return }
@@ -1211,7 +1224,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                     }
                 }
             } else {
-                let note = L10n.t("DNS proxy is off (Enable DNS in the settings tab). It runs in the gateway mode only, and host name rules and send hostname do not work.")
+                let note = L10n.t("DNS proxy is off (Enable DNS in the settings tab). Host name rules and send hostname do not work.")
                 guard loadError == nil, ours, manager.isEnabled else {
                     DispatchQueue.main.async { self.addLog("INFO", note) }
                     return
@@ -1242,7 +1255,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // So the entry is looked at from time to time while the tunnel runs, and it
     // is written again when it is off.
     private func ensureDNSProxyEntry() {
-        guard isDNSEnabled, tunnelSession != nil else { return }
+        guard isDNSEnabled else { return }
         let now = Date()
         guard now.timeIntervalSince(lastDNSCheckAt) > dnsCheckInterval else { return }
         lastDNSCheckAt = now

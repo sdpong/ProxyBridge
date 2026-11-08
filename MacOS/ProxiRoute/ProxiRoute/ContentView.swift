@@ -235,7 +235,7 @@ struct ContentView: View {
     private var emptyFlowHint: String {
         switch viewModel.runtimeMode {
         case .off:
-            return L10n.t("The extension is stopped, so no connection of this machine is proxied. The DNS proxy stops with it. Switch to the gateway mode to see the connections here.")
+            return L10n.t("The extension is stopped, so no connection of this machine is proxied. Switch to the gateway mode to see the connections here.")
         case .server:
             return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
         case .route:

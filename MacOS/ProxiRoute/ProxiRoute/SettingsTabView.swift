@@ -176,16 +176,6 @@ struct SettingsTabView: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // The switch says what the person asked for. The DNS proxy
-                    // belongs to the traffic of this machine, so it only runs
-                    // in the gateway mode - and a switch that says "on" while
-                    // the proxy is off is a switch that lies.
-                    if viewModel.runtimeMode != .route {
-                        Text(L10n.t("The DNS proxy belongs to the traffic of this machine, so it runs in the gateway mode only. It is off now, and the host name rules do not work."))
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
             }
             .formStyle(.grouped)

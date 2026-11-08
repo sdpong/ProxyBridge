@@ -408,8 +408,8 @@ fill, center, move and resize, full screen tile) are renamed into the
 language of the app, and the grey items about tabs and window sets are
 taken out - this app has one window and no row of tabs.
 
-Everything else is in the **Settings** tab of the main window. The shortcut
-**⌘,** opens it.
+Everything else is in the **Settings** tab and the **Options** tab of the main
+window. The shortcut **⌘,** opens the settings.
 
 The row of tabs says what the app is doing right now, at its right end: the
 mode, and what it is doing in it - for example **Gateway · Proxied**. The two
@@ -419,8 +419,9 @@ something different under every mode.
 
 An empty table in the **Statistics** or the **Live Connections** tab says why
 it is empty: in the **Local** mode the extension is stopped, so no connection
-of this machine is proxied at all - and the DNS proxy stops with it. The DNS
-switch has nothing to do with the emptiness.
+of this machine is proxied at all. The DNS proxy has nothing to do with the
+emptiness - it is a provider of its own, it runs in every mode, and the map of
+names it builds is needed the moment the traffic of this machine is proxied.
 
 ### Menu Bar Controls
 
