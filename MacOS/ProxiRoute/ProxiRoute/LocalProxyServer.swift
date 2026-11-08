@@ -15,6 +15,36 @@ import Darwin
 // address and on one network card. See LocalProxySocket for why.
 final class LocalProxyServer {
 
+    // One connection of a client, with the traffic it has carried so far.
+    //
+    // The tables of the window - the statistics and the live connections - are
+    // fed by the system extension while the route mode is on. In the server
+    // mode the extension is stopped, and the traffic that goes through the app
+    // is the traffic of the clients of the network. The app counts that
+    // traffic itself, or the tables would be empty in the one mode where the
+    // app does the work itself.
+    struct ServerFlow {
+        let id: UInt64
+        // the address of the client, and not the name of a program: a client
+        // on the network has no program
+        let client: String
+        let destination: String
+        let port: Int
+        let proxy: String
+        var bytesUp: Int64
+        var bytesDown: Int64
+        let startedAt: Date
+        var lastActivity: Date
+    }
+
+    // The traffic that went through one proxy of the app.
+    struct ServerProxyTotal {
+        let proxy: String
+        let connections: Int
+        let bytesUp: Int64
+        let bytesDown: Int64
+    }
+
     // what happened when the server was started
     enum StartResult {
         case started(String)      // the address it listens on
@@ -29,6 +59,16 @@ final class LocalProxyServer {
     private var clientCount = 0
     // how many connections have been accepted, for the log
     private var acceptedCount = 0
+
+    // the traffic it has carried. it has a lock of its own, so that the
+    // threads of the clients do not wait for the lock of the settings.
+    private let trafficLock = NSLock()
+    // the connections that are open right now
+    private var liveFlows: [UInt64: ServerFlow] = [:]
+    // the number of the last flow, so that every flow has its own name
+    private var flowCounter: UInt64 = 0
+    // the traffic of every proxy the traffic went through
+    private var proxyTotals: [String: (connections: Int, up: Int64, down: Int64)] = [:]
 
     // the proxy list of the app, for the upstream that names one
     var proxyConfigs: [LocalProxyEndpoint] = []
@@ -148,6 +188,8 @@ final class LocalProxyServer {
                 continue
             }
 
+            let peer = LocalProxyServer.peerAddress(of: address)
+
             stateLock.lock()
             clientCount += 1
             acceptedCount += 1
@@ -161,7 +203,7 @@ final class LocalProxyServer {
             }
 
             let thread = Thread { [weak self] in
-                self?.handle(client: client)
+                self?.handle(client: client, peer: peer)
             }
             thread.stackSize = 512 * 1024
             thread.start()
@@ -176,7 +218,7 @@ final class LocalProxyServer {
 
     // MARK: - one client
 
-    private func handle(client fd: Int32) {
+    private func handle(client fd: Int32, peer: String) {
         defer {
             Darwin.close(fd)
             clientLeft()
@@ -189,15 +231,15 @@ final class LocalProxyServer {
             return
         }
         if byte == 0x05 {
-            handleSOCKS5(fd: fd)
+            handleSOCKS5(fd: fd, peer: peer)
         } else {
-            handleHTTP(fd: fd, first: byte)
+            handleHTTP(fd: fd, first: byte, peer: peer)
         }
     }
 
     // MARK: socks5
 
-    private func handleSOCKS5(fd: Int32) {
+    private func handleSOCKS5(fd: Int32, peer: String) {
         // the version byte was read already. what is left is the number of
         // the methods and the methods themselves.
         guard let head = LocalProxySocket.recvExact(fd, 1), head.count == 1 else { return }
@@ -218,7 +260,7 @@ final class LocalProxyServer {
 
         switch command {
         case 0x01:
-            connect(fd: fd, target: target)
+            connect(fd: fd, target: target, peer: peer)
         case 0x03:
             udpAssociate(fd: fd)
         default:
@@ -260,7 +302,7 @@ final class LocalProxyServer {
 
     // MARK: http
 
-    private func handleHTTP(fd: Int32, first: UInt8) {
+    private func handleHTTP(fd: Int32, first: UInt8, peer: String) {
         guard let head = LocalProxySocket.recvUntil(fd, Data("\r\n\r\n".utf8)) else { return }
         var text = String(decoding: [first] + head, as: UTF8.self)
         // the head that was read is the request, and it goes on to the far
@@ -280,7 +322,7 @@ final class LocalProxyServer {
                 _ = LocalProxySocket.sendAll(fd, Data("HTTP/1.1 400 Bad Request\r\n\r\n".utf8))
                 return
             }
-            connect(fd: fd, target: target, http: true)
+            connect(fd: fd, target: target, http: true, peer: peer)
             return
         }
 
@@ -303,12 +345,13 @@ final class LocalProxyServer {
         }
         // no answer of its own: the client gets the answer of the far side,
         // which is relayed to it
-        relay(client: fd, upstream: upstreamFD)
+        let flow = openFlow(peer: peer, target: target, upstream: upstream)
+        relay(client: fd, upstream: upstreamFD, flow: flow)
     }
 
     // MARK: the way out
 
-    private func connect(fd: Int32, target: LocalProxyTarget, http: Bool = false) {
+    private func connect(fd: Int32, target: LocalProxyTarget, http: Bool = false, peer: String) {
         // the choice reads the settings on its own: locking here as well
         // would be a lock inside a lock, and the second one would wait for
         // ever
@@ -340,7 +383,8 @@ final class LocalProxyServer {
         } else {
             reply(fd: fd, code: 0x00)
         }
-        relay(client: fd, upstream: upstreamFD)
+        let flow = openFlow(peer: peer, target: target, upstream: upstream)
+        relay(client: fd, upstream: upstreamFD, flow: flow)
     }
 
     // The upstream is decided by the setting: straight out, through one of
@@ -392,8 +436,13 @@ final class LocalProxyServer {
     // The traffic goes both ways until one of the sides stops. The idle
     // time is the limit of the wait: a client that goes away without
     // closing the connection does not stay in the list for ever.
-    private func relay(client fd: Int32, upstream upstreamFD: Int32) {
-        defer { Darwin.close(upstreamFD) }
+    private func relay(client fd: Int32, upstream upstreamFD: Int32, flow: UInt64?) {
+        defer {
+            Darwin.close(upstreamFD)
+            // the flow is over, and what it carried goes into the total of
+            // its proxy
+            if let flow { closeFlow(flow) }
+        }
         LocalProxySocket.clearTimeout(fd)
         LocalProxySocket.clearTimeout(upstreamFD)
 
@@ -419,6 +468,8 @@ final class LocalProxyServer {
             if fds[0].revents & Int16(POLLIN) != 0 {
                 guard let data = readSome(fd) else { break }
                 guard LocalProxySocket.sendAll(upstreamFD, data) else { break }
+                // what the client sends goes out to the far side
+                countBytes(flow, up: Int64(data.count))
                 lastActivity = Date()
             } else if fds[0].revents & (Int16(POLLHUP) | Int16(POLLERR)) != 0 {
                 break
@@ -426,6 +477,8 @@ final class LocalProxyServer {
             if fds[1].revents & Int16(POLLIN) != 0 {
                 guard let data = readSome(upstreamFD) else { break }
                 guard LocalProxySocket.sendAll(fd, data) else { break }
+                // and what comes back goes to the client
+                countBytes(flow, down: Int64(data.count))
                 lastActivity = Date()
             } else if fds[1].revents & (Int16(POLLHUP) | Int16(POLLERR)) != 0 {
                 break
@@ -468,6 +521,95 @@ final class LocalProxyServer {
             if r <= 0 { break }
         }
         relay.close()
+    }
+
+    // MARK: the traffic it carries
+
+    // The name a proxy is shown under. The names of the extension are used
+    // here as well, so that the table of the window reads the same way in
+    // both modes.
+    static func proxyName(_ upstream: LocalProxyUpstream) -> String {
+        switch upstream {
+        case .direct: return "Direct"
+        case .blocked: return "BLOCK"
+        case .proxy(let endpoint): return endpoint.name.isEmpty ? endpoint.label : endpoint.name
+        }
+    }
+
+    // A connection opens a flow, and the flow is closed when it is over.
+    private func openFlow(peer: String, target: LocalProxyTarget, upstream: LocalProxyUpstream) -> UInt64 {
+        let now = Date()
+        trafficLock.lock()
+        flowCounter += 1
+        let id = flowCounter
+        let name = LocalProxyServer.proxyName(upstream)
+        liveFlows[id] = ServerFlow(id: id, client: peer, destination: target.host,
+                                   port: target.port, proxy: name, bytesUp: 0, bytesDown: 0,
+                                   startedAt: now, lastActivity: now)
+        proxyTotals[name, default: (connections: 0, up: 0, down: 0)].connections += 1
+        trafficLock.unlock()
+        return id
+    }
+
+    // The bytes of a flow that is still open.
+    private func countBytes(_ flow: UInt64?, up: Int64 = 0, down: Int64 = 0) {
+        guard let flow else { return }
+        trafficLock.lock()
+        if var entry = liveFlows[flow] {
+            entry.bytesUp += up
+            entry.bytesDown += down
+            entry.lastActivity = Date()
+            liveFlows[flow] = entry
+        }
+        trafficLock.unlock()
+    }
+
+    // The flow is over: it leaves the list of the open ones, and what it
+    // carried goes into the total of its proxy.
+    private func closeFlow(_ flow: UInt64) {
+        trafficLock.lock()
+        defer { trafficLock.unlock() }
+        guard let entry = liveFlows.removeValue(forKey: flow) else { return }
+        var total = proxyTotals[entry.proxy, default: (connections: 0, up: 0, down: 0)]
+        total.up += entry.bytesUp
+        total.down += entry.bytesDown
+        proxyTotals[entry.proxy] = total
+    }
+
+    // The traffic of the server, as the window shows it.
+    func trafficSnapshot() -> (flows: [ServerFlow], totals: [ServerProxyTotal]) {
+        trafficLock.lock()
+        defer { trafficLock.unlock() }
+        let flows = liveFlows.values.sorted { $0.id > $1.id }
+        let totals = proxyTotals
+            .map { ServerProxyTotal(proxy: $0.key, connections: $0.value.connections,
+                                    bytesUp: $0.value.up, bytesDown: $0.value.down) }
+            .sorted { $0.proxy < $1.proxy }
+        return (flows, totals)
+    }
+
+    // The address of the client that connected.
+    //
+    // A client on the network has no program, so the address is what the
+    // window can say about it.
+    private static func peerAddress(of address: sockaddr_in6) -> String {
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let length = socklen_t(address.sin6_len)
+        var addr = address
+        let ok = withUnsafePointer(to: &addr) { pointer -> Int32 in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                getnameinfo(generic, length, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            }
+        }
+        guard ok == 0 else { return "?" }
+        var text = String(cString: host)
+        // a client that comes over ipv4 on a socket of ipv6 gets an address
+        // that says so: "::ffff:127.0.0.1". The plain address is what the
+        // person wants to read.
+        if text.hasPrefix("::ffff:") {
+            text = String(text.dropFirst("::ffff:".count))
+        }
+        return text
     }
 
     // MARK: what the log says

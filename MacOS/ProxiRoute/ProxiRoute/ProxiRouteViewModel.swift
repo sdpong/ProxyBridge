@@ -356,7 +356,18 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     @Published var localProxySettings = LocalProxySettings.load()
     @Published private(set) var localProxyStatus = ""
     @Published private(set) var localProxyRunning = false
+    // how many clients of the network are connected right now
+    @Published private(set) var localProxyClients = 0
     private let localProxyServer = LocalProxyServer()
+
+    // The traffic of the clients of the proxy server.
+    //
+    // The extension counts the traffic of this machine, and it is stopped in
+    // the server mode. The server counts the traffic of the clients itself,
+    // and these are the numbers the tables of the window show while it runs.
+    private var serverFlows: [LocalProxyServer.ServerFlow] = []
+    private var serverTotals: [LocalProxyServer.ServerProxyTotal] = []
+    private var serverTrafficTimer: Timer?
 
     private func loadDNSPolicySetting() {
         let d = UserDefaults.standard
@@ -552,6 +563,9 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 case .started(let address):
                     self.localProxyRunning = true
                     self.localProxyStatus = L10n.f("The proxy server listens on %@", address)
+                    // the traffic of the clients is shown in the tables of the
+                    // window, and the server is the one that has it
+                    self.startServerTrafficTimer()
                 case .failed(let reason):
                     self.localProxyRunning = false
                     self.localProxyStatus = reason
@@ -561,10 +575,49 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
 
     func stopLocalProxyServer() {
+        stopServerTrafficTimer()
         localProxyServer.stop()
         localProxyRunning = false
+        localProxyClients = 0
+        serverFlows = []
+        serverTotals = []
+        publishTraffic()
         localProxyStatus = L10n.t("The proxy server is off")
     }
+
+    // The traffic of the server is asked for once a second.
+    //
+    // The tables of the window show the traffic that is there, and in the
+    // server mode the server is the one that has it.
+    private func startServerTrafficTimer() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard self.serverTrafficTimer == nil else { return }
+            self.serverTrafficTimer = Timer.scheduledTimer(
+                withTimeInterval: self.serverTrafficInterval,
+                repeats: true
+            ) { [weak self] _ in
+                self?.pollServerTraffic()
+            }
+            self.pollServerTraffic()
+        }
+    }
+
+    private func stopServerTrafficTimer() {
+        serverTrafficTimer?.invalidate()
+        serverTrafficTimer = nil
+    }
+
+    private func pollServerTraffic() {
+        let snapshot = localProxyServer.trafficSnapshot()
+        serverFlows = snapshot.flows
+        serverTotals = snapshot.totals
+        localProxyClients = localProxyServer.connectionCount
+        publishTraffic()
+    }
+
+    // how often the traffic of the server is read
+    private let serverTrafficInterval: TimeInterval = 1.0
 
     // The rules of the app, in the shape the server needs. A client on the
     // network has no program, so the rules that name one are of no use to it.
@@ -1727,7 +1780,22 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
         var rows: [ProxyTraffic] = []
 
-        if !extensionTotals.isEmpty {
+        if runtimeMode == .server {
+            // The extension is stopped in the server mode, so the traffic of
+            // the clients is the traffic there is. The server counted it.
+            rows = serverTotals.map { total in
+                ProxyTraffic(
+                    id: total.proxy,
+                    proxy: total.proxy,
+                    connections: total.connections,
+                    bytesUp: total.bytesUp,
+                    bytesDown: total.bytesDown,
+                    // the server counts the bytes it relays, and a direct
+                    // connection is relayed as well
+                    bytesKnown: true
+                )
+            }
+        } else if !extensionTotals.isEmpty {
             // the numbers the extension counted itself. they are the ones that are right: the
             // app only knows the flows that were in the log, and a flow that ended before the
             // app started is not in it any more
@@ -1811,6 +1879,27 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // The flows that are open right now.
     private func publishLiveFlows() {
+        if runtimeMode == .server {
+            // the flows of the clients, counted by the server itself
+            let now = Date()
+            liveFlows = serverFlows.map { flow in
+                LiveFlow(
+                    id: flow.id,
+                    protocolName: "TCP",
+                    // a client on the network has no program, so its address
+                    // is what is said about it
+                    process: flow.client,
+                    destination: flow.destination,
+                    port: flow.port,
+                    proxy: flow.proxy,
+                    bytesUp: flow.bytesUp,
+                    bytesDown: flow.bytesDown,
+                    age: now.timeIntervalSince(flow.startedAt),
+                    idle: now.timeIntervalSince(flow.lastActivity)
+                )
+            }
+            return
+        }
         guard providerFlows.isEmpty else {
             liveFlows = providerFlows
             return

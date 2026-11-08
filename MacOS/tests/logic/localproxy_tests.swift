@@ -269,6 +269,29 @@ if case .failed(let reason)? = secondResult {
     check("the taken port is reported", false)
 }
 
+// the traffic of the clients is counted
+//
+// The tables of the window are fed by the extension while the route mode is
+// on, and the extension is stopped in the server mode. The server counts the
+// traffic of the clients itself, or the tables would be empty in the one
+// mode where the app does the work.
+var snapshot = server.trafficSnapshot()
+// the flows are closed when the far side goes away, so the totals are given
+// a moment to arrive
+for _ in 0..<20 {
+    snapshot = server.trafficSnapshot()
+    if snapshot.totals.first(where: { $0.proxy == "Direct" })?.connections ?? 0 >= 2 { break }
+    Thread.sleep(forTimeInterval: 0.1)
+}
+let direct = snapshot.totals.first { $0.proxy == "Direct" }
+check("the traffic of the clients is counted", direct != nil)
+check("both connections are counted", (direct?.connections ?? 0) >= 2)
+check("what the clients sent is counted", (direct?.bytesUp ?? 0) >= 10)
+check("what came back is counted", (direct?.bytesDown ?? 0) >= 10)
+check("the open connections leave the list when they are over", snapshot.flows.isEmpty)
+check("a direct connection is named Direct", LocalProxyServer.proxyName(.direct) == "Direct")
+check("a blocked connection is named BLOCK", LocalProxyServer.proxyName(.blocked) == "BLOCK")
+
 // the udp association of socks5
 //
 // The client opens an association over tcp, is told the port its datagrams
