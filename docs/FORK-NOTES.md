@@ -523,6 +523,53 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
   App 侧从日志读回来显示在 DNS 设置窗口里。
   **不能用 provider 消息通道**：没签名的构建那条通道是关的（日志是唯一出路）。
 
+### 规则只写 TCP 时，QUIC 会绕过代理（Dia 登录不上的第二个原因）
+
+- **现象**：同一条 Dia 规则、同一个代理，别的页面都正常，登录却报
+  “Something went wrong. Please try again.”。**和上面那条不是同一个原因**：
+  上面那条是「地址不是名字」，这条是「UDP 根本没有规则接」。
+- **根因**：浏览器优先用 QUIC（HTTP/3，udp/443）。规则的 `protocol` 写的是 `TCP` 时，
+  **没有任何规则匹配这条 UDP** —— 它落到最后的 DIRECT 规则，直接出机器。
+  网站看到的 IP 和这个程序其余流量（走代理）的国家不一样，
+  Cloudflare 判定为攻击，返回 403，页面里写着 “Sorry, you have been blocked”。
+- **证据**（Chromium netlog `--log-net-log`）：
+  登录请求 `POST https://account.diabrowser.engineering/signin/method?embed_flow=true&rebrand=true`
+  的响应是 `:status: 403`、`server: cloudflare`；
+  同一个地址用 `curl` 走 TCP 是 200，Dia 加 `--disable-quic` 也是 200。
+- **修法，两层**：
+  1. **UDP 跟随同一条 TCP 规则**（`extension/AppProxyProvider.swift` 的 `udpRuleChoice`）：
+     没有规则说 UDP 时，去问「这个程序的 TCP 规则」，它说往哪走，UDP 就往哪走。
+     日志写 `(udp follows the tcp rule)`，让人一眼看出这是回退来的。
+  2. **QUIC 兜底**：只写 TCP 的规则把 TCP 送进代理时，这个程序的 **udp/443 停掉**，
+     浏览器因此改用 TCP —— 而 TCP 走的是规则指定的那个代理，出口只有一个。
+     两条都要，因为「UDP 送进代理」还不等于「UDP 从代理出去」：
+     macOS 的透明代理有时不接管已经建立的 UDP 连接，
+     下游代理也可能只拿到地址、拿不到名字，于是按自己的规则走 —— 那就是第二个出口。
+- **规则写 `BOTH` 的用户不受影响**：那是明确说「UDP 也走代理」，不停。
+  规则写 `DIRECT` 也不停：程序本来就是直连，QUIC 直连是同一件事。
+- **还有一处没覆盖**：代理链和 HTTP 代理本来就带不动 UDP，它们的 UDP 一直直接出去，
+  QUIC 也一样。这两条路上没有「让它回落 TCP」的办法 ——
+  要停它们得再写一套直连转发，这轮没有做。
+- **三端默认值对齐**：Windows/Linux 新建规则默认 `BOTH`
+  （`Windows/gui/main.c` 的 `ProtoIdx`、`Linux/gui/gui_rules.c` 的 `RULE_PROTOCOL_BOTH`），
+  macOS 以前默认 `TCP`，现在也改成 `BOTH`。
+- **PPX 导入仍然写 TCP**：Proxifier 本身只代理 TCP（`docs/PPX-IMPORT.md`），
+  `<BlockUDP443>` 不导入；导入来的规则现在有上面那条兜底语义。
+
+### 切换运行模式不该重启 DNS 代理
+
+- **现象**：切换运行模式（本地 / 网关 / 代理服务器）之后的几秒里，
+  **所有名字解析失败**（Chromium netlog 里一片 `ERR_NAME_NOT_RESOLVED`），
+  刚打开的网页打不开；过几秒又好了。
+- **原因**：`applyRuntimeMode` 里调了 `applyDNSProxy()`，而 `applyDNSProxy`
+  会把 DNS 代理的配置**再写一遍**（`saveToPreferences`）—— macOS 于是把那个
+  provider 停掉再启动（扩展日志：`DNS proxy stopping: the provider was disabled (5)`
+  紧跟着 `DNS proxy starting`）。重启的那几秒里没有代理回答查询，名字就解析不了。
+- **这个调用本来就没有用**：DNS 代理有自己的开关（`toggleDNS`），
+  注释里自己写着「模式不决定它」。模式切换没有改这个开关，
+  却把它重启了一遍 —— 白白换来一个解析空窗。
+- **现在**：切模式不动 DNS 代理；开关变了（`toggleDNS`）才重新写它的配置。
+
 ### DNS 设置窗口：Save / Cancel 以前等于没做
 
 - **它是一个独立 Window，不是 sheet**：`Cancel` 只把旧值读回输入框，**窗口不关**；

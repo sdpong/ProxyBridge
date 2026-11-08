@@ -197,7 +197,7 @@ Proxifier 的 `Profile → Name Resolution` 对应 ProxyBridge 的 **DNS 策略�
 | Proxifier 的东西 | 为什么不做 |
 |---|---|
 | `<Options><Encryption mode="...">` | 流量加密。ProxyBridge 没有这一层 |
-| `<Options><BlockUDP443>` | QUIC 阻断。ProxyBridge 的 UDP 能不能走由 SOCKS5 代理本身决定 |
+| `<Options><BlockUDP443>` | 这个开关本身不导入：它是全局的，而 ProxiRoute 把它说成了规则的话 —— 只写 TCP 的规则会把该程序的 QUIC 停下，浏览器于是改用 TCP，那条 TCP 走的就是规则指定的代理（见 `docs/FORK-NOTES.md`）。UDP 能不能走由 SOCKS5 代理本身决定 |
 | `<Options><ConnectionLoopDetection>` | 连接环检测 |
 | `<Options><HandleDirectConnections>` | 「直连也接管」开关，与本 fork 的语义不同 |
 | `<Options><ProcessServices>` / `<ProcessOtherUsers>` | 限定只代理「服务进程」或「其他用户的进程」 |

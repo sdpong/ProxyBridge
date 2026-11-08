@@ -793,6 +793,13 @@ class AppProxyProvider: NETransparentProxyProvider {
         // destination of a udp flow is only known once its first datagram
         // arrives, so this is decided per datagram and not per flow.
         var directIfLocal = false
+        // the rule that took this socket, and whether it was the rule that
+        // names the tcp of this program. the log says which of the two it was
+        var ruleId: UInt32?
+        var ruleIsFallback = false
+        // whether the quic of this program is stopped. the browser then uses
+        // the tcp, which goes through the proxy the rule named
+        var blockQUIC = false
         // the local destinations that were written about already
         var loggedLocalDestinations = Set<String>()
         // the sockets that talk to a local address without a proxy
@@ -1902,7 +1909,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         let hasAnySocks5 = hasSocks5Proxy
         proxyLock.unlock()
 
-        let matched = findMatchingRule(bundleId: processPath, processName: processName, destination: "", port: 0, connectionProtocol: .udp, checkIpPort: false)
+        // The rule that takes the udp. A rule that names the udp wins; when none
+        // does, the rule that names the tcp of this program takes it as well,
+        // so that the QUIC of a browser goes the same way as its other traffic
+        // instead of around the proxy.
+        let matched = findMatchingUDPRule(bundleId: processPath, processName: processName)
         let matchedRule = matched?.rule
         // whether the rule names the programs it is for. it decides what the proxy
         // server is told about the traffic, and it is taken out here because the
@@ -1921,6 +1932,30 @@ class AppProxyProvider: NETransparentProxyProvider {
         // the proxy server itself out of the tunnel.
         let action = matchedRule?.action ?? globalAction
         let decidingRuleId = matchedRule?.ruleId
+        // a rule that names the udp is a rule about the udp; a rule that names
+        // the tcp of this program is used for the udp as well. the log says
+        // which of the two it was, so a user who asks why the quic of a
+        // browser went through the proxy gets an answer
+        let udpRuleIsFallback = matched?.isFallback ?? false
+
+        // Whether the quic of this program is stopped.
+        //
+        // The rule that took the udp is the tcp of the program, and it sends
+        // that tcp through a proxy. The quic of the same program is a second
+        // way out: the proxy is told the address of the destination and not
+        // always the name of it, so the proxy on the other end can only
+        // answer with the way out it has - which is not the one the rule
+        // asked for. The site then sees a different country than the rest of
+        // the traffic and refuses the sign-in.
+        //
+        // The rule is a rule about the program, so the quic of that program
+        // is stopped and the browser uses the tcp, which goes through the
+        // proxy the rule named. A rule that says "UDP" or "BOTH" is a rule
+        // about the udp as well, and then nothing is stopped: the user asked
+        // for the udp of that program to go through the proxy.
+        let blockQUIC = AppProxyProvider.blocksQUIC(ruleProtocol: matchedRule?.ruleProtocol,
+                                                    tookTheUDPByFallback: udpRuleIsFallback,
+                                                    action: action)
 
         // The traffic of the local network is not part of the global mode: a
         // proxy on the internet cannot answer for a server on this network.
@@ -1935,10 +1970,10 @@ class AppProxyProvider: NETransparentProxyProvider {
         if let action = action {
             switch action {
             case "DIRECT":
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: decidingRuleId)
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "Direct", rule: decidingRuleId, ruleIsFallback: udpRuleIsFallback)
                 return false
             case "BLOCK":
-                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "BLOCK", rule: decidingRuleId)
+                sendLogToApp(protocol: "UDP", process: displayName, destination: "unknown", port: "unknown", proxy: "BLOCK", rule: decidingRuleId, ruleIsFallback: udpRuleIsFallback)
                 // a handled flow that is never closed stays pinned in the extension
                 flow.closeReadWithError(nil)
                 flow.closeWriteWithError(nil)
@@ -1978,6 +2013,8 @@ class AppProxyProvider: NETransparentProxyProvider {
                                                proxyLabel: self.proxyLabel(socks5Config),
                                                username: socks5Config.username, password: socks5Config.password,
                                                directIfLocal: directIfLocal,
+                                               ruleId: decidingRuleId, ruleIsFallback: udpRuleIsFallback,
+                                               blockQUIC: blockQUIC,
                                                appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
                 }
                 return true
@@ -2026,11 +2063,21 @@ class AppProxyProvider: NETransparentProxyProvider {
                                        username: String?,
                                        password: String?,
                                        directIfLocal: Bool = false,
+                                       ruleId: UInt32? = nil,
+                                       ruleIsFallback: Bool = false,
+                                       blockQUIC: Bool = false,
                                        appIdentity: ProxyAppIdentity.Payload? = nil,
                                        allowAppIdRetry: Bool = true) {
         let key = udpPoolKey(programKey: programKey, socksHost: socksHost, socksPort: socksPort, username: username)
         let client = UDPClient(flow: clientFlow, displayName: displayName, programKey: programKey)
         client.directIfLocal = directIfLocal
+        // the rule that took this socket. it is kept on the socket so that the
+        // line about the destination can name the rule as well
+        client.ruleId = ruleId
+        client.ruleIsFallback = ruleIsFallback
+        // the quic of this program is stopped when the rule is about the tcp
+        // and the tcp goes through the proxy
+        client.blockQUIC = blockQUIC
 
         udpLock.lock()
         udpClients[ObjectIdentifier(clientFlow)] = client
@@ -2651,6 +2698,24 @@ class AppProxyProvider: NETransparentProxyProvider {
                 let destPort = UInt16(nwHost.port) ?? 0
                 guard destPort != 0 else { continue }
 
+                // The quic of this program is stopped here.
+                //
+                // The rule sends the tcp of this program through a proxy, and
+                // the quic is a second way out: the proxy is told the address
+                // of the destination and not always the name of it, so the
+                // proxy on the other end answers with a way out of its own.
+                // The site then sees a different country than the rest of the
+                // traffic and refuses the sign-in.
+                //
+                // The socket is closed instead of the datagram being dropped:
+                // the browser sees the quic fail at once and uses the tcp,
+                // which goes through the proxy the rule named.
+                if client.blockQUIC, destPort == 443 {
+                    self.logQUICStopped(process: client.displayName, destination: destHost, rule: client.ruleId)
+                    self.teardownUDPClient(client)
+                    return
+                }
+
                 // the destination is written about once, not once per datagram
                 var isNewDestination = false
                 udpLock.lock()
@@ -2663,7 +2728,8 @@ class AppProxyProvider: NETransparentProxyProvider {
                 udpLock.unlock()
                 if isNewDestination {
                     self.logUDPConnection(process: client.displayName, destination: destHost,
-                                          port: destPort, proxy: association.proxyLabel)
+                                          port: destPort, proxy: association.proxyLabel,
+                                          rule: client.ruleId, ruleIsFallback: client.ruleIsFallback)
                 }
 
                 // The traffic of the local network goes out directly. A proxy on
@@ -3427,11 +3493,160 @@ class AppProxyProvider: NETransparentProxyProvider {
 
         return wildcardRule
     }
+
+    // The rule that takes a udp flow of a program, and whether that rule was
+    // the one that names the udp or the one that names the tcp of the same
+    // program.
+    //
+    // A browser that prefers QUIC sends the request of a sign-in over udp/443.
+    // When every rule of that program says "TCP", no rule takes the udp, and
+    // the traffic falls through to the last rule - which usually says direct.
+    // The request then leaves the machine without the proxy, the site sees a
+    // different country than the rest of the traffic, and the sign-in fails
+    // with a cloudflare error while every other request of the same program
+    // works.
+    //
+    // So when no rule names the udp, the rules that name the tcp of the same
+    // program are asked as well. The rule that says "this program goes through
+    // that proxy" then means the program, not one of its two protocols: the
+    // udp goes the same way as the tcp.
+    //
+    // The answers, in the order they are asked for:
+    //   1. the rule that names this program and the udp
+    //   2. the rule that names this program and the tcp, when what it names
+    //      can carry udp (this is the fallback)
+    //   3. the rule that names everything and the udp
+    //
+    // A rule about a program says more about that program than a rule about
+    // everything, so the program wins over the wildcard. A rule that says
+    // "UDP" is never second best: a user who wrote one wants it to have the
+    // last word over the tcp of the same program.
+    static func udpRuleChoice(rules: [(rule: ProxyRule, matcher: ProxyRule.Matcher)],
+                               bundleId: String,
+                               processName: String?,
+                               canCarryUDP: (ProxyRule) -> Bool) -> (rule: ProxyRule, matcher: ProxyRule.Matcher, isFallback: Bool)? {
+        let flowProcess = ProxyRule.FlowProcess(bundleId: bundleId, processName: processName)
+
+        // the rule that names the tcp of this program
+        var tcpOfProgram: (rule: ProxyRule, matcher: ProxyRule.Matcher)? = nil
+        // the rule that names everything
+        var wildcard: (rule: ProxyRule, matcher: ProxyRule.Matcher)? = nil
+
+        for (rule, m) in rules {
+            guard rule.enabled else { continue }
+            // the rule speaks for the udp when it says both or when it says udp
+            let saysUDP = rule.ruleProtocol == .both || rule.ruleProtocol == .udp
+
+            if m.hasProcessFilter {
+                // a rule about a program. it is asked before the rules about
+                // everything, whatever the order of the list is
+                guard m.matchesProcess(flowProcess) else { continue }
+                if saysUDP {
+                    return (rule, m, false)
+                }
+                if rule.ruleProtocol == .tcp && tcpOfProgram == nil {
+                    tcpOfProgram = (rule, m)
+                }
+                continue
+            }
+
+            // a rule about everything. the udp of a program that has a rule of
+            // its own is not its business, so it is only kept as the last answer
+            if saysUDP && !m.hasHostFilter && !m.hasPortFilter && wildcard == nil {
+                wildcard = (rule, m)
+            }
+        }
+
+        // the tcp of this program takes its udp as well, but only when what it
+        // names can carry udp. a rule that names a chain or an http proxy
+        // cannot, and a rule that cannot do it is no reason to change the
+        // way the udp of that program goes
+        if let fallback = tcpOfProgram, canCarryUDP(fallback.rule) {
+            return (fallback.rule, fallback.matcher, true)
+        }
+
+        if let wild = wildcard {
+            return (wild.rule, wild.matcher, false)
+        }
+
+        return nil
+    }
+
+    // Whether the proxy of this rule can carry udp. only socks5 can: a chain
+    // and an http proxy cannot, and the udp of a rule that names one of them
+    // keeps the way it went before.
+    private func ruleCanCarryUDP(_ rule: ProxyRule) -> Bool {
+        let action = rule.action
+        if action == "DIRECT" || action == "BLOCK" { return true }
+        if ChainAction.isChain(action) { return false }
+        proxyLock.lock()
+        let config = storedProxyConfigs[action]
+        proxyLock.unlock()
+        guard let config = config else { return false }
+        return config.type.lowercased() == "socks5"
+    }
+
+    // Whether the quic of a program is stopped.
+    //
+    // The quic of a program whose tcp goes through a proxy is a second way
+    // out of the machine, and the way out it takes is not the one the rule
+    // asked for: the proxy is told the address of the destination and not
+    // always the name of it. A browser that prefers QUIC then sends the
+    // request of a sign-in over udp/443, the site sees a different country
+    // than the rest of the traffic, and the sign-in is refused.
+    //
+    // So the quic of such a program is stopped, and the browser uses the tcp,
+    // which goes through the proxy the rule named.
+    //
+    // A rule that says "UDP" or "BOTH" is a rule about the udp as well, and
+    // then the quic goes through the proxy like the user asked. A rule that
+    // sends the program out directly has no second way out to close: the
+    // quic goes out directly too.
+    static func blocksQUIC(ruleProtocol: RuleProtocol?, tookTheUDPByFallback: Bool, action: String?) -> Bool {
+        // a rule that names the udp is a rule about the udp
+        guard tookTheUDPByFallback else { return false }
+        guard ruleProtocol == .tcp else { return false }
+        // the global mode has no rule of its own: it is not about one program
+        guard let action = action else { return false }
+        // a program that goes out directly goes out directly
+        if action == "DIRECT" || action == "BLOCK" { return false }
+        return true
+    }
+
+    // The rule for a udp flow, and the rule that took it when the udp of that
+    // program was not named by any rule.
+    private func findMatchingUDPRule(bundleId: String, processName: String?) -> (rule: ProxyRule, matcher: ProxyRule.Matcher, isFallback: Bool)? {
+        rulesLock.lock()
+        let currentRules = rules
+        rulesLock.unlock()
+        if currentRules.isEmpty { return nil }
+
+        return AppProxyProvider.udpRuleChoice(rules: currentRules,
+                                             bundleId: bundleId,
+                                             processName: processName,
+                                             canCarryUDP: { [weak self] rule in
+            guard let self = self else { return false }
+            return self.ruleCanCarryUDP(rule)
+        })
+    }
     
-    // the rule that sent the traffic where it went is written with it. a user who
+    // The quic of a program is stopped.
+    //
+    // The line says why, because "the browser fell back to tcp" is not
+    // something a user can guess: the rule of the program says "TCP", and the
+    // quic is the second way out that the rule does not name.
+    private func logQUICStopped(process: String, destination: String, rule: UInt32?) {
+        let ruleText = rule.map { " (rule \($0))" } ?? ""
+        diag("QUIC stopped: \(process) -> \(destination):443\(ruleText), the rule sends its tcp through the proxy and the browser uses the tcp")
+        if trafficLoggingEnabled {
+            appendLog(.connection(proto: "UDP", process: process, destination: destination, port: "443", proxy: "QUIC stopped"))
+        }
+    }
+
+    // The rule that sent the traffic where it went is written with it. a user who
     // asks "why did this go direct" needs the number of the rule, not the name of
     // the proxy alone
-    private func sendLogToApp(protocol: String, process: String, destination: String, port: String, proxy: String, rule: UInt32? = nil) {
+    private func sendLogToApp(protocol: String, process: String, destination: String, port: String, proxy: String, rule: UInt32? = nil, ruleIsFallback: Bool = false) {
         // the connection is counted before the switch is looked at: the traffic log can be off
         // while the connection is still made, and the table in the app has to show it either way
         countConnection(proxy: proxy)
@@ -3443,7 +3658,10 @@ class AppProxyProvider: NETransparentProxyProvider {
         // extension made can be seen.
         let proto = `protocol`
         let ruleText = rule.map { " (rule \($0))" } ?? ""
-        diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)\(ruleText)")
+        // a rule that names the tcp of a program takes its udp as well. the log
+        // says so, because it is the one thing a user cannot guess
+        let fallbackText = ruleIsFallback ? " (udp follows the tcp rule)" : ""
+        diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)\(ruleText)\(fallbackText)")
     }
 
     // The connection of a udp flow.
@@ -3463,7 +3681,7 @@ class AppProxyProvider: NETransparentProxyProvider {
     private var udpLogWindows: [String: UDPLogWindow] = [:]
     private let udpLogLock = NSLock()
 
-    private func logUDPConnection(process: String, destination: String, port: UInt16, proxy: String) {
+    private func logUDPConnection(process: String, destination: String, port: UInt16, proxy: String, rule: UInt32? = nil, ruleIsFallback: Bool = false) {
         var summary: String? = nil
         udpLogLock.lock()
         var window = udpLogWindows[process] ?? UDPLogWindow()
@@ -3477,9 +3695,9 @@ class AppProxyProvider: NETransparentProxyProvider {
             udpLogWindows[process] = window
             udpLogLock.unlock()
             if let summary = summary {
-                self.sendUDPConnectionLine(process: process, destination: summary, port: 0, proxy: proxy)
+                self.sendUDPConnectionLine(process: process, destination: summary, port: 0, proxy: proxy, rule: rule, ruleIsFallback: ruleIsFallback)
             }
-            self.sendUDPConnectionLine(process: process, destination: destination, port: port, proxy: proxy)
+            self.sendUDPConnectionLine(process: process, destination: destination, port: port, proxy: proxy, rule: rule, ruleIsFallback: ruleIsFallback)
         } else {
             window.dropped += 1
             udpLogWindows[process] = window
@@ -3487,7 +3705,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
 
-    private func sendUDPConnectionLine(process: String, destination: String, port: UInt16, proxy: String) {
+    private func sendUDPConnectionLine(process: String, destination: String, port: UInt16, proxy: String, rule: UInt32? = nil, ruleIsFallback: Bool = false) {
         guard trafficLoggingEnabled else { return }
         appendLog(.connection(proto: "UDP", process: process, destination: destination, port: String(port), proxy: proxy))
         // the same line in the unified log. the app reads the activity log over the
@@ -3495,7 +3713,11 @@ class AppProxyProvider: NETransparentProxyProvider {
         // signed by a developer: this is then the only place where the decision the
         // extension made can be seen.
         let proto = "UDP"
-        diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)")
+        let ruleText = rule.map { " (rule \($0))" } ?? ""
+        // a rule that names the tcp of a program takes its udp as well. the log
+        // says so, because it is the one thing a user cannot guess
+        let fallbackText = ruleIsFallback ? " (udp follows the tcp rule)" : ""
+        diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)\(ruleText)\(fallbackText)")
     }
 }
 

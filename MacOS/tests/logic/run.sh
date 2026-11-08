@@ -16,6 +16,7 @@ run_test() {   # <test file> <extension sources...>
 }
 
 run_test matcher_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift" "$EXT/ProxyAppIdentity.swift" "$EXT/ChainHealth.swift" "$EXT/ChainHealthProbe.swift" "$EXT/RouteOptions.swift" "$EXT/UpstreamConnection.swift" "$EXT/InterfaceWatcher.swift" "$EXT/LocalAddress.swift" "$EXT/DirectUDPSession.swift"
+run_test udprule_tests.swift "$EXT/AppProxyProvider.swift" "$EXT/DNSMapStore.swift" "$EXT/DNSPolicy.swift" "$EXT/DNSParser.swift" "$EXT/ChainAction.swift" "$EXT/Socks4Request.swift" "$EXT/FlowFailure.swift" "$EXT/ProviderDiagnostics.swift" "$EXT/LiveFlowRegistry.swift" "$EXT/ProxyAppIdentity.swift" "$EXT/ChainHealth.swift" "$EXT/ChainHealthProbe.swift" "$EXT/RouteOptions.swift" "$EXT/UpstreamConnection.swift" "$EXT/InterfaceWatcher.swift" "$EXT/LocalAddress.swift" "$EXT/DirectUDPSession.swift"
 run_test dnsmap_tests.swift "$EXT/DNSMapStore.swift"
 run_test dnspolicy_tests.swift "$EXT/DNSPolicy.swift" "$APP/DNSPolicySettings.swift" "$APP/L10n.swift"
 run_test dnsparser_tests.swift "$EXT/DNSParser.swift"

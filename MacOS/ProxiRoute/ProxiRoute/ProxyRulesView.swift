@@ -529,7 +529,12 @@ struct RuleEditorView: View {
             separators: RulePatternValidator.hostSeparators,
             keepRangesTogether: true))
         _targetPorts = State(initialValue: existingRule?.targetPorts ?? "*")
-        _selectedProtocol = State(initialValue: existingRule?.ruleProtocol ?? "TCP")
+        // A new rule covers both protocols, like the rules of the other platforms.
+        // A rule that says "TCP" leaves the udp of the same program to another
+        // rule, and a browser that prefers QUIC then sends that traffic around
+        // the proxy: the sign-in of a site fails with a cloudflare error while
+        // every other request of the same program works.
+        _selectedProtocol = State(initialValue: existingRule?.ruleProtocol ?? "BOTH")
         // default to first proxy config if there is one, otherwise direct
         let defaultAction = existingRule?.action ?? viewModel.proxyConfigs.first?.id ?? "DIRECT"
         _selectedAction = State(initialValue: defaultAction)
@@ -620,6 +625,13 @@ struct RuleEditorView: View {
                             Text("BOTH").tag("BOTH")
                         }
                         .pickerStyle(.segmented)
+                        if selectedProtocol == "TCP" {
+                            HStack(alignment: .top, spacing: 4) {
+                                Image(systemName: "info.circle.fill").foregroundColor(.secondary)
+                                Text(L10n.t("A rule that says TCP covers the TCP of that program. Its QUIC (UDP/443) is stopped so that the browser uses the TCP and the traffic leaves the machine by the one way the rule named. A rule that says UDP or BOTH lets the QUIC through the proxy."))
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
                         if selectedProtocol == "UDP" || selectedProtocol == "BOTH" {
                             HStack(alignment: .top, spacing: 4) {
                                 Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.yellow)

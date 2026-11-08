@@ -493,6 +493,7 @@ enum L10n {
         "Target hosts and ports only apply to TCP. UDP rules match on the app (bundle id) only.": "目标主机和端口只对 TCP 有效。UDP 规则只能按程序（bundle id）匹配。",
         "UDP only works with SOCKS5 proxy. HTTP proxies do not support UDP.": "UDP 只能通过 SOCKS5 代理，HTTP 代理不支持 UDP。",
         "UDP only works with a SOCKS5 proxy. Not all SOCKS5 proxies support UDP by default, and SOCKS5 UDP support does not guarantee QUIC or HTTP/3 works - verify your proxy supports these separately.": "UDP 只能通过 SOCKS5 代理。并非所有 SOCKS5 代理默认都支持 UDP，而且支持 SOCKS5 UDP 并不保证 QUIC 或 HTTP/3 能用 —— 这些要另外确认。",
+        "A rule that says TCP covers the TCP of that program. Its QUIC (UDP/443) is stopped so that the browser uses the TCP and the traffic leaves the machine by the one way the rule named. A rule that says UDP or BOTH lets the QUIC through the proxy.": "写 TCP 的规则管的是这个程序的 TCP。它的 QUIC（UDP/443）会被停下，浏览器于是改用 TCP，流量只从规则指定的那一个出口出去。写 UDP 或 BOTH 的规则则让 QUIC 照常走代理。",
         "Matches the bundle id or the process name, one per line. Examples: com.apple.Safari; curl; Google Chrome Helper; *chrome*; *": "每行匹配 bundle id 或进程名。例如：com.apple.Safari; curl; Google Chrome Helper; *chrome*; *",
         "One per line. IP: 127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1   Domain: github.com; *.github.com; *google*": "每行一个。IP：127.0.0.1; 192.168.1.*; 10.0.0.1-10.0.0.254; ::1　域名：github.com; *.github.com; *google*",
         "One per line, for example 1.1.1.1 or 8.8.8.8:53. The first one that can be read answers every name that is not excluded.": "每行一个，例如 1.1.1.1 或 8.8.8.8:53。第一个可用的解析器会回答所有未被排除的域名。",

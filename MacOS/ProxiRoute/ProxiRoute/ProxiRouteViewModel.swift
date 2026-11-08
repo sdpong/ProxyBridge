@@ -487,9 +487,11 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // the routing options belong to the gateway mode, so they change with
         // the mode and the extension has to hear about it
         sendRouteOptionsToExtension(routeOptionsInEffect)
-        // the dns proxy is not a part of the tunnel: it has a switch of its
-        // own and it keeps running in every mode
-        applyDNSProxy()
+        // The dns proxy is not a part of the tunnel: it has a switch of its
+        // own, it keeps running in every mode, and the mode does not change
+        // it. Writing its configuration again would restart it, and for the
+        // seconds that it is restarting every name fails to resolve - so the
+        // mode switch leaves it alone.
 
         if mode.runsLocalProxyServer {
             if !localProxyRunning {
