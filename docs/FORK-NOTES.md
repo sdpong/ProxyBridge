@@ -654,33 +654,77 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
   **默认开**；关掉它就是原来的行为。
   这个键是**全局的**（不像 `closeToMenuBar` 那样跟着 profile 走），
   因为它是「这个 app 要不要在后台活着」，不是某一套配置的事。
-- **窗口怎么回来**：点 Dock 图标，或者菜单栏里的「Open ProxyBridge」。
-- **坑：SwiftUI 的 `WindowGroup` 不带 id 的话没法用 `openWindow` 重新打开**。
-  试过给它加 id（`WindowGroup(id: "main")` + `openWindow(id:)`），
-  结果**非正常退出（kill -9）后重启会出现两个窗口**：
-  系统按上次的状态恢复一个，SwiftUI 自己又开一个。
-  最后改成**app 侧强引用主窗口**（`AppDelegate.mainWindow` 从 weak 改成强），
-  关掉之后窗口对象还在，`makeKeyAndOrderFront` 就能把它叫回来。
+- **窗口怎么回来**：点 Dock 图标，或者菜单栏里的「Open ProxyBridge」，
+  或者在终端里 `open -a /Applications/ProxyBridge.app`。
+  最后这一条以前是**没用的**：窗口收进菜单栏之后 app 变成 accessory（没有 Dock 图标），
+  AppKit 在 reopen 时什么都不做，窗口再也回不来。
+  现在 `applicationShouldHandleReopen` 会把 `AppDelegate.mainWindow` 叫回来
+  （`makeKeyAndOrderFront`），并且顺手把 app 从 accessory 改回 regular。
+  **顺带修掉一个 SwiftUI 的坑**：`WindowGroup` 不带 id 时没法用 `openWindow` 重新打开，
+  试过加 id，结果非正常退出后重启会出现两个窗口（系统按上次状态恢复一个，
+  SwiftUI 自己又开一个）。最后是**app 侧强引用主窗口**（`AppDelegate.mainWindow`
+  从 weak 改成 strong），关掉之后窗口对象还在，叫得回来。
 - **`applicationShouldTerminateAfterLastWindowClosed` 必须一直返回 false**：
   它数的是**所有**窗口（包括菜单栏那个），macOS 26 上点开菜单再点外面
   看起来就像「最后一个窗口关了」，app 会自己退出（#233）。
 
-### 多语言：中文 / 英文（自己写的字典，不用 .lproj）
+### 多语言：中文 / 英文（自己写的字典，`.lproj` 只用来声明语言）
 
 - **两种语言**：中文（简体）和英文。**第一次启动跟随系统语言**，
   之后记住用户的选择（UserDefaults 里的 `appLanguage` 键）。
 - **在 Settings 菜单里切换**，切换后**所有打开的窗口立刻重绘**，不用关窗重开。
-- **翻译表在 `MacOS/ProxyBridge/ProxyBridge/L10n.swift`**，不是 `.lproj` / `.xcstrings`：
+- **翻译表在 `MacOS/ProxyBridge/ProxyBridge/L10n.swift`**，不是 `.xcstrings`：
   - 字典表**可以编进 ad-hoc 签名的二进制**，也可以在不改资源流程的前提下增删；
   - **key 就是英文原文本身**，没翻译的句子直接显示英文，不会露出一个 key；
   - `L10n.f(_:_:)` 处理带 `%@` 的插值句，`L10n.t(_:)` 处理整句。
 - **视图持有 `@ObservedObject private var loc = LocalizationManager.shared`**，
   `LocalizationManager` 是 `ObservableObject`，`@Published language` 一变，视图就重画。
-- **菜单里用 `Menu` + `Button`，不用 `Picker`**：系统菜单里的 `Picker` 子菜单
-  在自动化点击下很难点开，`Menu` + `Button`（带 checkmark）更可靠，也更好点。
+- **语言选项是菜单里的两个直接项**（`简体中文` / `English`），**不是子菜单**：
+  子菜单要靠鼠标驻留才展开，驻留时间不够就点不开——用户报的就是这个。
+  两个直接项点一下就中，没有驻留这回事。
 - **逻辑测试 `l10n_tests.swift` 会扫 app 源码**：把每个 `L10n.t(` / `L10n.f(` 用到的 key
   收集起来，核对翻译表里都有。漏一条不会让 app 崩（会退回英文），
   但会让翻译悄悄破个洞，测试就是堵这个洞的地方。
+- **翻译的边界**：**界面上的文字全部走 `L10n`**（窗口、表格、日志、导入提示、状态栏菜单），
+  但 **CLI 输出和代理检测器的技术输出保持英文**——
+  那是给脚本和管道看的，工具输出用英文是惯例，翻译它反而碍事。
+
+#### macOS 自己画的那些菜单，翻译要分两层做
+
+- **菜单栏顶层的四个标题（编辑 / 显示 / 窗口 / 帮助）是 SwiftUI 自己画的**，
+  不是从 `NSApp.mainMenu` 读的。改 `NSApp.mainMenu` 里那四个标题的字符串，
+  **屏幕上不会变**（用 `ZZZEDIT` 之类的标记试过：对象里是 ZZZ，屏幕还是 Edit）。
+- **菜单的条目（撤销 / 重做 / 剪切 / 拷贝 / 粘贴 / 删除 / 全选 / 自动填充 /
+  开始听写… / 表情与符号 / 最小化 / 缩放 / 前置全部窗口，以及应用菜单的条目）
+  确实是 AppKit 从 `NSApp.mainMenu` 画的**，所以**运行时改名是有效的**。
+  实现在 `MacOS/ProxyBridge/ProxyBridge/StandardMenuLocalizer.swift`：
+  监听 `NSMenu.didChangeItemNotification` 和 `NSApplication.didBecomeActiveNotification`，
+  每来一次就重新改名一遍，带 `applying` 重入保护。
+  - **必须靠通知，不能只改一次**：SwiftUI 会不停重建菜单栏（实测 780+ 次重建），
+    每次都把自己的英文标题写回去。监听通知才能保证「看的那一刻是对的」。
+  - `NSMenu.itemChangedNotification` **不存在**，正确的名字是 `NSMenu.didChangeItemNotification`。
+- **顶层的四个标题只能靠 app bundle 的语言**。做法是：
+  - app bundle 里放 `zh-Hans.lproj/Localizable.strings` 和 `en.lproj/Localizable.strings`，
+    **两个文件都是空的**（只有一句注释）——字符串仍然在 `L10n.swift` 里，
+    `.lproj` 只是**声明「这个 app 会说这两种语言」**，让 AppKit 知道去哪儿取；
+  - app 启动时把当前语言写到 `UserDefaults` 的 `AppleLanguages` 键上
+    （`main.swift` 最前面，`LocalizationManager.didSet` 里同步一次），
+    **app 里的选择因此排在系统语言前面**。
+  - **结果**：系统中文 + app 选 English → 菜单栏整条英文；
+    系统中文 + app 选中文 → 整条中文。实测截图确认过两种。
+- **bundle 的语言在进程启动时就被缓存了**（`Bundle.main.preferredLocalizations`
+  切完还是旧值），`CFBundleSetLocalization` 在现在的 SDK 里已经**不导出**（链接失败）。
+  所以**运行时切换语言后，那四个标题要下次启动才换过来**。
+  设置菜单里有一行灰字说明这件事（`The menus macOS draws itself ... next time`），
+  不然看起来就像切换没生效。
+
+#### `L10n.f` 的多参数 bug（改一次，所有插值句都对了）
+
+- 原来的 `L10n.f` 用 `replacingOccurrences(of: "%@", with: ...)` 换占位符，
+  **`replacingOccurrences` 会把所有 `%@` 都换成第一个参数**——
+  于是「A 到 B」这种两个名字的句子，两个位置都成了第一个名字。
+- 现在改成**按顺序替换第一个还没用掉的占位符**，参数多的时候不会串位。
+- `l10n_tests.swift` 里有 4 条断言专门盯这个。
 
 ### 代理链的健康检查（断则跳过，好则接回）
 
@@ -714,6 +758,45 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
 - **服务端拒绝认证时，不带包名重走一次链**（只重试一次，第二次失败就结束这条连接），
   这样「服务端不认这个用户名」不会变成「连不上」。
 - **纯逻辑在 `extension/ProxyAppIdentity.swift`**，`appid_tests.swift` 覆盖握手字节。
+
+#### 送什么包名：由**命中的那条规则**说了算，不是流量本身
+
+- **规则没有设定过滤程式（进程过滤）时**，送 **ProxyBridge 自己的包标识名**
+  （扩展的 bundle id，本 fork 是 `com.sdpong.proxybridge.extension`），
+  **进程名字段留空**。这就是**虚拟进程名字**：
+  代理看到的是「一大块 ProxyBridge 自己的流量」，而不是某个应用。
+  用户可以在代理那边按这一个名字写一条规则。
+- **规则有进程过滤时**，送**真实来源程序的 bundle id**（进程名一起送，HTTP 走第二个头）。
+- **是规则说了算，不是流量说了算**：同一个程序走过两条规则，
+  在第一条那里被当成那个程序，在第二条那里被当成 ProxyBridge——**规则怎么写就是这么回事**。
+- **实现**：`ProxyRule.Matcher.hasProcessFilter`（`!processAll`），
+  `findMatchingRule` 现在返回 `CompiledRule`（规则 + matcher）而不只是规则，
+  调用点取 `matched?.matcher.hasProcessFilter`。
+  `ProxyAppIdentity.payload(bundleId:processName:ruleHasProcessFilter:proxyBridgeBundleId:)` 是唯一的决定点。
+- **真机端到端验证过**（用假的 SOCKS5 / HTTP 服务器看它到底收到了什么）：
+
+  | 规则 | 代理收到的用户名字段 / 头 |
+  |---|---|
+  | 无进程过滤 | `com.sdpong.proxybridge.extension` |
+  | 进程过滤 `com.apple.*` | `com.apple.Safari`（HTTP 还带 `ProxyBridge-Process: Safari`） |
+
+- **Clash / mihomo 侧怎么用**：包名只能进 `inboundUser`（SOCKS5 用户名），
+  代理侧写 `IN-USER` 规则按应用分流。
+  **「让 Clash 的进程栏显示真实应用名」是做不到的**——mihomo 的 `metadata.Process`
+  只来自本机 socket 的属主，源码级别没有别的来源。
+  能做的是**包名进 `IN-USER` 规则**，Clash 的「规则/链路」栏会显示命中的那条 `IN-USER` 规则。
+
+#### 做这个验证时的两个坑
+
+- **回环地址（127.0.0.1）的流量根本进不了隧道**：
+  用 `curl http://127.0.0.1:18080/` 去试，连接直接出去了，扩展连日志都没有。
+  要试就用**非回环的目标**（比如 `1.2.3.4:18080`）——反正假代理根本不会真的去连目标。
+- **`curl` 会读 `no_proxy` 环境变量**，本机的 `no_proxy` 里有 `127.0.0.1`，
+  试回环地址时它会自己绕开隧道，看起来像是扩展没生效。
+  要试就得 `env -u no_proxy curl --noproxy "" ...`。
+- **GUI app 和 CLI 不能同时开**（都要控制同一个扩展），
+  做这种验证最省事的是用 `ProxyBridge --profile -` 喂一份临时 profile，
+  跑完 `Ctrl+C` 清规则，**用户的 profile 一个字都不会动**。
 
 ### 链的存盘格式：跳板走的是 `proxies`，不是 `proxyIds`
 
