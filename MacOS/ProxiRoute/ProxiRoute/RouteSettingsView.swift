@@ -9,14 +9,13 @@ struct RouteSettingsView: View {
     @ObservedObject var viewModel: ProxiRouteViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var interfaces = InterfaceList.shared
     @State private var settings = RouteSettings.load()
 
     var body: some View {
         VStack(spacing: 0) {
             headerView
             Divider()
-            formView
+            RouteSettingsForm(settings: $settings, viewModel: viewModel)
             Divider()
             footerView
         }
@@ -37,7 +36,39 @@ struct RouteSettingsView: View {
         .padding(.vertical, 12)
     }
 
-    private var formView: some View {
+    private var footerView: some View {
+        HStack {
+            Spacer()
+            Button(L10n.t("Cancel")) {
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+
+            Button(L10n.t("Save")) {
+                viewModel.updateRouteSettings(settings)
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+// The form of the routing options.
+//
+// It is a form of its own and not a part of a bigger one, so that it can sit
+// in the settings of the window as well as in the window of its own. The
+// settings it works on are handed in, and whoever owns them decides when they
+// are written.
+struct RouteSettingsForm: View {
+    @ObservedObject private var loc = LocalizationManager.shared
+    @Binding var settings: RouteSettings
+    @ObservedObject var viewModel: ProxiRouteViewModel
+
+    @StateObject private var interfaces = InterfaceList.shared
+
+    var body: some View {
         Form {
             Section {
                 Toggle(L10n.t("Global Mode"), isOn: $settings.globalMode)
@@ -104,24 +135,6 @@ struct RouteSettingsView: View {
             }
         }
         .formStyle(.grouped)
-    }
-
-    private var footerView: some View {
-        HStack {
-            Spacer()
-            Button(L10n.t("Cancel")) {
-                dismiss()
-            }
-            .keyboardShortcut(.cancelAction)
-
-            Button(L10n.t("Save")) {
-                viewModel.updateRouteSettings(settings)
-                dismiss()
-            }
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     // The kinds of the interfaces that are of use right now. The loopback is

@@ -33,12 +33,6 @@ struct ProxiRouteGUIApp: App {
     // language can be picked without restarting the app
     @StateObject private var localization = LocalizationManager.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    // when on, closing the window hides the app to the menu bar instead of quitting
-    @AppStorage("closeToMenuBar") private var closeToMenuBar = false
-    // when on (the default), closing the window leaves the app and the proxy
-    // running in the background. the window comes back from the dock icon or
-    // from the menu bar item.
-    @AppStorage("keepProxyRunningInBackground") private var keepProxyRunningInBackground = true
 
     var body: some Scene {
         WindowGroup {
@@ -75,47 +69,39 @@ struct ProxiRouteGUIApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }
-            
-            CommandMenu(L10n.t("Proxy")) {
-                Button(L10n.t("Proxy Settings...")) {
-                    openProxySettingsWindow()
+
+            // The edit menu is left to macOS.
+            //
+            // The system brings the editing commands itself - undo, redo,
+            // cut, copy, paste, delete and select all - and they are the
+            // ones that work with the log window and with the fields of the
+            // windows. On macOS 26 the system put a row of things into that
+            // menu as well that have nothing to do with editing: the contact
+            // card, the passwords, the credit card, dictation and the emoji
+            // picker. A proxy that shows a log has no use for any of them,
+            // and they are taken out (see StandardMenuLocalizer).
+            //
+            // The items are not put in again here: the system adds a set of
+            // its own whatever SwiftUI does, and two sets of undo and copy
+            // in one menu is a menu that nobody can read.
+
+            // The proxy menu and the settings menu are gone. Everything that
+            // was in them is a setting, and a setting lives in the window
+            // now - in the tab of the settings, where it can be seen and
+            // changed next to the thing it belongs to.
+            //
+            // What is left of the menu bar is what belongs to the documents
+            // (the profiles) and the help. A menu bar with three entries is
+            // read at a glance.
+            //
+            // The settings are still one shortcut away, and the shortcut is
+            // the one the proxy settings had before: the settings are what
+            // a person opens the app for most of the time.
+            CommandGroup(replacing: .appInfo) {
+                Button(L10n.t("Settings...")) {
+                    AppDelegate.shared?.openSettingsTab()
                 }
                 .keyboardShortcut(",", modifiers: .command)
-                
-                Button(L10n.t("Proxy Rules...")) {
-                    openProxyRulesWindow()
-                }
-                .keyboardShortcut("r", modifiers: .command)
-
-                Button(L10n.t("Proxy Chains...")) {
-                    openProxyChainsWindow()
-                }
-
-                Button(L10n.t("DNS Settings...")) {
-                    openDNSSettingsWindow()
-                }
-
-                Button(L10n.t("Routing...")) {
-                    openRoutingWindow()
-                }
-
-                Button(L10n.t("Proxy Server...")) {
-                    openLocalProxyServerWindow()
-                }
-
-                Divider()
-                
-                Toggle(L10n.t("Enable Traffic Logging"), isOn: Binding(
-                    get: { viewModel.isTrafficLoggingEnabled },
-                    set: { _ in viewModel.toggleTrafficLogging() }
-                ))
-
-                // saved in the profile. off: ProxiRoute does not use the system DNS proxy, so another
-                // tool can use it, and host name rules and send hostname stop working
-                Toggle(L10n.t("Enable DNS"), isOn: Binding(
-                    get: { viewModel.isDNSEnabled },
-                    set: { _ in viewModel.toggleDNS() }
-                ))
             }
 
             CommandMenu(L10n.t("Profile")) {
@@ -157,61 +143,6 @@ struct ProxiRouteGUIApp: App {
 
                 Button(L10n.t("Import Profile...")) {
                     importProfileFromFile()
-                }
-            }
-
-            CommandMenu(L10n.t("Settings")) {
-                Toggle(L10n.t("Close to Menu Bar"), isOn: $closeToMenuBar)
-                // closing the window does not stop the proxy. the app stays in
-                // the background and the tunnel keeps running until it is
-                // stopped in the window or the app is quit.
-                Toggle(L10n.t("Keep Proxy Running in Background"), isOn: $keepProxyRunningInBackground)
-                Toggle(L10n.t("Run at Startup"), isOn: Binding(
-                    get: { LoginItem.isEnabled },
-                    set: { LoginItem.setEnabled($0) }
-                ))
-
-                Divider()
-
-                // the language of the app. english and chinese for now
-                //
-                // the two languages are two entries of the menu and not a menu
-                // of their own. a submenu in a menu bar menu only opens when
-                // the pointer rests on it, and a person who moves the pointer
-                // too fast gets a submenu that closes again before it can be
-                // read. an entry that is right there cannot be missed.
-                Divider()
-
-                ForEach(L10n.Language.allCases) { language in
-                    Button {
-                        localization.language = language
-                    } label: {
-                        // a checkmark marks the language the app is in
-                        if language == localization.language {
-                            Label(language.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(language.displayName)
-                        }
-                    }
-                }
-
-                // the four menus of the menu bar are drawn by SwiftUI itself and
-                // not out of the menu, so they keep the language of the bundle
-                // until the app is started again. the person should know that,
-                // otherwise it looks like the change did not work
-                Divider()
-
-                Text(L10n.t("The menus macOS draws itself (Edit, View, Window, Help) change to the new language the next time ProxiRoute starts."))
-                    .foregroundColor(.secondary)
-
-                Divider()
-
-                Button(L10n.t("Approve ProxiRoute in System Settings...")) {
-                    openSystemSettingsForExtension()
-                }
-
-                Button(L10n.t("Take Out Older ProxiRoute Extensions...")) {
-                    showRemoveOldExtensionsHint()
                 }
             }
 
@@ -270,34 +201,10 @@ struct ProxiRouteGUIApp: App {
         .defaultPosition(.center)
     }
     
-    private func openProxySettingsWindow() {
-        NSApp.sendAction(#selector(AppDelegate.openProxySettings), to: nil, from: nil)
-    }
-    
-    private func openProxyRulesWindow() {
-        NSApp.sendAction(#selector(AppDelegate.openProxyRules), to: nil, from: nil)
-    }
-
-    private func openDNSSettingsWindow() {
-        NSApp.sendAction(#selector(AppDelegate.openDNSSettings), to: nil, from: nil)
-    }
-
-    private func openLocalProxyServerWindow() {
-        NSApp.sendAction(#selector(AppDelegate.openLocalProxyServer), to: nil, from: nil)
-    }
-
-    private func openRoutingWindow() {
-        NSApp.sendAction(#selector(AppDelegate.openRouting), to: nil, from: nil)
-    }
-
-    private func openProxyChainsWindow() {
-        NSApp.sendAction(#selector(AppDelegate.openProxyChains), to: nil, from: nil)
-    }
-    
     private func openAboutWindow() {
         NSApp.sendAction(#selector(AppDelegate.openAbout), to: nil, from: nil)
     }
-    
+
     private func openUpdateCheckWindow() {
         NSApp.sendAction(#selector(AppDelegate.openUpdateCheck), to: nil, from: nil)
     }
@@ -383,38 +290,8 @@ struct ProxiRouteGUIApp: App {
         alert.informativeText = L10n.t("Open System Settings > General > Login Items & Extensions > Network Extensions, and switch ProxiRoute on.\n\nUntil that is done, no traffic can be proxied.")
         alert.addButton(withTitle: L10n.t("Open System Settings"))
         alert.addButton(withTitle: L10n.t("Later"))
-        if alert.runModal() == .alertFirstButtonReturn { openSystemSettingsForExtension() }
-    }
-
-    // the pane where the system extension is switched on (macOS 13 and later keep the
-    // network extensions inside Login Items & Extensions)
-    private func openSystemSettingsForExtension() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
-        NSWorkspace.shared.open(url)
-    }
-
-    // An older ProxiRoute extension can stay registered under the same bundle id.
-    // The system may then bind the tunnel to it, and that one speaks an older
-    // protocol: the rules and the proxies never arrive, so nothing is proxied.
-    // Taking it out needs root, so the command goes on the clipboard and the user
-    // runs it in a terminal.
-    private func showRemoveOldExtensionsHint() {
-        let command = ExtensionDiagnosis.removeOldExtensionsCommand
-        let alert = NSAlert()
-        alert.messageText = L10n.t("Take the older ProxiRoute extensions out")
-        alert.informativeText = L10n.t("Run this in the Terminal. It removes the ProxiRoute extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxiRoute on in System Settings > General > Login Items & Extensions > Network Extensions.")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 44))
-        field.stringValue = command
-        field.isEditable = false
-        field.isSelectable = true
-        field.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        field.backgroundColor = NSColor.textBackgroundColor
-        alert.accessoryView = field
-        alert.addButton(withTitle: L10n.t("Copy Command"))
-        alert.addButton(withTitle: L10n.t("Close"))
         if alert.runModal() == .alertFirstButtonReturn {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
+            NSApp.sendAction(#selector(AppDelegate.openSystemSettingsForExtension), to: nil, from: nil)
         }
     }
 
@@ -550,8 +427,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: L10n.t("Open ProxiRoute"), action: #selector(showMainWindow), keyEquivalent: ""))
         menu.addItem(.separator())
-        // the same setting as in the Settings menu, so that it can be reached
-        // when the window is closed and the app only lives in the menu bar
+        // the settings live in the window, and this is the way to them when
+        // the window is not in front
+        menu.addItem(NSMenuItem(title: L10n.t("Settings..."), action: #selector(openSettingsTab), keyEquivalent: ","))
+        // what the app is doing right now. a person who looks into the menu
+        // bar wants to know whether the proxy is running, and that is one
+        // line instead of a guess.
+        let state = NSMenuItem(title: stateTitle, action: nil, keyEquivalent: "")
+        state.isEnabled = false
+        // the line is found again when the menu is built again
+        state.representedObject = "state"
+        menu.addItem(state)
+        menu.addItem(.separator())
+        // the same setting as in the settings of the window, so that it can be
+        // reached when the window is closed and the app only lives in the
+        // menu bar
         let keepItem = NSMenuItem(title: L10n.t("Keep Proxy Running in Background"),
                                   action: #selector(toggleKeepProxyRunning),
                                   keyEquivalent: "")
@@ -565,11 +455,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         statusItem = item
     }
 
+    // What the app is doing right now, in one line. The mode is the answer:
+    // it says whether the traffic of this machine is taken over, and the
+    // server says whether the clients of the network are waited for.
+    private var stateTitle: String {
+        guard let viewModel = AppDelegate.viewModel else { return L10n.t("Proxy: Off") }
+        switch viewModel.runtimeMode {
+        case .off:
+            return L10n.t("Proxy: Off")
+        case .route:
+            return viewModel.isProxyActive ? L10n.t("Proxy: On") : L10n.t("Proxy: Off")
+        case .server:
+            return viewModel.localProxyRunning ? L10n.t("Proxy Server: On") : L10n.t("Proxy Server: Off")
+        }
+    }
+
     // the checkmark of the menu item follows the setting, also when it is
     // changed in the Settings menu of the app
     func menuNeedsUpdate(_ menu: NSMenu) {
         for item in menu.items where item.action == #selector(toggleKeepProxyRunning) {
             item.state = keepProxyRunningInBackground ? .on : .off
+        }
+        // the line that says what the app is doing follows the mode
+        for item in menu.items where (item.representedObject as? String) == "state" {
+            item.title = stateTitle
         }
     }
 
@@ -577,7 +486,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         UserDefaults.standard.set(!keepProxyRunningInBackground, forKey: "keepProxyRunningInBackground")
     }
 
-    @objc private func showMainWindow() {
+    // The window comes back, and it shows the tab with the settings. The
+    // settings are the tab a person wants when they come to the app to
+    // change something.
+    @objc func openSettingsTab() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .proxirouteSelectTab, object: 3)
+    }
+
+    // The full screen of the window. It was in the view menu of macOS, and
+    // that menu is gone: everything in it was about a sidebar or a toolbar,
+    // and this app has none of them.
+    @objc func toggleFullScreen() {
+        guard let window = AppDelegate.mainWindow ?? NSApp.windows.first else { return }
+        window.toggleFullScreen(nil)
+    }
+
+    @objc func showMainWindow() {
         NSApp.setActivationPolicy(.regular)
         // the window is still there, it was only closed. bringing it back is
         // enough, swiftui does not make a second one.
@@ -587,6 +512,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    // the pane where the system extension is switched on (macOS 13 and later keep the
+    // network extensions inside Login Items & Extensions)
+    @objc func openSystemSettingsForExtension() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    // An older ProxiRoute extension can stay registered under the same bundle id.
+    // The system may then bind the tunnel to it, and that one speaks an older
+    // protocol: the rules and the proxies never arrive, so nothing is proxied.
+    // Taking it out needs root, so the command goes on the clipboard and the user
+    // runs it in a terminal.
+    @objc func takeOutOlderExtensions() {
+        let command = ExtensionDiagnosis.removeOldExtensionsCommand
+        let alert = NSAlert()
+        alert.messageText = L10n.t("Take the older ProxiRoute extensions out")
+        alert.informativeText = L10n.t("Run this in the Terminal. It removes the ProxiRoute extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxiRoute on in System Settings > General > Login Items & Extensions > Network Extensions.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 44))
+        field.stringValue = command
+        field.isEditable = false
+        field.isSelectable = true
+        field.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        field.backgroundColor = NSColor.textBackgroundColor
+        alert.accessoryView = field
+        alert.addButton(withTitle: L10n.t("Copy Command"))
+        alert.addButton(withTitle: L10n.t("Close"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

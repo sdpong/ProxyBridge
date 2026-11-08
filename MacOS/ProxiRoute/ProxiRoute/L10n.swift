@@ -95,6 +95,35 @@ enum L10n {
         "Run at Startup": "开机启动",
         "Approve ProxiRoute in System Settings...": "在系统设置中授权 ProxiRoute…",
         "Take Out Older ProxiRoute Extensions...": "移除较旧的 ProxiRoute 扩展…",
+        "Enter Full Screen": "进入全屏",
+        "Settings...": "设置…",
+        "Proxy: On": "代理：开",
+        "Proxy: Off": "代理：关",
+        "Proxy Server: On": "代理服务器：开",
+        "Proxy Server: Off": "代理服务器：关",
+
+        // the settings of the window, in the tab that carries them
+        "Running Mode": "运行模式",
+        "Do Not Take Over": "不接管",
+        "Route Mode": "路由模式",
+        "The route mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both.": "路由模式与代理服务器不能同时开启。两者都会让本机持续工作，而处理器要同时为两份开销买单。",
+        "The Traffic of This Machine": "本机流量",
+        "Proxied": "已接管",
+        "Not Proxied": "未接管",
+        "State": "状态",
+        "Not Running": "未运行",
+        "Nothing is taken over. The extension is stopped and no port is open, so this machine costs nothing.": "不接管任何流量。扩展停止，不监听任何端口，本机不产生任何开销。",
+        "The traffic of this machine goes out through the extension. The rules decide, and the global mode is the answer for the traffic no rule names.": "本机流量经扩展送出。规则优先决定去向，没有规则点名的流量由全局模式决定。",
+        "The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it.": "代理服务器等待网络中的客户端。本机流量不受影响，本机不为它付出开销。",
+        "The server listens when the running mode is Proxy Server. The route mode and the proxy server cannot be on at the same time.": "运行模式为「代理服务器」时服务器才监听。路由模式与代理服务器不能同时开启。",
+        "Logging and DNS": "日志与 DNS",
+        "The DNS proxy lets ProxiRoute learn which name belongs to which address. Host name rules and \"send hostname\" need it. Without it another program can use the one DNS proxy slot of macOS.": "DNS 代理让 ProxiRoute 知道哪个名字对应哪个地址。主机名规则和「发送主机名」需要它。关掉之后，macOS 唯一的 DNS 代理位置可以留给别的程序。",
+        "Language": "语言",
+        "The menus macOS draws itself (Edit, Window, Help) change to the new language the next time ProxiRoute starts.": "macOS 自己绘制的菜单（编辑、窗口、帮助）会在下次启动 ProxiRoute 时换成新的语言。",
+        "Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit.": "关闭窗口不会停止代理。App 留在后台，隧道继续运行，直到在这里停止，或者退出 App。",
+        "System Extension": "系统扩展",
+        "macOS asks for the approval of the system extension once. Until it is given, no traffic can be proxied.": "macOS 需要一次对系统扩展的授权。授权之前无法代理任何流量。",
+        "More Windows": "更多窗口",
 
         // the menus macOS brings itself. their titles come from the
         // localization of the app bundle, and this app has no bundle of
@@ -119,12 +148,6 @@ enum L10n {
         "Copy": "拷贝",
         "Paste": "粘贴",
         "Select All": "全选",
-        "AutoFill": "自动填充",
-        "Contact…": "通讯录…",
-        "Passwords…": "密码…",
-        "Credit Card…": "信用卡…",
-        "Start Dictation…": "开始听写…",
-        "Emoji & Symbols": "表情与符号",
 
         // the texts that were written before the app spoke the language of the
         // person. they are the log of the app and the notes of the windows.
@@ -263,7 +286,6 @@ enum L10n {
 
         "A rule that names no program says to the proxy that the traffic is ProxiRoute's own: the bundle id of the extension is the name it sees. A proxy that routes by program can then send that traffic its own way.": "没有指定程式的规则会告诉代理：这些流量是 ProxiRoute 自己的流量，代理看到的是扩展的包标识名。按程式分流的代理因此可以把这类流量送到它该去的地方。",
 
-        "The menus macOS draws itself (Edit, View, Window, Help) change to the new language the next time ProxiRoute starts.": "macOS 自己画的四个菜单（编辑、显示、窗口、帮助）会在下次启动 ProxiRoute 时换成新的语言。",
 
         // the buttons
         "Add": "添加",
@@ -331,7 +353,6 @@ enum L10n {
 
         // the routing: the switches that sit above the rules
         "Routing": "路由",
-        "Routing...": "路由…",
         "Global Mode": "全局模式",
         "Everything Goes Through": "全部流量走",
         "The traffic that no rule names goes through this proxy. A rule that names a program still decides.": "没有规则匹配的流量走这个代理。规则里写明了程序的，仍然按规则走。",
@@ -354,9 +375,7 @@ enum L10n {
 
         // the proxy server that runs inside the app
         "Proxy Server": "代理服务器",
-        "Proxy Server...": "代理服务器…",
         "Running": "运行中",
-        "Run the Proxy Server": "运行代理服务器",
         "Speaks": "协议",
         "SOCKS5 and HTTP": "SOCKS5 与 HTTP",
         "Carry UDP": "转发 UDP",

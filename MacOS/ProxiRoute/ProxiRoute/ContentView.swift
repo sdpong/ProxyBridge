@@ -1,6 +1,15 @@
 import SwiftUI
 import AppKit
 
+// The tab the window shows.
+//
+// The status bar item can ask for a tab: the settings are the tab a person
+// wants when the window comes back from the menu bar, and the tab is a piece
+// of the window that lives outside of it.
+extension Notification.Name {
+    static let proxirouteSelectTab = Notification.Name("com.sdpong.proxiroute.selectTab")
+}
+
 struct ContentView: View {
     // the language of the app: the strings are read through it, so a change of
     // the language redraws the window
@@ -20,6 +29,11 @@ struct ContentView: View {
             contentView
         }
         .frame(minWidth: 800, minHeight: 600)
+        .onReceive(NotificationCenter.default.publisher(for: .proxirouteSelectTab)) { note in
+            if let tab = note.object as? Int, tab >= 0, tab < 4 {
+                selectedTab = tab
+            }
+        }
     }
     
     // A notice the user has to act on: the system extension still waits for the
@@ -130,6 +144,12 @@ struct ContentView: View {
             TabButton(title: L10n.t("Activity Logs"), isSelected: selectedTab == 2) {
                 selectedTab = 2
             }
+            // the settings live here, and not in the menus of the menu bar:
+            // a menu is a place for the things that are done, not for the
+            // things that are set
+            TabButton(title: L10n.t("Settings"), isSelected: selectedTab == 3) {
+                selectedTab = 3
+            }
             Spacer()
         }
         .frame(height: 40)
@@ -148,6 +168,8 @@ struct ContentView: View {
                     onKill: viewModel.killFlow,
                     onKillProcess: viewModel.killFlows
                 )
+            case 3:
+                SettingsTabView(viewModel: viewModel)
             default:
                 ActivityLogsView(
                     logs: filteredActivityLogs,

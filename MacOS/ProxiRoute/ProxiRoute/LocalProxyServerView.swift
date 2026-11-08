@@ -11,13 +11,12 @@ struct LocalProxyServerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var settings = LocalProxySettings.load()
-    @State private var addresses = LocalAddresses.all()
 
     var body: some View {
         VStack(spacing: 0) {
             headerView
             Divider()
-            formView
+            LocalProxyServerForm(settings: $settings, viewModel: viewModel)
             Divider()
             footerView
         }
@@ -42,13 +41,58 @@ struct LocalProxyServerView: View {
         .padding(.vertical, 12)
     }
 
-    private var formView: some View {
+    private var footerView: some View {
+        HStack {
+            Spacer()
+            Button(L10n.t("Cancel")) {
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+
+            Button(L10n.t("Save")) {
+                viewModel.updateLocalProxySettings(settings)
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+// The form of the proxy server.
+//
+// Whether the server listens is not decided here. The running mode decides
+// it: the route mode and the proxy server cannot be on at the same time, and
+// the mode is the one switch. So the form only says what the server would do,
+// and the state line says what it does now.
+struct LocalProxyServerForm: View {
+    @ObservedObject private var loc = LocalizationManager.shared
+    @Binding var settings: LocalProxySettings
+    @ObservedObject var viewModel: ProxiRouteViewModel
+
+    @State private var addresses = LocalAddresses.all()
+
+    var body: some View {
         Form {
             Section {
-                Toggle(L10n.t("Run the Proxy Server"), isOn: Binding(
-                    get: { settings.enabled },
-                    set: { settings.enabled = $0 }
-                ))
+                HStack {
+                    Text(L10n.t("State"))
+                    Spacer()
+                    if viewModel.localProxyRunning {
+                        Text(L10n.t("Running"))
+                            .foregroundColor(.green)
+                    } else {
+                        Text(L10n.t("Not Running"))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                if viewModel.runtimeMode != .server {
+                    Text(L10n.t("The server listens when the running mode is Proxy Server. The route mode and the proxy server cannot be on at the same time."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
 
                 Picker(L10n.t("Speaks"), selection: $settings.protocolMode) {
                     Text("SOCKS5").tag(LocalProxySettings.Mode.socks5)
@@ -138,24 +182,6 @@ struct LocalProxyServerView: View {
             }
         }
         .formStyle(.grouped)
-    }
-
-    private var footerView: some View {
-        HStack {
-            Spacer()
-            Button(L10n.t("Cancel")) {
-                dismiss()
-            }
-            .keyboardShortcut(.cancelAction)
-
-            Button(L10n.t("Save")) {
-                viewModel.updateLocalProxySettings(settings)
-                dismiss()
-            }
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     // the upstream is a picker of three kinds, so it is kept in one string
