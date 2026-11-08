@@ -179,9 +179,13 @@ ProxiRoute leverages macOS Network Extension framework to intercept and route ne
 
 ### The Settings Tab
 
-Everything that is a setting lives in the **Settings** tab of the main window:
-the running mode, the routing options, the proxy server, the language and the
-switches of the app itself.
+The settings are in two tabs of the main window. The **Settings** tab holds
+what the app does with the traffic: the running mode, the routing options and
+the proxy server. The **Options** tab holds what is about the app itself: the
+language, the switches of the app, the system extension and the way to the
+windows that carry the rules. The two are not the same thing, and one person
+who wants to change the language should not have to walk past the routes to
+reach it.
 
 <p align="center">
   <img src="../img/proxy-setting-mac.png" alt="Proxy Settings Configuration" width="600"/>
@@ -198,16 +202,21 @@ and the processor of the machine pays for both. So the mode is **one choice**:
 
 | Mode | What happens |
 |------|--------------|
-| **Do Not Take Over** | The extension is stopped and no port is open. This machine costs nothing. |
-| **Route Mode** | The traffic of this machine goes out through the extension. The rules decide, and the global mode is the answer for the traffic no rule names. |
+| **Local** | The traffic of this machine goes on as it is. The extension is stopped and no port is open, so this machine costs nothing. |
+| **Gateway** | This machine is the gateway of the network: the traffic of the other terminals goes through it. The rules decide, and the global mode is the answer for the traffic no rule names. |
 | **Proxy Server** | The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it. |
+
+The **Gateway** mode is meant to be the way in for the other terminals of the
+network. Today the extension only takes the traffic of this machine over - the
+forwarding of the other terminals is not implemented yet, and the card says so
+in orange. The name is the plan, the card tells where the plan stands.
 
 The mode is the only switch for the proxy server: it listens when the mode is
 **Proxy Server**, and it is quiet otherwise.
 
 ### Proxy Settings
 
-Access proxy settings from **Settings → More Windows → Proxy Settings**, or
+Access proxy settings from **Options → Rule Setup → Proxy Settings**, or
 from the **Window** menu of the menu bar.
 
 #### Supported Proxy Types
@@ -246,7 +255,7 @@ Password: (optional)
 
 ### Proxy Rules
 
-Access proxy rules from **Settings → More Windows → Proxy Rules**, or from the
+Access proxy rules from **Options → Rule Setup → Proxy Rules**, or from the
 **Window** menu of the menu bar.
 
 <p align="center">
@@ -402,14 +411,16 @@ taken out - this app has one window and no row of tabs.
 Everything else is in the **Settings** tab of the main window. The shortcut
 **⌘,** opens it.
 
-The row of tabs says what the app is doing right now, at its right end: two
-lines, **the traffic of this machine** (taken over or not) and **the proxy
-server** (running or not). They used to sit in the settings, under the running
-mode, where they said the same thing under every mode.
+The row of tabs says what the app is doing right now, at its right end: the
+mode, and what it is doing in it - for example **Gateway · Proxied**. The two
+states of the app (the traffic of this machine, and the proxy server) live in
+the card of the running mode, under the option they belong to: they say
+something different under every mode.
 
 An empty table in the **Statistics** or the **Live Connections** tab says why
-it is empty: in the **Do Not Take Over** mode the extension is stopped, so no
-connection of this machine is proxied at all.
+it is empty: in the **Local** mode the extension is stopped, so no connection
+of this machine is proxied at all - and the DNS proxy stops with it. The DNS
+switch has nothing to do with the emptiness.
 
 ### Menu Bar Controls
 
