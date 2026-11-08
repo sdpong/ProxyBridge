@@ -221,20 +221,27 @@ jobs:
         exit $fail
       shell: bash
 
-    - name: Coverage report
-      # Measures the whole suite; reported, never gating the build.
-      continue-on-error: true
-      timeout-minutes: 40
-      run: |
-        sudo env BPFTOOL="$BPFTOOL" COV_DIR="$RUNNER_TEMP/pb-coverage" bash Linux/tests/coverage.sh
-      shell: bash
-
+    # The artifacts go before the coverage, not after it.
+    #
+    # The coverage measures the whole suite and it can take longer than the
+    # job has. A job that is killed before it uploads has built something that
+    # nobody can use, and that is how the Linux build went round after round
+    # without an artifact: the step before the upload ate the time of the job
+    # and the job was killed with the upload still waiting.
     - name: Upload artifacts
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: ProxyBridge-Linux-Build-${{ github.sha }}
         path: Linux/output/
         retention-days: 30
+
+    - name: Coverage report
+      # Measures the whole suite; reported, never gating the build.
+      continue-on-error: true
+      timeout-minutes: 8
+      run: |
+        sudo env BPFTOOL="$BPFTOOL" COV_DIR="$RUNNER_TEMP/pb-coverage" bash Linux/tests/coverage.sh
+      shell: bash
 
     - name: Display build summary
       run: |
