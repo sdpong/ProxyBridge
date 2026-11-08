@@ -32,7 +32,12 @@ What it does, in order:
 4. puts its own rules into the **translation part** of the ruleset — the
    filter refuses a file where a rule of the filtering part comes before a
    rule of the translation part, so they go in front of the first `anchor`
-   line and not at the end of the file;
+   line and not at the end of the file. The rules are written **twice**: once
+   straight into the translation part, and once into an anchor of their own
+   that is declared there. Which of the two macOS evaluates is not written
+   down anywhere, so the test does not have to know: the redirect works
+   either way. If the filter refuses the file with the anchor in it, the
+   plain one is loaded instead;
 5. lets the filter read the file first with `pfctl -n -f` (that only parses,
    it does not touch the filter), and stops there when the filter would
    refuse the file, so a broken file never reaches the machine;

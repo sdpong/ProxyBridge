@@ -43,6 +43,7 @@ HELPER_PID=""
 WAS_ENABLED="no"
 OLD_FORWARDING=""
 RULES_LOADED="no"
+RULE_MODE="anchors"
 FORWARDING_TURNED_ON="no"
 
 usage() {
@@ -175,12 +176,21 @@ say "   ok"
 # away from the redirect: it is the only way out of a redirect on macOS, and
 # the ports of the range are below the range the system hands out by itself
 # (49152 and up), so the traffic of the other programs is never caught by it.
+# The rules of this test are written in two places on purpose.
+#
+# The first one is straight into the translation part of the ruleset, the
+# second one into an anchor of its own that is declared there. Which of the
+# two macOS actually evaluates is not written down anywhere, and the two
+# rules say the same thing, so the test does not have to know: the redirect
+# works either way, and the helper of phase 2 will use both as well.
+mkdir -p "$TMP/anchor"
 cat > "$TMP/translation.rules" <<RULES
 # The traffic of the program itself must not be redirected again.
 no rdr on lo0 proto tcp from any port $SRC_PORT_BASE:$SRC_PORT_LAST to any
 # A connection to the test place goes to the program instead.
 rdr pass on lo0 proto tcp from any to 127.0.0.1 port $TARGET_PORT -> 127.0.0.1 port $REDIRECT_PORT
 RULES
+cp "$TMP/translation.rules" "$TMP/anchor/rdr"
 
 if [ "$FORWARD" = "1" ]; then
     SUBNET="$(python3 - "$LAN_IP" "$LAN_MASK" <<'PY'
@@ -204,6 +214,10 @@ rdr pass on $IFACE proto tcp from $SUBNET to any -> 127.0.0.1 port $REDIRECT_POR
 # comes through this machine.
 nat on $IFACE from $SUBNET to any -> ($IFACE)
 RULES
+    cat > "$TMP/anchor/nat" <<RULES
+no nat on $IFACE from $LAN_IP to any
+nat on $IFACE from $SUBNET to any -> ($IFACE)
+RULES
 fi
 
 # The rules of this test go into the rules of the machine.
@@ -212,12 +226,28 @@ fi
 # part: the filter refuses a file where a rule of the filtering part comes
 # before a rule of the translation part. That is why they are put in front
 # of the first filtering rule and not at the end of the file.
-python3 - "$BASE_RULES" "$TMP/translation.rules" "$TMP/main.rules" <<'PY'
+python3 - "$BASE_RULES" "$TMP/translation.rules" "$TMP/main.rules" "$TMP/anchor/rdr" "$TMP/anchor/nat" "${RULE_MODE:-anchors}" <<'PY'
+import os
 import re
 import sys
 
-base = open(sys.argv[1]).read().splitlines(keepends=True)
-ours = open(sys.argv[2]).read().splitlines(keepends=True)
+base_path, rules_path, out_path, rdr_path, nat_path = sys.argv[1:6]
+mode = sys.argv[6]
+
+base = open(base_path).read().splitlines(keepends=True)
+rules = open(rules_path).read().splitlines(keepends=True)
+
+# the anchors of this test, and the rules that go in them
+anchors = []
+loads = []
+if mode == 'anchors':
+    anchors = ['rdr-anchor "com.sdpong.spike/rdr"\n']
+    loads = ['load anchor "com.sdpong.spike/rdr" from "%s"\n' % rdr_path]
+    if os.path.exists(nat_path):
+        anchors.insert(0, 'nat-anchor "com.sdpong.spike/nat"\n')
+        loads.append('load anchor "com.sdpong.spike/nat" from "%s"\n' % nat_path)
+
+ours = anchors + rules
 
 out = []
 placed = False
@@ -231,7 +261,10 @@ for line in base:
 if not placed:
     out.extend(ours)
 
-open(sys.argv[3], 'w').writelines(out)
+# the anchors of this test are loaded at the end of the file
+out.extend(loads)
+
+open(out_path, 'w').writelines(out)
 PY
 
 step "the rules that will be loaded"
@@ -261,8 +294,41 @@ pfctl -f "$TMP/main.rules" > "$TMP/load.log" 2>&1
 LOAD_RC=$?
 sed 's/^/   /' "$TMP/load.log"
 if [ "$LOAD_RC" -ne 0 ]; then
-    say "   the filter refused the rules, so the machine was left alone."
-    exit 1
+    # the anchors of the test are a convenience, not the point of the test:
+    # if the filter refuses them, the rules without them are loaded
+    say "   the rules with an anchor of their own were refused, the plain ones are used"
+    python3 - "$BASE_RULES" "$TMP/translation.rules" "$TMP/main.rules.plain" "$TMP/anchor/rdr" "$TMP/anchor/nat" plain <<'PY'
+import os
+import re
+import sys
+
+base_path, rules_path, out_path, rdr_path, nat_path = sys.argv[1:6]
+mode = sys.argv[6]
+
+base = open(base_path).read().splitlines(keepends=True)
+rules = open(rules_path).read().splitlines(keepends=True)
+
+out = []
+placed = False
+for line in base:
+    text = line.strip()
+    if not placed and text and not text.startswith('#'):
+        if re.match(r'^(anchor|pass|block|match)\b', text):
+            out.extend(rules)
+            placed = True
+    out.append(line)
+if not placed:
+    out.extend(rules)
+
+open(out_path, 'w').writelines(out)
+PY
+    pfctl -f "$TMP/main.rules.plain" > "$TMP/load2.log" 2>&1
+    LOAD_RC=$?
+    sed 's/^/   /' "$TMP/load2.log"
+    if [ "$LOAD_RC" -ne 0 ]; then
+        say "   the filter refused the rules as well, so the machine was left alone."
+        exit 1
+    fi
 fi
 RULES_LOADED="yes"
 pfctl -E 2>&1 | sed 's/^/   /'
