@@ -70,6 +70,22 @@ struct ProxiRouteGUIApp: App {
         .commands {
             CommandGroup(replacing: .newItem) { }
 
+            // The view menu is emptied at the source.
+            //
+            // macOS 26 puts a view menu into the menu bar of every app that
+            // has a toolbar, and it is filled with the commands of the toolbar
+            // and of the sidebar. This app has a toolbar with a title in it
+            // and no sidebar, so the menu is a list of things that are not
+            // there. Taking the commands out empties the menu.
+            //
+            // The menu itself is hidden by StandardMenuLocalizer, and it has
+            // to be hidden there: taking a menu item out of the menu bar at
+            // runtime does not work, because SwiftUI builds the menu bar
+            // again as soon as it is touched, and the view menu is in it again
+            // a moment later.
+            CommandGroup(replacing: .toolbar) { }
+            CommandGroup(replacing: .sidebar) { }
+
             // The edit menu is left to macOS.
             //
             // The system brings the editing commands itself - undo, redo,

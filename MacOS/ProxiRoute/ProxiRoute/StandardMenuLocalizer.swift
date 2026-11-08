@@ -193,7 +193,11 @@ enum StandardMenuLocalizer {
         guard let menu = NSApp.mainMenu else { return }
 
         // the menus of the menu bar
-        for item in menu.items {
+        //
+        // The menus that are hidden are left alone: nobody sees them, and a
+        // change of them is a change of the menu bar that SwiftUI answers by
+        // building the menu bar again.
+        for item in menu.items where !item.isHidden {
             if let title = topLevelTitles.first(where: { $0.matches(item.title) }) {
                 setTitle(item, title.text)
             }
@@ -220,25 +224,25 @@ enum StandardMenuLocalizer {
         pruneWindowMenu(menu)
 
         // the view menu goes, and what is in it comes to the window menu
-        removeViewMenu(menu)
+        hideViewMenu(menu)
         putWindowItems(menu)
 
         // the edit menu goes as well. the keys are still there - see
         // installEditShortcuts - but a menu that is a list of keys is a menu
         // nobody opens.
-        removeEditMenu(menu)
+        hideEditMenu(menu)
 
         // What the menu bar looks like right now. It is written only when it
         // changed, because the names of the menus are different on every
         // system and the log is the place where that shows.
-        let titles = menu.items.map { $0.title }.joined(separator: " | ")
+        let titles = menu.items.filter { !$0.isHidden }.map { $0.title }.joined(separator: " | ")
         if titles != lastTitles {
             lastTitles = titles
             NSLog("[ProxiRoute] the menu bar: %@", titles)
         }
 
         // and what is in the menus that were worked on
-        for item in menu.items where isEditMenu(item) || isWindowMenu(item) {
+        for item in menu.items where !item.isHidden && (isEditMenu(item) || isWindowMenu(item)) {
             guard let submenu = item.submenu else { continue }
             let entries = submenu.items.map { $0.title }.joined(separator: " | ")
             let line = "\(item.title): \(entries)"
@@ -265,17 +269,26 @@ enum StandardMenuLocalizer {
         }
     }
 
-    // Removes the view menu.
+    // Hides the view menu.
     //
     // Everything in it was about a sidebar, a toolbar or a tab bar, and this
     // app has none of them. The one thing that was of use - the full screen -
     // is put into the window menu, so that there is one menu for the window
     // and not two.
-    private static func removeViewMenu(_ menu: NSMenu) {
-        for (index, item) in menu.items.enumerated() {
+    //
+    // The menu is hidden and not taken out, and the reason is that SwiftUI
+    // watches the menu bar. A menu item that is taken out is a change of the
+    // menu bar, and SwiftUI answers a change of the menu bar by building it
+    // again - with the view menu in it. The menu was taken out, SwiftUI put
+    // it back a moment later, and the two of them kept at it until somebody
+    // looked at the screen.
+    //
+    // A hidden item is not a change of the menu bar. SwiftUI does not notice
+    // it, and the menu bar keeps the four menus that the app has.
+    private static func hideViewMenu(_ menu: NSMenu) {
+        for item in menu.items {
             guard item.title == "View" || item.title == L10n.t("View") || item.title == "显示" else { continue }
-            menu.removeItem(at: index)
-            return
+            item.isHidden = true
         }
     }
 
@@ -326,16 +339,19 @@ enum StandardMenuLocalizer {
         }
     }
 
-    // Removes the edit menu.
+    // Hides the edit menu.
     //
     // The menu itself is only a list of the editing keys, and a proxy that
     // shows a log has nothing to edit. The keys keep working: they are
     // answered by the first responder, and the first responder is looked at
     // by installEditShortcuts.
-    private static func removeEditMenu(_ menu: NSMenu) {
-        for (index, item) in menu.items.enumerated() where isEditMenu(item) {
-            menu.removeItem(at: index)
-            return
+    //
+    // The menu is hidden and not taken out, for the same reason as the view
+    // menu: taking a menu out is a change of the menu bar, and SwiftUI
+    // answers it by building the menu bar again.
+    private static func hideEditMenu(_ menu: NSMenu) {
+        for item in menu.items where isEditMenu(item) {
+            item.isHidden = true
         }
     }
 
