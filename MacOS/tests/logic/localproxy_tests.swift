@@ -396,6 +396,32 @@ check("an url is read", LocalProxyTarget.parse(url: "http://example.com/x") == L
 check("an url with a port is read", LocalProxyTarget.parse(url: "http://example.com:8080/x") == LocalProxyTarget(host: "example.com", port: 8080))
 check("a connect line is read", LocalProxyTarget.parse(hostPort: "example.com:443") == LocalProxyTarget(host: "example.com", port: 443))
 
+// the traffic of a connection that is still open
+//
+// The bytes of a connection only go into the totals when it ends, so a table
+// that showed the totals alone would show the traffic that is over and not
+// the traffic that is running. The extension counts it the same way for the
+// traffic of this machine, and the two tables are shown together.
+if let client = connectLocal(port: settings.port) {
+    let request = "GET http://127.0.0.1:\(echo.port)/open HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+    check("the request of the open connection is sent", sendBytes(client, Array(request.utf8)))
+    _ = readSome(client, 64)
+    var open = server.trafficSnapshot()
+    for _ in 0..<20 {
+        open = server.trafficSnapshot()
+        let row = open.totals.first { $0.proxy == "Direct" }
+        if (row?.bytesUp ?? 0) >= 10 { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    let openDirect = open.totals.first { $0.proxy == "Direct" }
+    check("the open connection is counted", (openDirect?.connections ?? 0) >= 1)
+    check("what the open connection sent is counted", (openDirect?.bytesUp ?? 0) >= 10)
+    check("the open connection is in the list of the open ones", !open.flows.isEmpty)
+    Darwin.close(client)
+} else {
+    check("the client can reach the server", false)
+}
+
 server.stop()
 echo.stop()
 

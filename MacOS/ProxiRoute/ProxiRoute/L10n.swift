@@ -128,8 +128,6 @@ enum L10n {
 
         // the traffic of the proxy server, and the line in the tab bar
         "Clients: %@": "客户端：%@",
-        "No traffic from the clients yet": "还没有客户端的流量",
-        "The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.": "代理服务器转发客户端的流量。客户端一连上，这里就会出现记录。",
 
         // the tables are empty for a different reason in every mode, and the
         // reason is worth saying
@@ -137,6 +135,11 @@ enum L10n {
         "The traffic of this machine and of the other terminals goes through the proxy. Every proxy the traffic goes through gets a line here": "本机和其他终端的流量走代理。流量经过的每个代理都会在这里占一行。",
         "The traffic of this machine goes through the proxy. Connections that are proxied show up here": "本机的流量走代理。被代理的连接会出现在这里。",
         "The traffic of this machine and of the other terminals goes through the proxy. Connections that are proxied show up here": "本机和其他终端的流量走代理。被代理的连接会出现在这里。",
+
+        // the server mode carries two kinds of traffic: the one of this
+        // machine, and the one of the clients of the network
+        "The traffic of this machine goes through the tunnel, and the traffic of the clients goes through the proxy server. Both leave the machine by the proxies of the rules, and every proxy gets a line here": "本机的流量走隧道，客户端的流量走代理服务器。两者都按规则的代理出去，每个代理在这里占一行。",
+        "The connections of this machine and of the clients of the network show up here. This machine is a client of its own proxy as well": "本机和网络里客户端的连接都显示在这里。本机也是自己代理的一个客户端。",
 
         // the menus macOS brings itself. their titles come from the
         // localization of the app bundle, and this app has no bundle of

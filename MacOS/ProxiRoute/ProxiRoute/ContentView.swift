@@ -204,10 +204,8 @@ struct ContentView: View {
     // extension is stopped.
     private var emptyTrafficTitle: String {
         switch viewModel.runtimeMode {
-        case .local, .gateway:
+        case .local, .gateway, .server:
             return L10n.t("No traffic yet")
-        case .server:
-            return L10n.t("No traffic from the clients yet")
         }
     }
 
@@ -218,16 +216,14 @@ struct ContentView: View {
         case .gateway:
             return L10n.t("The traffic of this machine and of the other terminals goes through the proxy. Every proxy the traffic goes through gets a line here")
         case .server:
-            return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
+            return L10n.t("The traffic of this machine goes through the tunnel, and the traffic of the clients goes through the proxy server. Both leave the machine by the proxies of the rules, and every proxy gets a line here")
         }
     }
 
     private var emptyFlowTitle: String {
         switch viewModel.runtimeMode {
-        case .local, .gateway:
+        case .local, .gateway, .server:
             return L10n.t("No active connections")
-        case .server:
-            return L10n.t("No traffic from the clients yet")
         }
     }
 
@@ -238,7 +234,7 @@ struct ContentView: View {
         case .gateway:
             return L10n.t("The traffic of this machine and of the other terminals goes through the proxy. Connections that are proxied show up here")
         case .server:
-            return L10n.t("The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.")
+            return L10n.t("The connections of this machine and of the clients of the network show up here. This machine is a client of its own proxy as well")
         }
     }
 

@@ -200,7 +200,25 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // A flow that is proxied right now. The extension reports the ones that are open, so the
     // app can list them and terminate one that hangs.
     struct LiveFlow: Identifiable {
+        // Where the flow comes from.
+        //
+        // The traffic of this machine goes through the tunnel, and the traffic
+        // of the other terminals of the network goes through the proxy server.
+        // This machine is a client of its own proxy as well, so both are
+        // listed together - but they are closed in different places.
+        enum Origin {
+            // the traffic of this machine, carried by the tunnel
+            case machine
+            // the traffic of a client of the network, carried by the proxy server
+            case client
+        }
+        // the id in the table. the two kinds of flow come out of two places
+        // that both count from one, so the ids of the clients are put in a
+        // range of their own
         let id: UInt64
+        // the id inside the place the flow comes from
+        let originId: UInt64
+        let origin: Origin
         let protocolName: String
         let process: String
         let destination: String
@@ -210,6 +228,15 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         let bytesDown: Int64
         let age: TimeInterval
         let idle: TimeInterval
+
+        // The id a flow of a client of the network gets in the table.
+        //
+        // The extension and the proxy server count their flows each from one,
+        // so the same number can be a flow of this machine and a flow of a
+        // client at the same time. The clients get the top half of the range.
+        static func clientTableId(_ id: UInt64) -> UInt64 {
+            return id | 0x8000_0000_0000_0000
+        }
     }
 
     // What one proxy carried: how many connections went through it and how many bytes it carried.
@@ -362,9 +389,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // The traffic of the clients of the proxy server.
     //
-    // The extension counts the traffic of this machine, and it is stopped in
-    // the server mode. The server counts the traffic of the clients itself,
-    // and these are the numbers the tables of the window show while it runs.
+    // The extension counts the traffic of this machine, and it runs in every
+    // mode. The server counts the traffic of the clients itself. In the
+    // server mode both are shown together: this machine is a client of its
+    // own proxy as well.
     private var serverFlows: [LocalProxyServer.ServerFlow] = []
     private var serverTotals: [LocalProxyServer.ServerProxyTotal] = []
     private var serverTrafficTimer: Timer?
@@ -1800,20 +1828,12 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         var rows: [ProxyTraffic] = []
 
         if runtimeMode == .server {
-            // The extension is stopped in the server mode, so the traffic of
-            // the clients is the traffic there is. The server counted it.
-            rows = serverTotals.map { total in
-                ProxyTraffic(
-                    id: total.proxy,
-                    proxy: total.proxy,
-                    connections: total.connections,
-                    bytesUp: total.bytesUp,
-                    bytesDown: total.bytesDown,
-                    // the server counts the bytes it relays, and a direct
-                    // connection is relayed as well
-                    bytesKnown: true
-                )
-            }
+            // The traffic of this machine goes through the tunnel, and the
+            // traffic of the clients of the network goes through the proxy
+            // server. Both leave the machine by the proxies of the rules, so
+            // they are counted together: this machine is a client of its own
+            // proxy as well.
+            rows = mergedTrafficRows()
         } else if !extensionTotals.isEmpty {
             // the numbers the extension counted itself. they are the ones that are right: the
             // app only knows the flows that were in the log, and a flow that ended before the
@@ -1872,6 +1892,50 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         publishLiveFlows()
     }
 
+    // The rows of the traffic when the proxy server runs: the traffic of this
+    // machine, counted by the extension, and the traffic of the clients of the
+    // network, counted by the server, counted together per proxy.
+    //
+    // They are the same traffic as far as the way out is concerned: both go
+    // through the proxies of the rules. This machine is a client of its own
+    // proxy as well, and the table says what each proxy carried for both.
+    private func mergedTrafficRows() -> [ProxyTraffic] {
+        // the traffic of this machine, counted by the extension
+        let machine = extensionTotals.map { total in
+            TrafficMerge.Total(
+                proxy: total.proxy,
+                connections: total.connections,
+                bytesUp: total.up,
+                bytesDown: total.down,
+                // the bytes of a direct connection are never seen: macOS
+                // hands those flows back to the system
+                bytesKnown: total.proxy != "Direct"
+            )
+        }
+        // the traffic of the clients of the network, counted by the server.
+        // the server counts the bytes it relays, and a direct connection is
+        // relayed as well
+        let clients = serverTotals.map { total in
+            TrafficMerge.Total(
+                proxy: total.proxy,
+                connections: total.connections,
+                bytesUp: total.bytesUp,
+                bytesDown: total.bytesDown
+            )
+        }
+
+        return TrafficMerge.rows(machine: machine, clients: clients).map { total in
+            ProxyTraffic(
+                id: total.proxy,
+                proxy: total.proxy,
+                connections: total.connections,
+                bytesUp: total.bytesUp,
+                bytesDown: total.bytesDown,
+                bytesKnown: total.bytesKnown
+            )
+        }
+    }
+
     // How often the numbers of the window are put out at the earliest. The log
     // brings lines every second, and a window that is redrawn for every one of
     // them costs more than the reading of the log does.
@@ -1898,12 +1962,21 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // The flows that are open right now.
     private func publishLiveFlows() {
+        // The flows of this machine. They are carried by the tunnel, and they
+        // are the traffic of the machine that the rules are about.
+        let machineFlows = providerFlows.isEmpty ? flowsFromTheLog() : providerFlows
+
         if runtimeMode == .server {
-            // the flows of the clients, counted by the server itself
+            // The clients of the network are carried by the proxy server, and
+            // this machine is carried by the tunnel. Both leave the machine by
+            // the proxies of the rules, so they are listed together: this
+            // machine is a client of its own proxy as well.
             let now = Date()
-            liveFlows = serverFlows.map { flow in
+            let clients = serverFlows.map { flow in
                 LiveFlow(
-                    id: flow.id,
+                    id: LiveFlow.clientTableId(flow.id),
+                    originId: flow.id,
+                    origin: .client,
                     protocolName: "TCP",
                     // a client on the network has no program, so its address
                     // is what is said about it
@@ -1917,17 +1990,23 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                     idle: now.timeIntervalSince(flow.lastActivity)
                 )
             }
+            liveFlows = (machineFlows + clients).sorted { $0.id > $1.id }
             return
         }
-        guard providerFlows.isEmpty else {
-            liveFlows = providerFlows
-            return
-        }
+        liveFlows = machineFlows
+    }
+
+    // The flows that the unified log told about. It is the way out when the
+    // provider channel is shut, which it is for a build that is not signed by
+    // a developer.
+    private func flowsFromTheLog() -> [LiveFlow] {
         let now = Date()
-        liveFlows = liveFlowIds.compactMap { id -> LiveFlow? in
+        return liveFlowIds.compactMap { id -> LiveFlow? in
             guard let flow = loggedFlows[id] else { return nil }
             return LiveFlow(
                 id: flow.id,
+                originId: flow.id,
+                origin: .machine,
                 protocolName: flow.proto,
                 process: flow.process,
                 destination: flow.destination,
@@ -1980,6 +2059,8 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 guard let id = (row["id"] as? NSNumber)?.uint64Value else { return nil }
                 return LiveFlow(
                     id: id,
+                    originId: id,
+                    origin: .machine,
                     protocolName: row["protocol"] as? String ?? "",
                     process: row["process"] as? String ?? "",
                     destination: row["destination"] as? String ?? "",
@@ -2003,10 +2084,16 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // Terminates one live connection: the relay is torn down, so the application sees its
     // connection die instead of waiting for a proxy that stopped answering.
+    //
+    // A flow of a client of the network is not terminated here: it belongs to
+    // the proxy server, and the server does not hold the socket of the client
+    // in a way that could be closed from the outside.
     func killFlow(id: UInt64) {
+        guard let flow = liveFlows.first(where: { $0.id == id }) else { return }
+        guard flow.origin == .machine else { return }
         guard let session = tunnelSession else { return }
 
-        let message: [String: Any] = ["action": "killFlow", "id": id]
+        let message: [String: Any] = ["action": "killFlow", "id": flow.originId]
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
 
         try? session.sendProviderMessage(data) { [weak self] _ in

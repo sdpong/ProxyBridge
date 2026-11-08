@@ -18,11 +18,10 @@ final class LocalProxyServer {
     // One connection of a client, with the traffic it has carried so far.
     //
     // The tables of the window - the statistics and the live connections - are
-    // fed by the system extension while the gateway mode is on. In the server
-    // mode the extension is stopped, and the traffic that goes through the app
-    // is the traffic of the clients of the network. The app counts that
-    // traffic itself, or the tables would be empty in the one mode where the
-    // app does the work itself.
+    // fed by the system extension, which counts the traffic of this machine,
+    // and by the server, which counts the traffic of the clients of the
+    // network. In the server mode both are shown together, because this
+    // machine is a client of its own proxy as well.
     struct ServerFlow {
         let id: UInt64
         // the address of the client, and not the name of a program: a client
@@ -581,11 +580,24 @@ final class LocalProxyServer {
         trafficLock.lock()
         defer { trafficLock.unlock() }
         let flows = liveFlows.values.sorted { $0.id > $1.id }
-        let totals = proxyTotals
+
+        // The flows that are open right now still have to be counted: their
+        // bytes have not been added to the total yet, they only go there when
+        // they end. The extension counts it the same way, so the numbers of
+        // the two are of the same kind.
+        var totals = proxyTotals
+        for flow in liveFlows.values {
+            var total = totals[flow.proxy, default: (connections: 0, up: 0, down: 0)]
+            total.up += flow.bytesUp
+            total.down += flow.bytesDown
+            totals[flow.proxy] = total
+        }
+
+        let rows = totals
             .map { ServerProxyTotal(proxy: $0.key, connections: $0.value.connections,
                                     bytesUp: $0.value.up, bytesDown: $0.value.down) }
             .sorted { $0.proxy < $1.proxy }
-        return (flows, totals)
+        return (flows, rows)
     }
 
     // The address of the client that connected.
