@@ -450,8 +450,17 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     func updateRouteSettings(_ settings: RouteSettings) {
         routeSettings = settings
         settings.save()
-        sendRouteOptionsToExtension(settings)
+        sendRouteOptionsToExtension(routeOptionsInEffect)
         addLog("INFO", L10n.t("Routing settings saved"))
+    }
+
+    // The routing options are the settings of the gateway: they say where the
+    // traffic goes when this machine is the gateway of the network. The other
+    // modes use the defaults, the way the app did before the modes existed -
+    // so the person who wants to route the traffic of the other terminals
+    // switches to the gateway mode, and everything else stays the way it was.
+    private var routeOptionsInEffect: RouteSettings {
+        runtimeMode == .gateway ? routeSettings : RouteSettings()
     }
 
     // Applies the running mode.
@@ -475,6 +484,9 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // what the app does. The mode says which service is added for the
         // other terminals of the network.
         startTunnelIfNotRunning()
+        // the routing options belong to the gateway mode, so they change with
+        // the mode and the extension has to hear about it
+        sendRouteOptionsToExtension(routeOptionsInEffect)
         // the dns proxy is not a part of the tunnel: it has a switch of its
         // own and it keeps running in every mode
         applyDNSProxy()
@@ -1144,7 +1156,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // the switches above the rules. they go with the configuration, because
         // a tunnel that is set up by the system (and not by a message from the
         // app) has to know them too
-        payload["routeOptions"] = routeSettings.toDictionary()
+        payload["routeOptions"] = routeOptionsInEffect.toDictionary()
         return ["proxiroute": payload]
     }
 

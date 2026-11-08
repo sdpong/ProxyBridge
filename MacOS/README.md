@@ -214,6 +214,11 @@ in orange. The name is the plan, the card tells where the plan stands.
 The mode is the only switch for the proxy server: it listens when the mode is
 **Proxy Server**, and it is quiet otherwise.
 
+The **routing options** (the global mode, the outbound interface, UDP and the
+local network) are the settings of the gateway: they show in the **Gateway**
+mode, and the other modes use the defaults - the way the app worked before
+the modes existed.
+
 ### Proxy Settings
 
 Access proxy settings from **Options → Rule Setup → Proxy Settings**, or

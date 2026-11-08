@@ -28,9 +28,12 @@ struct SettingsTabView: View {
         ScrollView {
             VStack(spacing: 16) {
                 modeCard
-                // the routing options say where the traffic of this machine
-                // goes, and it is taken over in every mode
-                routeCard
+                // the routing options are the settings of the gateway: they
+                // say where the traffic goes when this machine is the gateway
+                // of the network. The other modes use the defaults.
+                if viewModel.runtimeMode == .gateway {
+                    routeCard
+                }
                 // the proxy server is the service for the clients of the
                 // network, so it is only of use in its own mode
                 if viewModel.runtimeMode == .server {
