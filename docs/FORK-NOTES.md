@@ -936,6 +936,51 @@ ProxyTotals SOCKS5 127.0.0.1:9991|827000|7080000|292;Direct|0|0|820
 - **系统扩展要重新批准**：换了 bundle id 就是一个新的扩展，
   要在「系统设置 → 通用 → 登录项与扩展 → 网络扩展」里再批准一次。
 
+### 网关模式：为什么必须另做一条数据面（查证记录）
+
+> 完整方案见 [docs/GATEWAY.md](GATEWAY.md)。这里是**查过的事实**，别再查第二遍。
+
+- **本 fork 的 macOS 扩展基类是 `NETransparentProxyProvider`**（`extension/AppProxyProvider.swift:392`），
+  不是 `NEFilterDataProvider`。它接的是**本机进程开的 socket**。
+- **NetworkExtension 没有任何 API 能看到别的机器的包**（Apple 文档原文）：
+  `NEPacketTunnelProvider` 收的是**本机**发往指定目的地的包；
+  `NEAppProxyProvider` / `NEFilterDataProvider` 的 flow 都是「本机应用开的连接」；
+  `NETransparentProxyProvider` 继承 `NEAppProxyProvider`。
+  → 网关模式是**另一条数据面**，不是给现有扩展加个开关。
+- **macOS 转发必须 root**（本机实测）：
+  `pfctl -ss` → `Permission denied`（`/dev/pf` 是 `crw------- root wheel`）；
+  `sysctl -w net.inet.ip.forwarding=1` → `Operation not permitted`。
+  `pfctl(8)` man 原文：*"The packet filter does not itself forward packets between interfaces"* ——
+  **PF 和转发是两件事**。
+- **macOS 没有 `/dev/tun`**（本机实测不存在）。utun 由内核控制，非特权进程建不出可用的 utun；
+  社区做法一致：root 守护进程持有 utun。
+- **SIP 不挡这些**（它保护 `/System`、kext、关键二进制）。
+  **App Sandbox 挡**（沙盒进程不能开 `/dev/pf`、不能改 sysctl）——
+  本 fork 的 app 本来就不带沙盒（沙盒留给扩展），兼容。
+- **ad-hoc 签名下 `SMAppService`/`SMJobBless` 注册不了**：两者都要 app 与 helper 的签名匹配，
+  `SMJobBless` 已 deprecated；社区结论一致（微软 ProcExp for Mac 的发布文档明说
+  `SMAppService.register()` 在 ad-hoc 下失败）。
+  → **只能走 pkg postinstall**：postinstall 本来就是 root 上下文，
+  在那里装 root helper 到 `/Library/PrivilegedHelperTools/` + LaunchDaemon 到 `/Library/LaunchDaemons/`。
+  这条路**不需要任何签名凭据**，和现在的分发形态（pkg + ad-hoc）兼容。
+  Apple DTS 也说过：已经有 installer 的话，就不必用 SMJobBless。
+- **macOS 的透明代理是「rdr + 反查」，不是 Linux 的 tproxy**：
+  `rdr` 重定向到本地端口后用 `DIOCNATLOOK` 反查原目的，**只支持 IPv4 TCP**；
+  UDP 拦不到（社区做法一致）。macOS 没有 Linux 的 `TPROXY`/divert socket。
+  → macOS 上 UDP/QUIC 只能**封 UDP 443 逼回落 TCP**。
+- **三端的难度差得很远**：
+  - **Windows 最快**：服务已是 LocalSystem（`Windows/src/service/pb_service.c:3,49`），
+    WinDivert 已在 **NETWORK 层**抓包（`Windows/src/ProxyBridge.c:1348`）——那层能看见转发的包。
+  - **Linux 次之**：特权已就绪（`Linux/src/pb_bpf.c:168` 要求 root，
+    unit 已有 `CAP_NET_ADMIN CAP_BPF`），但现有 eBPF 全是 cgroup socket 钩子
+    （`Linux/src/bpf/proxybridge.bpf.c:249+`），要补 `tc`/XDP；
+    好在 Linux 有 `nftables` tproxy，**UDP 也能真透明代理**。
+  - **macOS 最难**：helper + PF + 数据面重做，而且没有 tproxy。
+- **规则引擎的硬约束**：别的终端的流量**没有进程身份**，
+  点名程序的规则对网关客户端一律跳过（macOS 侧已经是这个语义：
+  `LocalProxyUpstream.swift:265` 的 `if rule.hasProgram { continue }`），Windows/Linux 要对齐。
+  域名能不能匹配取决于数据面能不能拿到原目的（拿到域名就能按域名分流，只拿到 IP 就不能）。
+
 ### 本机当代理服务器
 
 - **用 BSD socket 而不是 Network.framework**：`NWListener` 不能绑定到指定地址（EINVAL），

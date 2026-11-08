@@ -198,6 +198,37 @@ Windows / Android 走各自的平台机制，但语义要对齐。
 
 ---
 
+## 网关模式（下一轮 · 三端一起）
+
+**目标**：网络里的其他终端**不改代理配置**（只把网关指过来），流量按 ProxiRoute 的规则走代理，
+并在本机的统计与活动连接里按来源分开显示。
+
+**完整方案、权限模型、阶段划分与待实测清单见 [docs/GATEWAY.md](GATEWAY.md)。**
+
+三件事决定了它的形状（都查证过，不是猜测）：
+
+| 事实 | 影响 |
+|---|---|
+| NetworkExtension 的四个 provider **都只管本机**（Apple 文档原文），本 fork 的扩展是 `NETransparentProxyProvider`（`extension/AppProxyProvider.swift:392`） | 网关是**另一条数据面**，不是「打开转发开关」 |
+| macOS 转发必须 root：`pfctl` 非 root 读都 Permission denied、`sysctl -w net.inet.ip.forwarding=1` 非 root 是 Operation not permitted（本机实测） | macOS 要新做 root helper + PF；Windows/Linux 的特权**已经有了** |
+| ad-hoc 签名下 `SMAppService`/`SMJobBless` 注册不了 | 走 **pkg postinstall 装 root LaunchDaemon**（不需要签名凭据，和现有分发形态兼容） |
+
+难度差得很远，所以**先做最容易出成果的那端**：
+
+| 阶段 | 内容 | 判定完成的标准 |
+|---|---|---|
+| A | **Windows 打通全链路**（SYSTEM 服务开转发 + WinDivert NETWORK 层抓转发包 + 取原目的 + 按规则选上游 + 中继 + 统计出现「转发」来源） | 另一台机器把网关指过来，流量按 host 规则走了代理，统计里看得到 |
+| B | **规则引擎的无程序分支**（三端统一：跳过点名程序的规则、补协议维度、chain 行为定死、域名能不能匹配） | 三端同一套规则写法，行为一致 |
+| C | **Linux**（`tc`/XDP 钩子 + nftables tproxy + 保留原目的 + UDP 真透明） | 同 A |
+| D | **macOS 的 root helper**（helper + pkg postinstall + LaunchDaemon + PF anchor + app 侧透明代理入口） | 同 A |
+| E | **macOS 的 UDP/QUIC 策略**（封 UDP 443 逼回落 + DNS 劫持） | 客户端 QUIC 被挡、回落 TCP 后仍按规则走代理 |
+| F | **UI 收口**（第三种来源、终止权限、设置页那句橙字改成真话） | 不再写「转发还没有实现」 |
+
+> **规则引擎有一条硬约束**：别的终端的流量**没有进程身份**，
+> 点名程序的规则对网关客户端一律跳过，不能把 MAC / 主机名伪装成程序名。
+
+---
+
 ## Proxifier 配置导入（.ppx）
 
 Proxifier 把配置存成一个 XML 文件 `.ppx`。从 Proxifier 换过来的人手里就是这个文件，
