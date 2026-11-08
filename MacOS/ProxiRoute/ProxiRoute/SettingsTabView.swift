@@ -3,10 +3,11 @@ import AppKit
 
 // The settings of the app, in the window.
 //
-// Everything that used to live in the menus of the menu bar is here: the
-// running mode, the routing options, the proxy server, the language and the
-// switches of the app itself. The menu bar keeps what belongs to the
-// documents - the profiles - and the help.
+// The running mode, the routing options and the proxy server are here: they
+// decide what the app does with the traffic. The things that are about the
+// app itself - the language, the switches of the app, the system extension
+// and the way to the windows with the rules - have a page of their own, the
+// options tab.
 //
 // The reason is that a menu is a place for the things that are done, not for
 // the things that are set. Everything here is a setting, and a setting that
@@ -23,11 +24,6 @@ struct SettingsTabView: View {
     @State private var route = RouteSettings.load()
     @State private var localProxy = LocalProxySettings.load()
 
-    // the switches of the app itself
-    @AppStorage("closeToMenuBar") private var closeToMenuBar = false
-    @AppStorage("keepProxyRunningInBackground") private var keepProxyRunningInBackground = true
-    @State private var runAtStartup = LoginItem.isEnabled
-
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -41,10 +37,6 @@ struct SettingsTabView: View {
                     serverCard
                 }
                 loggingCard
-                languageCard
-                applicationCard
-                extensionCard
-                windowsCard
             }
             .padding(16)
             .frame(maxWidth: .infinity)
@@ -53,20 +45,22 @@ struct SettingsTabView: View {
 
     // MARK: - the running mode
 
-    // The card says what the modes are. It does not say whether they are
-    // running: the two states that go with the mode are the same in every
-    // mode, so they said the same thing under every option, and a row that
-    // says the same thing three times is noise.
+    // The card says what the modes are, and what each of them is doing right
+    // now.
     //
-    // The states live at the end of the row of the tabs now, where they can
-    // be seen without opening the settings.
+    // The two states under the picker belong to the mode: in the local mode
+    // the traffic of this machine is not taken over and the proxy server does
+    // not run, in the gateway mode the traffic of this machine is taken over
+    // and the server still does not run, and in the server mode it is the
+    // other way round. They say something different under every option, so
+    // they stay under the option they belong to.
     private var modeCard: some View {
-        card(icon: "switch.2", title: L10n.t("Running Mode")) {
+        SettingsCard(icon: "switch.2", title: L10n.t("Running Mode")) {
             Form {
                 Section {
                     Picker(L10n.t("Running Mode"), selection: modeBinding) {
-                        Text(L10n.t("Do Not Take Over")).tag(RuntimeMode.off)
-                        Text(L10n.t("Route Mode")).tag(RuntimeMode.route)
+                        Text(L10n.t("Local")).tag(RuntimeMode.off)
+                        Text(L10n.t("Gateway")).tag(RuntimeMode.route)
                         Text(L10n.t("Proxy Server")).tag(RuntimeMode.server)
                     }
                     .pickerStyle(.segmented)
@@ -76,8 +70,33 @@ struct SettingsTabView: View {
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    // The gateway mode is meant for the other terminals of
+                    // the network. The forwarding of them is not there yet,
+                    // and the card says so instead of letting the person
+                    // wait for a traffic that never comes.
+                    if viewModel.runtimeMode == .route {
+                        Text(L10n.t("Today only the traffic of this machine is taken over. The forwarding of the other terminals of the network is not there yet."))
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack {
+                        Text(L10n.t("The Traffic of This Machine"))
+                        Spacer()
+                        Text(viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied"))
+                            .foregroundColor(viewModel.isProxyActive ? .green : .secondary)
+                    }
+
+                    HStack {
+                        Text(L10n.t("Proxy Server"))
+                        Spacer()
+                        Text(viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running"))
+                            .foregroundColor(viewModel.localProxyRunning ? .green : .secondary)
+                    }
                 } footer: {
-                    Text(L10n.t("The route mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both."))
+                    Text(L10n.t("The gateway mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both."))
                 }
             }
             .formStyle(.grouped)
@@ -90,9 +109,9 @@ struct SettingsTabView: View {
     private var modeDescription: String {
         switch viewModel.runtimeMode {
         case .off:
-            return L10n.t("Nothing is taken over. The extension is stopped and no port is open, so this machine costs nothing.")
+            return L10n.t("The traffic of this machine goes on as it is. The extension is stopped and no port is open, so this machine costs nothing.")
         case .route:
-            return L10n.t("The traffic of this machine goes out through the extension. The rules decide, and the global mode is the answer for the traffic no rule names.")
+            return L10n.t("This machine is the gateway of the network: the traffic of the other terminals goes through it. The rules decide, and the global mode is the answer for the traffic no rule names.")
         case .server:
             return L10n.t("The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it.")
         }
@@ -111,9 +130,9 @@ struct SettingsTabView: View {
     // MARK: - the routing options
 
     private var routeCard: some View {
-        card(icon: "arrow.triangle.branch", title: L10n.t("Routing")) {
+        SettingsCard(icon: "arrow.triangle.branch", title: L10n.t("Routing")) {
             RouteSettingsForm(settings: $route, viewModel: viewModel)
-            cardFooter {
+            SettingsCardFooter {
                 Button(L10n.t("Save")) {
                     viewModel.updateRouteSettings(route)
                 }
@@ -125,9 +144,9 @@ struct SettingsTabView: View {
     // MARK: - the proxy server
 
     private var serverCard: some View {
-        card(icon: "server.rack", title: L10n.t("Proxy Server")) {
+        SettingsCard(icon: "server.rack", title: L10n.t("Proxy Server")) {
             LocalProxyServerForm(settings: $localProxy, viewModel: viewModel)
-            cardFooter {
+            SettingsCardFooter {
                 Button(L10n.t("Save")) {
                     viewModel.updateLocalProxySettings(localProxy)
                 }
@@ -139,7 +158,7 @@ struct SettingsTabView: View {
     // MARK: - logging and dns
 
     private var loggingCard: some View {
-        card(icon: "text.alignleft", title: L10n.t("Logging and DNS")) {
+        SettingsCard(icon: "text.alignleft", title: L10n.t("Logging and DNS")) {
             Form {
                 Section {
                     Toggle(L10n.t("Enable Traffic Logging"), isOn: Binding(
@@ -159,10 +178,10 @@ struct SettingsTabView: View {
 
                     // The switch says what the person asked for. The DNS proxy
                     // belongs to the traffic of this machine, so it only runs
-                    // in the route mode - and a switch that says "on" while
+                    // in the gateway mode - and a switch that says "on" while
                     // the proxy is off is a switch that lies.
                     if viewModel.runtimeMode != .route {
-                        Text(L10n.t("The DNS proxy belongs to the traffic of this machine, so it runs in the route mode only. It is off now, and the host name rules do not work."))
+                        Text(L10n.t("The DNS proxy belongs to the traffic of this machine, so it runs in the gateway mode only. It is off now, and the host name rules do not work."))
                             .font(.caption)
                             .foregroundColor(.orange)
                             .fixedSize(horizontal: false, vertical: true)
@@ -172,155 +191,5 @@ struct SettingsTabView: View {
             .formStyle(.grouped)
             .frame(maxWidth: .infinity)
         }
-    }
-
-    // MARK: - the language
-
-    private var languageCard: some View {
-        card(icon: "globe", title: L10n.t("Language")) {
-            Form {
-                Section {
-                    Picker(L10n.t("Language"), selection: languageBinding) {
-                        ForEach(L10n.Language.allCases) { language in
-                            Text(language.displayName).tag(language)
-                        }
-                    }
-                    .labelsHidden()
-
-                    Text(L10n.t("The menus that macOS draws itself (Window, Help) follow the language that is chosen here."))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .formStyle(.grouped)
-            .frame(maxWidth: .infinity)
-        }
-    }
-
-    private var languageBinding: Binding<L10n.Language> {
-        Binding(
-            get: { LocalizationManager.shared.language },
-            set: { LocalizationManager.shared.language = $0 }
-        )
-    }
-
-    // MARK: - the app itself
-
-    private var applicationCard: some View {
-        card(icon: "app.badge", title: L10n.t("Application")) {
-            Form {
-                Section {
-                    Toggle(L10n.t("Close to Menu Bar"), isOn: $closeToMenuBar)
-
-                    Toggle(L10n.t("Keep Proxy Running in Background"), isOn: $keepProxyRunningInBackground)
-
-                    Toggle(L10n.t("Run at Startup"), isOn: Binding(
-                        get: { runAtStartup },
-                        set: {
-                            runAtStartup = $0
-                            LoginItem.setEnabled($0)
-                        }
-                    ))
-                } footer: {
-                    Text(L10n.t("Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit."))
-                }
-            }
-            .formStyle(.grouped)
-            .frame(maxWidth: .infinity)
-        }
-    }
-
-    // MARK: - the system extension
-
-    private var extensionCard: some View {
-        card(icon: "puzzlepiece.extension", title: L10n.t("System Extension")) {
-            Form {
-                Section {
-                    Button(L10n.t("Approve ProxiRoute in System Settings...")) {
-                        NSApp.sendAction(#selector(AppDelegate.openSystemSettingsForExtension), to: nil, from: nil)
-                    }
-
-                    Button(L10n.t("Take Out Older ProxiRoute Extensions...")) {
-                        NSApp.sendAction(#selector(AppDelegate.takeOutOlderExtensions), to: nil, from: nil)
-                    }
-                } footer: {
-                    Text(L10n.t("macOS asks for the approval of the system extension once. Until it is given, no traffic can be proxied."))
-                }
-            }
-            .formStyle(.grouped)
-            .frame(maxWidth: .infinity)
-        }
-    }
-
-    // MARK: - the windows that stay windows
-
-    // The rules, the proxy list, the chains and the DNS settings are tables
-    // and a table of this size does not belong in a tab of the main window.
-    // They keep their own windows, and this card is the way to them.
-    private var windowsCard: some View {
-        card(icon: "macwindow", title: L10n.t("More Windows")) {
-            Form {
-                Section {
-                    HStack {
-                        Button(L10n.t("Proxy Settings...")) {
-                            NSApp.sendAction(#selector(AppDelegate.openProxySettings), to: nil, from: nil)
-                        }
-                        Button(L10n.t("Proxy Rules...")) {
-                            NSApp.sendAction(#selector(AppDelegate.openProxyRules), to: nil, from: nil)
-                        }
-                    }
-
-                    HStack {
-                        Button(L10n.t("Proxy Chains...")) {
-                            NSApp.sendAction(#selector(AppDelegate.openProxyChains), to: nil, from: nil)
-                        }
-                        Button(L10n.t("DNS Settings...")) {
-                            NSApp.sendAction(#selector(AppDelegate.openDNSSettings), to: nil, from: nil)
-                        }
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .frame(maxWidth: .infinity)
-        }
-    }
-
-    // MARK: - the pieces of the layout
-
-    // One card of the settings. The title says what is in it, so that a
-    // long page can be read without reading all of it.
-    private func card<Content: View>(icon: String, title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .foregroundColor(.accentColor)
-                Text(title)
-                    .font(.headline)
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color(NSColor.controlBackgroundColor))
-
-            Divider()
-
-            content()
-        }
-        .frame(maxWidth: .infinity)
-        .background(Color(NSColor.textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.25)))
-    }
-
-    // The row of buttons under a card.
-    private func cardFooter<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack {
-            Spacer()
-            content()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(NSColor.controlBackgroundColor))
     }
 }

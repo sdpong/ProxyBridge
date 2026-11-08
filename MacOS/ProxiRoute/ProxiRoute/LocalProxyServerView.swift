@@ -63,7 +63,7 @@ struct LocalProxyServerView: View {
 // The form of the proxy server.
 //
 // Whether the server listens is not decided here. The running mode decides
-// it: the route mode and the proxy server cannot be on at the same time, and
+// it: the gateway mode and the proxy server cannot be on at the same time, and
 // the mode is the one switch. So the form only says what the server would do,
 // and the state line says what it does now.
 struct LocalProxyServerForm: View {
@@ -89,7 +89,7 @@ struct LocalProxyServerForm: View {
                 }
 
                 if viewModel.runtimeMode != .server {
-                    Text(L10n.t("The server listens when the running mode is Proxy Server. The route mode and the proxy server cannot be on at the same time."))
+                    Text(L10n.t("The server listens when the running mode is Proxy Server. The gateway mode and the proxy server cannot be on at the same time."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

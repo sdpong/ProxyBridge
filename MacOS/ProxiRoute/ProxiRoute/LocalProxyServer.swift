@@ -18,7 +18,7 @@ final class LocalProxyServer {
     // One connection of a client, with the traffic it has carried so far.
     //
     // The tables of the window - the statistics and the live connections - are
-    // fed by the system extension while the route mode is on. In the server
+    // fed by the system extension while the gateway mode is on. In the server
     // mode the extension is stopped, and the traffic that goes through the app
     // is the traffic of the clients of the network. The app counts that
     // traffic itself, or the tables would be empty in the one mode where the

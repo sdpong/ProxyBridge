@@ -104,18 +104,19 @@ enum L10n {
 
         // the settings of the window, in the tab that carries them
         "Running Mode": "运行模式",
-        "Do Not Take Over": "不接管",
-        "Route Mode": "路由模式",
-        "The route mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both.": "路由模式与代理服务器不能同时开启。两者都会让本机持续工作，而处理器要同时为两份开销买单。",
+        "Gateway": "网关",
+        "Options": "选项",
+        "The gateway mode and the proxy server cannot be on at the same time. Both of them make this machine work, and the processor pays for both.": "网关模式与代理服务器不能同时开启。两者都会让本机持续工作，而处理器要同时为两份开销买单。",
         "The Traffic of This Machine": "本机流量",
         "Proxied": "已接管",
         "Not Proxied": "未接管",
         "State": "状态",
         "Not Running": "未运行",
-        "Nothing is taken over. The extension is stopped and no port is open, so this machine costs nothing.": "不接管任何流量。扩展停止，不监听任何端口，本机不产生任何开销。",
-        "The traffic of this machine goes out through the extension. The rules decide, and the global mode is the answer for the traffic no rule names.": "本机流量经扩展送出。规则优先决定去向，没有规则点名的流量由全局模式决定。",
+        "The traffic of this machine goes on as it is. The extension is stopped and no port is open, so this machine costs nothing.": "本机流量照旧走，不经过扩展。扩展停止，不监听任何端口，本机不产生任何开销。",
+        "This machine is the gateway of the network: the traffic of the other terminals goes through it. The rules decide, and the global mode is the answer for the traffic no rule names.": "这台机器是网络里其他终端的网关：它们的流量从这里过。规则优先决定去向，没有规则点名的流量由全局模式决定。",
+        "Today only the traffic of this machine is taken over. The forwarding of the other terminals of the network is not there yet.": "目前只有本机的流量被接管。网络里其他终端的转发还没有实现。",
         "The proxy server waits for the clients of the network. The traffic of this machine is left alone, so this machine does not pay for it.": "代理服务器等待网络中的客户端。本机流量不受影响，本机不为它付出开销。",
-        "The server listens when the running mode is Proxy Server. The route mode and the proxy server cannot be on at the same time.": "运行模式为「代理服务器」时服务器才监听。路由模式与代理服务器不能同时开启。",
+        "The server listens when the running mode is Proxy Server. The gateway mode and the proxy server cannot be on at the same time.": "运行模式为「代理服务器」时服务器才监听。网关模式与代理服务器不能同时开启。",
         "Logging and DNS": "日志与 DNS",
         "The DNS proxy lets ProxiRoute learn which name belongs to which address. Host name rules and \"send hostname\" need it. Without it another program can use the one DNS proxy slot of macOS.": "DNS 代理让 ProxiRoute 知道哪个名字对应哪个地址。主机名规则和「发送主机名」需要它。关掉之后，macOS 唯一的 DNS 代理位置可以留给别的程序。",
         "Language": "语言",
@@ -123,21 +124,20 @@ enum L10n {
         "Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit.": "关闭窗口不会停止代理。App 留在后台，隧道继续运行，直到在这里停止，或者退出 App。",
         "System Extension": "系统扩展",
         "macOS asks for the approval of the system extension once. Until it is given, no traffic can be proxied.": "macOS 需要一次对系统扩展的授权。授权之前无法代理任何流量。",
-        "More Windows": "更多窗口",
+        "Rule Setup": "规则设定",
+        "The rules say which program goes through which proxy. They live in their own windows, because they are tables.": "规则说明哪个程序走哪个代理。它们在自己的窗口里，因为它们是表格。",
 
         // the traffic of the proxy server, and the line in the tab bar
         "Clients: %@": "客户端：%@",
         "No traffic from the clients yet": "还没有客户端的流量",
         "The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.": "代理服务器转发客户端的流量。客户端一连上，这里就会出现记录。",
-        "The route mode is off, so the traffic of this machine is not counted here. The proxy server counts the traffic of the clients.": "路由模式已关闭，本机流量不在这里统计。代理服务器统计的是客户端的流量。",
-        "The running mode is %@": "运行模式：%@",
 
         // the tables are empty for a different reason in every mode, and the
         // reason is worth saying
         "This machine is not taken over": "本机没有被接管",
-        "Nothing is taken over, so nothing is counted. Switch to the route mode to count the traffic of this machine.": "没有接管任何流量，所以这里没有统计。切到「路由模式」才会统计本机流量。",
-        "The extension is stopped, so no connection of this machine is proxied. Switch to the route mode to see the connections here.": "扩展已停止，本机的连接不会被代理。切到「路由模式」才会在这里看到连接。",
-        "The DNS proxy belongs to the traffic of this machine, so it runs in the route mode only. It is off now, and the host name rules do not work.": "DNS 代理服务于本机流量，只在「路由模式」下运行。现在它是关的，主机名规则不会生效。",
+        "Nothing is taken over, so nothing is counted. Switch to the gateway mode to count the traffic of this machine.": "没有接管任何流量，所以这里没有统计。切到「网关」才会统计本机流量。",
+        "The extension is stopped, so no connection of this machine is proxied. The DNS proxy stops with it. Switch to the gateway mode to see the connections here.": "扩展已停止，本机的连接不会被代理，DNS 代理也跟着停了。切到「网关」才会在这里看到连接。",
+        "The DNS proxy belongs to the traffic of this machine, so it runs in the gateway mode only. It is off now, and the host name rules do not work.": "DNS 代理服务于本机流量，只在「网关」模式下运行。现在它是关的，主机名规则不会生效。",
 
         // the menus macOS brings itself. their titles come from the
         // localization of the app bundle, and this app has no bundle of
@@ -267,7 +267,7 @@ enum L10n {
         "Configuration saved": "配置已保存",
         "DNS proxy setup failed: %@. Host name rules and send hostname will not work.": "DNS 代理设置失败：%@。主机名规则和 send hostname 将无法工作。",
         "DNS proxy enabled": "DNS 代理已启用",
-        "DNS proxy is off (Enable DNS in the settings tab). It runs in the route mode only, and host name rules and send hostname do not work.": "DNS 代理已关闭（在「设置」标签页里启用 DNS）。它只在「路由模式」下运行，主机名规则和 send hostname 无法工作。",
+        "DNS proxy is off (Enable DNS in the settings tab). It runs in the gateway mode only, and host name rules and send hostname do not work.": "DNS 代理已关闭（在「设置」标签页里启用 DNS）。它只在「网关」模式下运行，主机名规则和 send hostname 无法工作。",
         "Could not switch the DNS proxy off: %@": "无法关闭 DNS 代理：%@",
         "The DNS proxy entry was off in the system. It is being written again, so host names are known again.": "系统里的 DNS 代理条目是关闭的。正在重新写入，主机名因此又能被认出来。",
         "Failed to reload preferences: %@": "无法重新载入设置：%@",
