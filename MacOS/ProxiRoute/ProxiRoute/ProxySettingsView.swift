@@ -254,7 +254,7 @@ struct ProxyConfigEditorView: View {
                         Text(L10n.t("The proxy server is told which application the traffic comes from, so it can route by application. HTTP proxies get it in a header, SOCKS proxies in the user name field."))
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(L10n.t("A SOCKS5 proxy that needs a user name of its own keeps it: there is only one user name field."))
+                        Text(L10n.t("Over SOCKS5 the name goes into the user name field: a Clash or mihomo proxy shows it as the inbound user of the connection, and an IN-USER rule can send that traffic its own way. A proxy that needs a user name of its own keeps it - there is only one user name field."))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Text(L10n.t("A rule that names no program says to the proxy that the traffic is ProxiRoute's own: the bundle id of the extension is the name it sees. A proxy that routes by program can then send that traffic its own way."))

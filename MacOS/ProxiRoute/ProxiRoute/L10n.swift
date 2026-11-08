@@ -372,7 +372,7 @@ enum L10n {
         "Host names are only sent when Enable DNS is on in the Proxy menu.": "只有在「Proxy」菜单里打开「启用 DNS」时，才会发送主机名。",
         "Send the application name to the proxy server": "把应用名称送给代理服务器",
         "The proxy server is told which application the traffic comes from, so it can route by application. HTTP proxies get it in a header, SOCKS proxies in the user name field.": "代理服务器会知道流量来自哪个程序，因此可以按程序分流。HTTP 代理由请求头携带，SOCKS 代理由用户名字段携带。",
-        "A SOCKS5 proxy that needs a user name of its own keeps it: there is only one user name field.": "需要自带用户名的 SOCKS5 代理会保留自己的用户名：用户名字段只有一个。",
+        "Over SOCKS5 the name goes into the user name field: a Clash or mihomo proxy shows it as the inbound user of the connection, and an IN-USER rule can send that traffic its own way. A proxy that needs a user name of its own keeps it - there is only one user name field.": "SOCKS5 走的是用户名字段：Clash / mihomo 会把它显示为这条连接的「入站用户」，也可以用 IN-USER 规则按它分流。如果代理自己要用户名，就用它自己的——用户名字段只有一个。",
         "A chain sends a rule's traffic through several proxies, one after the other. Add one, then pick it as the action of a rule.": "代理链让规则的流量依次经过多个代理。先添加一条，再把它设为某个规则的动作。",
         "A rule that uses a chain sends its traffic through every proxy of the chain, in order.": "使用代理链的规则，其流量会按顺序经过链中的每一个代理。",
         "The first proxy is asked to open a tunnel to the second one, and so on. The last proxy is the one that reaches the destination.": "第一个代理负责打通到第二个代理的隧道，依次类推。最后一个代理才是真正连到目标的。",
