@@ -44,12 +44,36 @@ jobs:
 
     - name: Download WinDivert
       run: |
-        $url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
         $expectedHash = "63CB41763BB4B20F600B6DE04E991A9C2BE73279E317D4D82F237B150C5F3F15"
-        Invoke-WebRequest -Uri $url -OutFile "WinDivert.zip" -UseBasicParsing
-        $actualHash = (Get-FileHash "WinDivert.zip" -Algorithm SHA256).Hash
-        if ($actualHash -ne $expectedHash) {
-          Write-Error "WinDivert.zip SHA256 mismatch! Expected: $expectedHash  Got: $actualHash"
+        # The release assets of GitHub are served by a CDN that answers 504
+        # from time to time, and a 504 is a page of html and not the file.
+        # The api serves the very same file, so it is the second way to try.
+        # The hash is what says whether the file is the one that is wanted.
+        $urls = @(
+          "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip",
+          "https://api.github.com/repos/basil00/WinDivert/releases/assets/78510020"
+        )
+        $got = $false
+        foreach ($url in $urls) {
+          Write-Host "Trying $url"
+          try {
+            if ($url -like "*api.github.com*") {
+              Invoke-WebRequest -Uri $url -OutFile "WinDivert.zip" -UseBasicParsing -Headers @{ "Accept" = "application/octet-stream" }
+            } else {
+              Invoke-WebRequest -Uri $url -OutFile "WinDivert.zip" -UseBasicParsing
+            }
+            $actualHash = (Get-FileHash "WinDivert.zip" -Algorithm SHA256).Hash
+            if ($actualHash -eq $expectedHash) {
+              $got = $true
+              break
+            }
+            Write-Host "The file is not the one that is expected: $actualHash"
+          } catch {
+            Write-Host "The download failed: $($_.Exception.Message)"
+          }
+        }
+        if (-not $got) {
+          Write-Error "WinDivert.zip could not be downloaded"
           exit 1
         }
         Expand-Archive -Path "WinDivert.zip" -DestinationPath "C:\"
