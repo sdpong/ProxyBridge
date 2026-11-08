@@ -420,7 +420,7 @@ final class LocalProxyServer {
             // a line in the log: a rule that points at something that is not
             // there is a rule that does not do what it says
             if let note = decision.note {
-                log(note, level: "WARN")
+                warnOnce(note)
             }
             return decision.upstream
         }
@@ -691,6 +691,23 @@ final class LocalProxyServer {
 
     func log(_ message: String, level: String = "INFO") {
         logHandler?(message, level)
+    }
+
+    // A warning that is given once.
+    //
+    // A rule that points at something that is not there is wrong for every
+    // connection that comes along, and the log is no use when it says the
+    // same thing a hundred times.
+    private var warned: Set<String> = []
+    private let warnLock = NSLock()
+
+    func warnOnce(_ message: String) {
+        warnLock.lock()
+        let first = warned.insert(message).inserted
+        warnLock.unlock()
+        if first {
+            log(message, level: "WARN")
+        }
     }
 
     // MARK: the interface to listen on
