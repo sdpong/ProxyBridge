@@ -24,6 +24,12 @@ import Foundation
 // by SwiftUI and not out of the menu, so they cannot be renamed here. They are
 // in the language of the bundle, and the bundle is put in the language of the
 // app when the app starts (see main.swift).
+//
+// Two of them go away anyway: the view menu (everything in it was about a
+// sidebar or a toolbar, and this app has none) and the edit menu (it is a list
+// of the editing keys, and the keys keep working without it - see
+// installEditShortcuts). What is left of the menu bar is the app, the
+// profiles, the window and the help.
 enum StandardMenuLocalizer {
 
     // The name of the app, as the system menus put it in their titles.
@@ -91,7 +97,66 @@ enum StandardMenuLocalizer {
             Title(english: "Copy", chinese: "拷贝", text: L10n.t("Copy")),
             Title(english: "Paste", chinese: "粘贴", text: L10n.t("Paste")),
             Title(english: "Delete", chinese: "删除", text: L10n.t("Delete")),
-            Title(english: "Select All", chinese: "全选", text: L10n.t("Select All"))
+            Title(english: "Select All", chinese: "全选", text: L10n.t("Select All")),
+            // the items macOS 26 puts into the window menu
+            //
+            // The chinese words in them are the ones macOS itself uses, so
+            // that an item that the system has already translated is left
+            // alone and one that comes in english is renamed.
+            Title(english: "Close", chinese: "关闭", text: L10n.t("Close")),
+            Title(english: "Close All", chinese: "全部关闭", text: L10n.t("Close All")),
+            Title(english: "Minimize All", chinese: "全部最小化", text: L10n.t("Minimize All")),
+            Title(english: "Zoom All", chinese: "全部缩放", text: L10n.t("Zoom All")),
+            Title(english: "Fill", chinese: "填充", text: L10n.t("Fill")),
+            Title(english: "Center", chinese: "居中", text: L10n.t("Center")),
+            Title(english: "Move & Resize", chinese: "移动与调整大小", text: L10n.t("Move & Resize")),
+            Title(english: "Full Screen Tile", chinese: "全屏幕平铺", text: L10n.t("Full Screen Tile")),
+            Title(english: "Exit Full Screen", chinese: "退出全屏", text: L10n.t("Exit Full Screen")),
+            Title(english: "Move to Left of Screen", chinese: "移到屏幕左侧", text: L10n.t("Move to Left of Screen")),
+            Title(english: "Move to Right of Screen", chinese: "移到屏幕右侧", text: L10n.t("Move to Right of Screen")),
+            Title(english: "Move to Top of Screen", chinese: "移到屏幕顶部", text: L10n.t("Move to Top of Screen")),
+            Title(english: "Move to Bottom of Screen", chinese: "移到屏幕底部", text: L10n.t("Move to Bottom of Screen")),
+            Title(english: "Tile Window to Left of Screen", chinese: "窗口平铺到屏幕左侧", text: L10n.t("Tile Window to Left of Screen")),
+            Title(english: "Tile Window to Right of Screen", chinese: "窗口平铺到屏幕右侧", text: L10n.t("Tile Window to Right of Screen")),
+            Title(english: "Tile Window to Top of Screen", chinese: "窗口平铺到屏幕顶部", text: L10n.t("Tile Window to Top of Screen")),
+            Title(english: "Tile Window to Bottom of Screen", chinese: "窗口平铺到屏幕底部", text: L10n.t("Tile Window to Bottom of Screen"))
+        ]
+    }
+
+    // The items of macOS 26 that belong to the tabs and to the window sets.
+    //
+    // The app has one window and no row of tabs, so those items are always
+    // grey: they are about a set of windows or a tab bar that does not exist
+    // here. A grey item is a promise that is never kept, so they are taken
+    // out instead of being renamed.
+    private static var windowNoiseTitles: [Title] {
+        return [
+            // the words macOS uses in english ...
+            Title(english: "Remove Window from Set", chinese: "从组中移除窗口", text: ""),
+            Title(english: "Add Tab to Window Set", chinese: "将标签页添加到窗口组", text: ""),
+            Title(english: "Move Tab to New Window", chinese: "将标签页移到新窗口", text: ""),
+            Title(english: "Merge All Windows", chinese: "合并所有窗口", text: ""),
+            Title(english: "Show Previous Tab", chinese: "显示上一个标签页", text: ""),
+            Title(english: "Show Next Tab", chinese: "显示下一个标签页", text: ""),
+            Title(english: "Select Previous Tab", chinese: "选择上一个标签页", text: ""),
+            Title(english: "Select Next Tab", chinese: "选择下一个标签页", text: ""),
+            Title(english: "New Tab", chinese: "新建标签页", text: ""),
+            Title(english: "Close Tab", chinese: "关闭标签页", text: ""),
+            Title(english: "Duplicate Tab", chinese: "复制标签页", text: ""),
+            Title(english: "Move Window to New Set", chinese: "将窗口移到新组", text: ""),
+            Title(english: "Rename Window Set", chinese: "重命名窗口组", text: ""),
+            // ... and the ones it uses in chinese
+            Title(english: "从组中移除窗口", chinese: "从组中移除窗口", text: ""),
+            Title(english: "将标签页添加到窗口组", chinese: "将标签页添加到窗口组", text: ""),
+            Title(english: "将标签页移到新窗口", chinese: "将标签页移到新窗口", text: ""),
+            Title(english: "合并所有窗口", chinese: "合并所有窗口", text: ""),
+            Title(english: "显示上一个标签页", chinese: "显示上一个标签页", text: ""),
+            Title(english: "显示下一个标签页", chinese: "显示下一个标签页", text: ""),
+            Title(english: "选择上一个标签页", chinese: "选择上一个标签页", text: ""),
+            Title(english: "选择下一个标签页", chinese: "选择下一个标签页", text: ""),
+            Title(english: "新建标签页", chinese: "新建标签页", text: ""),
+            Title(english: "关闭标签页", chinese: "关闭标签页", text: ""),
+            Title(english: "复制标签页", chinese: "复制标签页", text: "")
         ]
     }
 
@@ -150,9 +215,18 @@ enum StandardMenuLocalizer {
         // the items of macOS 26 that have nothing to do with editing
         pruneEditMenu(menu)
 
+        // the grey items of macOS 26 that belong to the tabs and the window
+        // sets. this app has neither, so they are taken out.
+        pruneWindowMenu(menu)
+
         // the view menu goes, and what is in it comes to the window menu
         removeViewMenu(menu)
         putWindowItems(menu)
+
+        // the edit menu goes as well. the keys are still there - see
+        // installEditShortcuts - but a menu that is a list of keys is a menu
+        // nobody opens.
+        removeEditMenu(menu)
 
         // What the menu bar looks like right now. It is written only when it
         // changed, because the names of the menus are different on every
@@ -202,6 +276,118 @@ enum StandardMenuLocalizer {
             guard item.title == "View" || item.title == L10n.t("View") || item.title == "显示" else { continue }
             menu.removeItem(at: index)
             return
+        }
+    }
+
+    // Removes the items of the window menu that are about the tabs and the
+    // window sets.
+    //
+    // macOS 26 puts them into the window menu of every app, and they are
+    // always grey in this one: the app has a single window and no row of
+    // tabs, so there is no set of windows and no tab to move. A grey item is
+    // a promise that is never kept, so it is taken out.
+    private static func pruneWindowMenu(_ menu: NSMenu) {
+        guard let window = menu.items.first(where: { isWindowMenu($0) }),
+              let submenu = window.submenu else { return }
+        // from the back, so that the index of the item that is not removed
+        // does not move
+        for index in stride(from: submenu.numberOfItems - 1, through: 0, by: -1) {
+            guard let item = submenu.item(at: index) else { continue }
+            guard windowNoiseTitles.contains(where: { $0.matches(item.title) }) else { continue }
+            submenu.removeItem(at: index)
+        }
+        // the items that went took their separators with them, and what is
+        // left is a row of empty lines
+        collapseSeparators(submenu)
+    }
+
+    // Removes the lines that are empty twice in a row, and the one at the end.
+    //
+    // The items of macOS 26 stand between lines, and taking one of them out
+    // leaves two lines where there was one.
+    private static func collapseSeparators(_ menu: NSMenu) {
+        // whether the item that comes after the one that is looked at is a
+        // line. Nothing comes after the last item, so the last line is a
+        // line at the end of the menu.
+        var nextIsSeparator = true
+        for index in stride(from: menu.numberOfItems - 1, through: 0, by: -1) {
+            guard let item = menu.item(at: index) else { continue }
+            if item.isSeparatorItem {
+                // two lines in a row are one line too many, and a line at the
+                // end of the menu has nothing after it
+                if nextIsSeparator {
+                    menu.removeItem(at: index)
+                    continue
+                }
+                nextIsSeparator = true
+            } else {
+                nextIsSeparator = false
+            }
+        }
+    }
+
+    // Removes the edit menu.
+    //
+    // The menu itself is only a list of the editing keys, and a proxy that
+    // shows a log has nothing to edit. The keys keep working: they are
+    // answered by the first responder, and the first responder is looked at
+    // by installEditShortcuts.
+    private static func removeEditMenu(_ menu: NSMenu) {
+        for (index, item) in menu.items.enumerated() where isEditMenu(item) {
+            menu.removeItem(at: index)
+            return
+        }
+    }
+
+    // Keeps the editing keys alive without an edit menu.
+    //
+    // The menu item was never the command: the command is answered by the
+    // first responder - the text view of the log, or the field that holds the
+    // keyboard. The menu item was one way of reaching it, and the way that
+    // goes away with the menu.
+    //
+    // So the keys are watched here and the commands are sent to the first
+    // responder. The log can still be copied out of it, and a field can still
+    // be pasted into, without a menu that lists the keys.
+    private static func installEditShortcuts() {
+        guard editKeyMonitor == nil else { return }
+        editKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.control),
+                  !event.modifierFlags.contains(.option),
+                  let key = event.charactersIgnoringModifiers?.lowercased() else {
+                return event
+            }
+
+            let selector: Selector
+            switch key {
+            case "c": selector = #selector(NSText.copy(_:))
+            case "x": selector = #selector(NSText.cut(_:))
+            case "v": selector = #selector(NSText.paste(_:))
+            case "a": selector = #selector(NSText.selectAll(_:))
+            case "z":
+                // the redo is the undo with the shift key
+                selector = event.modifierFlags.contains(.shift) ? Selector(("redo:")) : Selector(("undo:"))
+            default:
+                return event
+            }
+
+            // The command is answered by the first responder: the text view
+            // of the log, or the field that holds the keyboard.
+            //
+            // The first responder of the window that has the keyboard is
+            // asked first, and the window of the app is the one to fall back
+            // on - the keys of the app arrive when the app has the keyboard,
+            // but the window that has it is not always the main one.
+            let responder = NSApp.keyWindow?.firstResponder ?? AppDelegate.mainWindow?.firstResponder
+            if let responder, responder.responds(to: selector) {
+                NSApp.sendAction(selector, to: responder, from: nil)
+            } else {
+                // nobody answers it: the chain of the responders is asked
+                // anyway, and the undo manager is in it
+                NSApp.sendAction(selector, to: nil, from: nil)
+            }
+            return nil
         }
     }
 
@@ -259,6 +445,10 @@ enum StandardMenuLocalizer {
         guard !installed else { return }
         installed = true
 
+        // the editing keys are watched as well: the edit menu is gone, and the
+        // keys have to keep working without it
+        installEditShortcuts()
+
         // The menu bar of SwiftUI is built again from time to time, and the
         // new one carries the titles of the system again. AppKit says nothing
         // about it: a new menu bar is not a change of an item, so the
@@ -275,12 +465,17 @@ enum StandardMenuLocalizer {
         // the titles of the standard menus again whenever it builds the menu
         // bar again, and this is what puts them back into the language of the
         // app right away.
+        //
+        // The renaming waits for the turn of the run loop to end. SwiftUI
+        // builds the menu bar item by item, and a renaming that runs in the
+        // middle of that would take away the edit menu - which comes before
+        // the view menu - and leave the view menu, which comes after it.
         NotificationCenter.default.addObserver(
             forName: NSMenu.didChangeItemNotification,
             object: nil,
             queue: .main
         ) { _ in
-            apply()
+            DispatchQueue.main.async { apply() }
         }
 
         NotificationCenter.default.addObserver(
@@ -288,7 +483,32 @@ enum StandardMenuLocalizer {
             object: nil,
             queue: .main
         ) { _ in
-            apply()
+            DispatchQueue.main.async { apply() }
+        }
+
+        // The window that gets the keyboard brings the view menu with it:
+        // SwiftUI builds the menu bar again when a window becomes the key
+        // one, and the new one has the view menu in it. The renaming is
+        // done again when that happens.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            DispatchQueue.main.async { apply() }
+        }
+
+        // And once more from time to time, as long as the app is in front.
+        //
+        // SwiftUI does not say anything when it puts a menu back: the view
+        // menu was back more than once without a word in the log. A check
+        // every two seconds is nothing - it is a handful of names compared -
+        // and it keeps the menu bar the way the person left it.
+        if menuTimer == nil {
+            menuTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                guard NSApp.isActive else { return }
+                apply()
+            }
         }
     }
 
@@ -298,6 +518,10 @@ enum StandardMenuLocalizer {
     private static var applying = false
     // the watch on the menu bar itself
     private static var menuBarObservation: NSKeyValueObservation?
+    // the watch on the editing keys
+    private static var editKeyMonitor: Any?
+    // the watch that looks at the menu bar from time to time
+    private static var menuTimer: Timer?
     // the titles the menu bar had the last time it was looked at
     private static var lastTitles = ""
     // the menus that were already written into the log

@@ -119,11 +119,17 @@ enum L10n {
         "Logging and DNS": "日志与 DNS",
         "The DNS proxy lets ProxiRoute learn which name belongs to which address. Host name rules and \"send hostname\" need it. Without it another program can use the one DNS proxy slot of macOS.": "DNS 代理让 ProxiRoute 知道哪个名字对应哪个地址。主机名规则和「发送主机名」需要它。关掉之后，macOS 唯一的 DNS 代理位置可以留给别的程序。",
         "Language": "语言",
-        "The menus macOS draws itself (Edit, Window, Help) change to the new language the next time ProxiRoute starts.": "macOS 自己绘制的菜单（编辑、窗口、帮助）会在下次启动 ProxiRoute 时换成新的语言。",
+        "The menus that macOS draws itself (Window, Help) follow the language that is chosen here.": "macOS 自己绘制的菜单（窗口、帮助）会跟着这里选择的语言走。",
         "Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit.": "关闭窗口不会停止代理。App 留在后台，隧道继续运行，直到在这里停止，或者退出 App。",
         "System Extension": "系统扩展",
         "macOS asks for the approval of the system extension once. Until it is given, no traffic can be proxied.": "macOS 需要一次对系统扩展的授权。授权之前无法代理任何流量。",
         "More Windows": "更多窗口",
+
+        // the traffic of the proxy server, and the line in the tab bar
+        "Clients: %@": "客户端：%@",
+        "No traffic from the clients yet": "还没有客户端的流量",
+        "The proxy server carries the traffic of the clients. It shows up here as soon as a client connects.": "代理服务器转发客户端的流量。客户端一连上，这里就会出现记录。",
+        "The route mode is off, so the traffic of this machine is not counted here. The proxy server counts the traffic of the clients.": "路由模式已关闭，本机流量不在这里统计。代理服务器统计的是客户端的流量。",
 
         // the menus macOS brings itself. their titles come from the
         // localization of the app bundle, and this app has no bundle of
@@ -148,6 +154,24 @@ enum L10n {
         "Copy": "拷贝",
         "Paste": "粘贴",
         "Select All": "全选",
+
+        // the items macOS 26 put into the window menu
+        "Fill": "填充",
+        "Center": "居中",
+        "Move & Resize": "移动与调整大小",
+        "Full Screen Tile": "全屏幕平铺",
+        "Close All": "全部关闭",
+        "Minimize All": "全部最小化",
+        "Zoom All": "全部缩放",
+        "Exit Full Screen": "退出全屏",
+        "Move to Left of Screen": "移到屏幕左侧",
+        "Move to Right of Screen": "移到屏幕右侧",
+        "Move to Top of Screen": "移到屏幕顶部",
+        "Move to Bottom of Screen": "移到屏幕底部",
+        "Tile Window to Left of Screen": "窗口平铺到屏幕左侧",
+        "Tile Window to Right of Screen": "窗口平铺到屏幕右侧",
+        "Tile Window to Top of Screen": "窗口平铺到屏幕顶部",
+        "Tile Window to Bottom of Screen": "窗口平铺到屏幕底部",
 
         // the texts that were written before the app spoke the language of the
         // person. they are the log of the app and the notes of the windows.
