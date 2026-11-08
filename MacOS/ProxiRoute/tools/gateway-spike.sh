@@ -38,6 +38,9 @@ SRC_PORT_LAST=20099
 FORWARD=0
 
 TMP="$(mktemp -d /tmp/proxiroute-spike.XXXXXX)"
+# the folder is made for root only, and the program is run once more as the
+# user who started the test, so both have to be reachable for it
+chmod 755 "$TMP"
 TARGET_PID=""
 HELPER_PID=""
 WAS_ENABLED="no"
@@ -349,54 +352,6 @@ HELPER_PID=$!
 sleep 2
 say "   the test place is on 127.0.0.1:$TARGET_PORT, the program listens on 127.0.0.1:$REDIRECT_PORT"
 
-# ---------------------------------------------------------------- the local test
-
-# one connection to the test place, and what the program made of it
-local_test() {
-    log_file="$1"
-    step "a connection goes to the test place"
-    curl -s --max-time 20 "http://127.0.0.1:$TARGET_PORT/" -o "$TMP/client.out" 2>"$TMP/client.err"
-    say "   the client got $(wc -c < "$TMP/client.out" | tr -d ' ') bytes"
-    if [ -s "$log_file" ]; then
-        say "   the program took the connection:"
-        grep -E '^(accepted|NATLOOK|going|no way)' "$log_file" | sed 's/^/      /'
-    else
-        say "   the program took nothing: the redirect did not happen."
-    fi
-    sleep 1
-}
-
-local_test "$TMP/helper.log"
-
-pfctl -ss 2>&1 | head -40 > "$TMP/states.txt"
-pfctl -ss -o nat 2>&1 | head -40 > "$TMP/states-nat.txt"
-say
-say "the states of the filter (this is the official view of where the traffic was going):"
-sed 's/^/   /' "$TMP/states.txt"
-say
-say "the same states with the translation details (-o nat):"
-sed 's/^/   /' "$TMP/states-nat.txt"
-
-# ---------------------------------------------------------------- the same, without root
-#
-# The ioctl is sent on the socket of the connection, so it may not need the
-# root at all: if the program can ask the kernel as an ordinary user, the
-# app of the gateway mode can do it by itself and the helper does not have
-# to. The reading of the states needs the root, so the two are told apart.
-
-if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
-    step "the same, with the program running as $SUDO_USER instead of root"
-    kill "$HELPER_PID" 2>/dev/null
-    sleep 1
-    kill -9 "$HELPER_PID" 2>/dev/null
-    sudo -u "$SUDO_USER" "$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" \
-        "$SRC_PORT_BASE" 127.0.0.1 "$TARGET_PORT" > "$TMP/helper-user.log" 2>&1 &
-    HELPER_PID=$!
-    sleep 2
-    local_test "$TMP/helper-user.log"
-    verdict "without root" "$TMP/helper-user.log"
-fi
-
 # ---------------------------------------------------------------- the verdict
 
 verdict() {
@@ -510,6 +465,54 @@ PY
     esac
 }
 
+# ---------------------------------------------------------------- the local test
+
+# one connection to the test place, and what the program made of it
+local_test() {
+    log_file="$1"
+    step "a connection goes to the test place"
+    curl -s --max-time 20 "http://127.0.0.1:$TARGET_PORT/" -o "$TMP/client.out" 2>"$TMP/client.err"
+    say "   the client got $(wc -c < "$TMP/client.out" | tr -d ' ') bytes"
+    if [ -s "$log_file" ]; then
+        say "   the program took the connection:"
+        grep -E '^(accepted|NATLOOK|going|no way)' "$log_file" | sed 's/^/      /'
+    else
+        say "   the program took nothing: the redirect did not happen."
+    fi
+    sleep 1
+    pfctl -ss 2>&1 | head -40 > "$TMP/states.txt"
+    pfctl -s nat 2>&1 | head -40 > "$TMP/states-nat.txt"
+}
+
+local_test "$TMP/helper.log"
+
+say
+say "the states of the filter (this is the official view of where the traffic was going):"
+sed 's/^/   /' "$TMP/states.txt"
+say
+say "the translation rules that are loaded (this says whether our rule is in place):"
+sed 's/^/   /' "$TMP/states-nat.txt"
+
+# ---------------------------------------------------------------- the same, without root
+#
+# The ioctl is sent on the socket of the connection, so it may not need the
+# root at all: if the program can ask the kernel as an ordinary user, the
+# app of the gateway mode can do it by itself and the helper does not have
+# to. The reading of the states needs the root, so the two are told apart.
+
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    step "the same, with the program running as $SUDO_USER instead of root"
+    kill "$HELPER_PID" 2>/dev/null
+    sleep 1
+    kill -9 "$HELPER_PID" 2>/dev/null
+    sudo -u "$SUDO_USER" "$TMP/gateway-natlook" "$REDIRECT_PORT" 127.0.0.1 "$TARGET_PORT" \
+        "$SRC_PORT_BASE" 127.0.0.1 "$TARGET_PORT" > "$TMP/helper-user.log" 2>&1 &
+    HELPER_PID=$!
+    sleep 2
+    local_test "$TMP/helper-user.log"
+    verdict "without root" "$TMP/helper-user.log"
+fi
+
 verdict local "$TMP/helper.log"
 
 # ---------------------------------------------------------------- the forwarding
@@ -533,10 +536,10 @@ if [ "$FORWARD" = "1" ]; then
     echo
     say "the states of the filter:"
     pfctl -ss 2>&1 | head -40 > "$TMP/states-client.txt"
-    pfctl -ss -o nat 2>&1 | head -40 > "$TMP/states-client-nat.txt"
+    pfctl -s nat 2>&1 | head -40 > "$TMP/states-client-nat.txt"
     sed 's/^/   /' "$TMP/states-client.txt"
     say
-    say "the same states with the translation details (-o nat):"
+    say "the translation rules that are loaded:"
     sed 's/^/   /' "$TMP/states-client-nat.txt"
     cp "$TMP/states-client.txt" "$TMP/states.txt"
     cp "$TMP/states-client-nat.txt" "$TMP/states-nat.txt"

@@ -1720,6 +1720,90 @@ ALL tcp 127.0.0.1:18081 <- 127.0.0.1:52807
 同时脚本会打�� `pfctl -ss -o nat`：**如果翻译详情里能看到 18080，
 那「读状态表」这条兜底路就是通的**，helper 作为 root 读得到它。
 
+## 本轮：ioctl 的三件事查清了 —— 设备、结构体、方向
+
+第二次实测（384 种问法全灭）之后，做了两件事：写了一个**不需要 root 的 ioctl 扫描器**，
+和查 Apple 自己的内核源码。答案就写在那里。
+
+### 一、ioctl 发在 `/dev/pf` 上，不是发在 socket 上
+
+扫描器在 socket 上试了 `'D'` 组 0–63 号 × 5 种尺寸共 320 个 ioctl，
+**没有一个与「不存在的 ioctl」行为不同**（全是 `ENXIO`）。
+也就是说：socket 根本不认识 pf 的 ioctl。
+
+Apple 的 `pf_io.c` 里 `DIOCNATLOOK` 是 **`/dev/pf` 设备的 ioctl**。
+`/dev/pf` 是 `crw------- root wheel` → **要 root**。
+（FreeBSD 后来才改成发在 socket 上，OpenBSD/Apple 这一支不是。）
+
+### 二、结构体不是 BSD 的那个
+
+Apple 的 `bsd/net/pfvar.h`（XNU 公开源码）里的定义：
+
+```c
+struct pf_addr {            /* 128 位！BSD 的是 32 位 */
+	union { struct in_addr v4addr; struct in6_addr v6addr;
+	        uint8_t addr8[16]; uint16_t addr16[8]; uint32_t addr32[4]; } pfa;
+};
+union pf_state_xport { uint16_t port; uint16_t call_id; uint32_t spi; };
+
+struct pfioc_natlook {
+	struct pf_addr saddr, daddr, rsaddr, rdaddr;   /* 4 × 16 字节 */
+	union pf_state_xport sxport, dxport, rsxport, rdxport;
+	sa_family_t af;            /* macOS 上 sa_family_t 是 1 字节 */
+	uint8_t proto;
+	uint8_t proto_variant;     /* Apple 自己加的 */
+	uint8_t direction;
+};
+#define DIOCNATLOOK _IOWR('D', 23, struct pfioc_natlook)
+```
+
+**`sizeof` = 84 字节**（地址 64 + 端口 16 + af/proto/proto_variant/direction 4）。
+大小进了 ioctl 号，所以用 BSD 的布局去问，问的是**另一个 ioctl**，内核当然不理。
+（`sa_family_t` 在 macOS 是 `unsigned char` —— 差一个字节就不是同一个 ioctl 了。）
+
+### 三、方向要用 `PF_OUT`，答案在 `rdaddr`/`rdxport`
+
+内核的处理器（`pf_io.c`）：
+
+```c
+if (direction == PF_IN) {
+	key.ext = daddr/dxport;  key.gwy = saddr/sxport;
+	state = pf_find_state_all(&key, PF_IN, &m);
+	/* 答案：rsaddr = sk->lan.addr，rdaddr = 原样返回我们给的 daddr */
+} else {
+	key.lan = daddr/dxport;  key.ext = saddr/sxport;
+	state = pf_find_state_all(&key, PF_OUT, &m);
+	/* 答案：rdaddr = sk->gwy.addr，rdxport = sk->gwy.xport  ← 原目的！ */
+}
+```
+
+**`gwy`（gateway）就是重定向前那��真正目的地** —— 只有 `PF_OUT` 那条分支把它交出来。
+`PF_IN` 分支给的是「我们给什么它就还什么」，没有信息。
+
+所以正确的问法是：
+
+| 字段 | 填什么 |
+|---|---|
+| `saddr` / `sxport` | 对端（客户端）地址和端口 |
+| `daddr` / `dxport` | socket 本地地址和端口（= 重定向目标 18081） |
+| `af` | `AF_INET` |
+| `proto` | `IPPROTO_TCP` |
+| `direction` | **`PF_OUT`（2）** |
+| 答案 | `rdaddr` + `rdxport` = 原目的 |
+
+### 顺带查清的两件事
+
+| 事实 | 怎么查的 | 影响 |
+|---|---|---|
+| macOS 的 pfctl **没有** `pfctl -ss -o nat` | `pfctl: Unknown optimization 'nat'`（`-o` 只是规则集优化器） | 「读状态表当兜底」这条路**不成立**：状态表那一行只有重定向后的元组（`ALL tcp 127.0.0.1:18081 <- 127.0.0.1:54009`），没有原目的。**DIOCNATLOOK 是唯一的路**，而它要 root → **helper 必须背这个活** |
+| XNU 的 `pf_io.c` 里有 `securelevel > 1` 的白名单，`DIOCNATLOOK` 在里面 | 读到源码 | 说明这个 ioctl 是给有特权的程序用的，不是给普通 app 的 |
+
+### 现在的状态
+
+实测工具按上面三条重写：ioctl 发在 `/dev/pf` 上、用 Apple 的 84 字节布局、方向用 `PF_OUT`。
+另外脚本也修了两处自己的毛病：`verdict` 在定义之前被调用（用户输出里那句
+`verdict: command not found`），以及普通用户跑 helper 时进不去 root 建的 700 临时目录。
+
 ## 已知限制
 
 - **本机（macOS）没有 MSVC / mingw 交叉编译器**，Windows 侧改动只能逐行人工复核 +

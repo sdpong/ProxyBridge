@@ -109,6 +109,53 @@ struct pfioc_natlook_new {
 };
 #define DIOCNATLOOK_NEW _IOWR('D', 23, struct pfioc_natlook_new)
 
+
+/* The layout of macOS, taken from the source of the kernel itself
+ * (XNU, bsd/net/pfvar.h). It is not the layout of OpenBSD:
+ *
+ *   - the address of the filter is 128 bits wide on macOS, not 32;
+ *   - the ports are in a union that also carries a call id and an spi;
+ *   - there is a field for the variant of the protocol, which Apple added.
+ *
+ * The size of the struct goes into the number of the ioctl, so a layout
+ * that is not the one of this kernel is a different ioctl, and the kernel
+ * does not know it. */
+struct pf_addr_apple {
+    union {
+        struct in_addr  v4addr;
+        struct in6_addr v6addr;
+        uint8_t  addr8[16];
+        uint16_t addr16[8];
+        uint32_t addr32[4];
+    } pfa;
+};
+
+union pf_state_xport {
+    uint16_t port;
+    uint16_t call_id;
+    uint32_t spi;
+};
+
+struct pfioc_natlook_apple {
+    struct pf_addr_apple saddr;
+    struct pf_addr_apple daddr;
+    struct pf_addr_apple rsaddr;
+    struct pf_addr_apple rdaddr;
+    union pf_state_xport sxport;
+    union pf_state_xport dxport;
+    union pf_state_xport rsxport;
+    union pf_state_xport rdxport;
+    sa_family_t af;
+    uint8_t  proto;
+    uint8_t  proto_variant;
+    uint8_t  direction;
+};
+#define DIOCNATLOOK_APPLE _IOWR('D', 23, struct pfioc_natlook_apple)
+
+/* The size the kernel expects. It is 84 bytes: the family of an address is
+ * one byte on macOS, and the struct is padded to four. */
+typedef char pf_natlook_size_check[(sizeof(struct pfioc_natlook_apple) == 84) ? 1 : -1];
+
 #define PF_IN  1
 #define PF_OUT 2
 
@@ -126,7 +173,12 @@ union natlook_buffer {
 #define LAYOUT_OLD    0
 #define LAYOUT_OLDER  1
 #define LAYOUT_NEW    2
-#define LAYOUT_COUNT  3
+#define LAYOUT_APPLE  3
+#define LAYOUT_COUNT  4
+
+/* The device of the packet filter. Only root may open it, and the ioctl
+ * of the kernel is sent on it - not on the socket. */
+static int pf_device = -1;
 
 /* How many connections may be open at the same time. */
 #define SOURCE_PORTS 100
@@ -231,7 +283,8 @@ static const char *layout_name(int layout) {
     switch (layout) {
     case LAYOUT_OLD: return "old";
     case LAYOUT_OLDER: return "older";
-    default: return "new";
+    case LAYOUT_NEW: return "new";
+    default: return "apple";
     }
 }
 
@@ -249,7 +302,58 @@ static uint32_t addr_in(uint32_t network_addr, int order) {
     return order == ADDR_NET ? network_addr : swap32(network_addr);
 }
 
-/* Fills one of the three layouts and asks the kernel.
+/* The layout of macOS, asked on the device of the packet filter.
+ *
+ * The kernel reverses the lookup: the source and the destination of the
+ * connection are given the way the socket sees them, and the kernel looks
+ * for the state of the way back. When the direction is PF_OUT the answer
+ * is the gateway of the state, which is the place the traffic was going
+ * before it was redirected. */
+static int probe_apple(const struct sockaddr_in *peer,
+                       const struct sockaddr_in *local, const struct sockaddr_in *original,
+                       const struct probe_input *in, struct probe_result *out) {
+    if (pf_device < 0) return 0;
+
+    struct sockaddr_in src, dst;
+    if (in->order == ORDER_PEER_FIRST) {
+        src = *peer;
+        dst = *local;
+    } else {
+        src = *local;
+        dst = *peer;
+    }
+    if (in->use_original && original != NULL) {
+        dst = *original;
+    }
+
+    struct pfioc_natlook_apple nl;
+    memset(&nl, 0, sizeof(nl));
+    /* the address of the filter is 128 bits wide; the address of an ipv4
+     * goes into the first four bytes of it, in the order of the network */
+    memcpy(&nl.saddr.pfa.v4addr, &src.sin_addr, sizeof(struct in_addr));
+    memcpy(&nl.daddr.pfa.v4addr, &dst.sin_addr, sizeof(struct in_addr));
+    nl.sxport.port = port_in(src.sin_port, in->ports);
+    nl.dxport.port = port_in(dst.sin_port, in->ports);
+    nl.af = AF_INET;
+    nl.proto = (uint8_t)in->proto;
+    nl.proto_variant = 0;
+    nl.direction = (uint8_t)in->dir;
+
+    if (ioctl(pf_device, DIOCNATLOOK_APPLE, &nl) != 0) return 0;
+
+    memset(out, 0, sizeof(*out));
+    memcpy(&out->saddr, &nl.saddr.pfa.v4addr, sizeof(struct in_addr));
+    memcpy(&out->daddr, &nl.daddr.pfa.v4addr, sizeof(struct in_addr));
+    memcpy(&out->rsaddr, &nl.rsaddr.pfa.v4addr, sizeof(struct in_addr));
+    memcpy(&out->rdaddr, &nl.rdaddr.pfa.v4addr, sizeof(struct in_addr));
+    out->sport = nl.sxport.port;
+    out->dport = nl.dxport.port;
+    out->rsport = nl.rsxport.port;
+    out->rdport = nl.rdxport.port;
+    return 1;
+}
+
+/* Fills one of the layouts and asks the kernel.
  * Returns 1 when the kernel answered. */
 static int probe(int fd, int layout, const struct sockaddr_in *peer,
                  const struct sockaddr_in *local, const struct sockaddr_in *original,
@@ -269,6 +373,10 @@ static int probe(int fd, int layout, const struct sockaddr_in *peer,
     }
 
     memset(out, 0, sizeof(*out));
+
+    if (layout == LAYOUT_APPLE) {
+        return probe_apple(peer, local, original, in, out);
+    }
 
     if (layout == LAYOUT_NEW) {
         union natlook_buffer buf;
@@ -395,9 +503,11 @@ static int ask(int fd, const struct sockaddr_in *peer, const struct sockaddr_in 
                                 best->found = 1;
                                 snprintf(best->layout, sizeof(best->layout), "%s",
                                          layout_name(layout));
-                                /* the newer layout has a field of its own for
-                                 * the place the traffic was going */
-                                if (layout == LAYOUT_NEW) {
+                                /* the place the traffic was going before it
+                                 * was redirected is the gateway of the state,
+                                 * and the kernel puts it in the reply
+                                 * address when the direction is PF_OUT */
+                                if (layout == LAYOUT_NEW || layout == LAYOUT_APPLE) {
                                     best->addr = r.rdaddr;
                                     best->port = r.rdport;
                                 } else {
@@ -612,6 +722,16 @@ int main(int argc, char **argv) {
             original_ptr = &original;
             log_line("the place the traffic was going is known: %s:%d", argv[5], atoi(argv[6]));
         }
+    }
+
+    /* The device of the packet filter. The ioctl that asks where a
+     * connection was going is sent on it, and only root may open it. */
+    pf_device = open("/dev/pf", O_RDWR);
+    if (pf_device < 0) {
+        log_line("/dev/pf could not be opened (%s): the original destination"
+                 " cannot be read without the root", strerror(errno));
+    } else {
+        log_line("/dev/pf is open, the kernel can be asked");
     }
 
     /* The children are taken care of by the system, so that many
