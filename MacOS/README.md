@@ -384,9 +384,15 @@ The menu bar of the app keeps what belongs to the documents and the help:
 - **Window** - open ProxiRoute, enter full screen, and the windows of the app
 - **Help** - documentation, check for updates
 
-There is no **Edit** menu. The editing keys (**⌘C**, **⌘X**, **⌘V**, **⌘A**,
-**⌘Z**) keep working: they are answered by the field or the text view that
-holds the keyboard, so the log can still be copied out of it.
+There is no **Edit** menu and no **View** menu. The editing keys (**⌘C**,
+**⌘X**, **⌘V**, **⌘A**, **⌘Z**) keep working: they are answered by the field or
+the text view that holds the keyboard, so the log can still be copied out of
+it.
+
+The two menus are hidden and not taken out of the menu bar. SwiftUI watches
+the menu bar and answers a change of it by building it again - with its own
+**View** menu in it. A hidden menu item is not a change of the menu bar, so
+it stays hidden.
 
 The items that macOS puts into the **Window** menu (close, minimize, zoom,
 fill, center, move and resize, full screen tile) are renamed into the
