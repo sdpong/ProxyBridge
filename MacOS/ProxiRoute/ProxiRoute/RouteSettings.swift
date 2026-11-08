@@ -10,7 +10,10 @@ import Foundation
 // are a property of the machine, not of the rules.
 struct RouteSettings: Equatable {
 
-    // everything goes to this proxy, the rules are not looked at
+    // The traffic that no rule names goes to this proxy. A rule that names a
+    // program still decides where that program goes: the proxy server on
+    // this machine sends its own traffic out, and handing that traffic back
+    // to it would never stop.
     var globalMode = false
     // the proxy the global mode sends everything to. "DIRECT" is a proxy of
     // its own: it means everything goes out directly.

@@ -51,7 +51,7 @@ struct RouteSettingsView: View {
                     }
                     .disabled(viewModel.proxyConfigs.isEmpty)
 
-                    Text(L10n.t("The rules are not looked at while the global mode is on."))
+                    Text(L10n.t("The traffic that no rule names goes through this proxy. A rule that names a program still decides."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

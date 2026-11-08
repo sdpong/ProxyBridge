@@ -334,7 +334,7 @@ enum L10n {
         "Routing...": "路由…",
         "Global Mode": "全局模式",
         "Everything Goes Through": "全部流量走",
-        "The rules are not looked at while the global mode is on.": "全局模式打开时，规则不再参与判断。",
+        "The traffic that no rule names goes through this proxy. A rule that names a program still decides.": "没有规则匹配的流量走这个代理。规则里写明了程序的，仍然按规则走。",
         "Where the Traffic Goes": "流量去向",
         "Outgoing Interface": "出口网卡",
         "Automatic": "自动",

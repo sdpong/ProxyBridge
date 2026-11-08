@@ -1583,15 +1583,24 @@ class AppProxyProvider: NETransparentProxyProvider {
         // rules are not looked at. It is the switch a "routing mode" is.
         let route = currentRouteOptions()
         let globalAction = route.globalMode ? route.globalProxyId : nil
-        // what the traffic does is decided by one thing: the global mode, or
-        // the rule that matched
-        let action = globalAction ?? matchedRule?.action
-        // the rule that decided is only known when the rules decided
-        let decidingRuleId = globalAction == nil ? matchedRule?.ruleId : nil
+        // The rule that matched decides, and the global mode is the answer
+        // for the traffic that no rule names.
+        //
+        // It is not "the rules are ignored": a rule that says a program goes
+        // direct still says that, and that is what keeps the machine from
+        // looping. A proxy server that is on this machine sends its own
+        // traffic out, and if that traffic were handed back to it, it would
+        // never stop: the proxy would ask for a connection, the extension
+        // would give it to the proxy, and the proxy would ask again. That
+        // loop is the whole machine at a hundred percent, and the rule that
+        // names the proxy is what stops it.
+        let action = matchedRule?.action ?? globalAction
+        // the rule that decided is the rule that matched
+        let decidingRuleId = matchedRule?.ruleId
         // Whether the rule names the programs it is for. It decides what the
-        // proxy server is told about the traffic. In the global mode there is
-        // no rule at all, and the traffic is ProxiRoute's own.
-        let ruleHasProcessFilter = globalAction == nil ? (matched?.matcher.hasProcessFilter ?? false) : false
+        // proxy server is told about the traffic. Traffic that no rule names
+        // is ProxiRoute's own.
+        let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
 
         if let action = action {
             switch action {
@@ -1736,8 +1745,11 @@ class AppProxyProvider: NETransparentProxyProvider {
             return false
         }
         let globalAction = route.globalMode ? route.globalProxyId : nil
-        let action = globalAction ?? matchedRule?.action
-        let decidingRuleId = globalAction == nil ? matchedRule?.ruleId : nil
+        // the rule that matched decides, and the global mode is the answer
+        // for the traffic that no rule names. it is what keeps the traffic of
+        // the proxy server itself out of the tunnel.
+        let action = matchedRule?.action ?? globalAction
+        let decidingRuleId = matchedRule?.ruleId
 
         if let action = action {
             switch action {
@@ -1776,7 +1788,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                         return
                     }
                     // pass the resolved display name (curl), not the raw signing id (curl-<hash>)
-                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: globalAction == nil && ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
+                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
                 }
                 return true
             }
