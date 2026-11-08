@@ -34,7 +34,7 @@ final class LiveFlowRegistry {
         let proto: String
         let process: String
         var destination: String
-        let port: UInt16
+        var port: UInt16
         let proxy: String
         let startedAt: Date
         var bytesUp: Int64 = 0
@@ -100,6 +100,15 @@ final class LiveFlowRegistry {
     func setDestination(_ destination: String, for id: UInt64) {
         lock.lock()
         entries[id]?.destination = destination
+        lock.unlock()
+    }
+
+    // The destination of a udp flow and the port it goes to. Both are known
+    // together, and the port is part of the row the app shows.
+    func setDestination(_ destination: String, port: UInt16, for id: UInt64) {
+        lock.lock()
+        entries[id]?.destination = destination
+        entries[id]?.port = port
         lock.unlock()
     }
 

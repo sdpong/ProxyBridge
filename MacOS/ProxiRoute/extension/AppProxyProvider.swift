@@ -543,6 +543,9 @@ class AppProxyProvider: NETransparentProxyProvider {
         var sendAppId: Bool
     }
     private var storedProxyConfigs: [String: StoredProxyConfig] = [:]
+    // whether one of the proxies can carry udp. it is asked for every udp flow,
+    // so it is remembered instead of walked through the list every time.
+    private var hasSocks5Proxy = false
     // a chain is a list of proxy ids, walked through in order
     private var storedChains: [String: [String]] = [:]
     private let proxyLock = NSLock()
@@ -667,11 +670,23 @@ class AppProxyProvider: NETransparentProxyProvider {
         chainHealthTimer = nil
         sweepHandshakes(all: true)
         udpLock.lock()
-        let all = Array(udpAssociations.values)
+        let associations = Array(udpAssociations.values)
         udpAssociations.removeAll()
+        let clients = Array(udpClients.values)
+        udpClients.removeAll()
+        let groups = Array(udpGroups.values)
+        udpGroups.removeAll()
+        udpPending.removeAll()
         udpLock.unlock()
-        for a in all {
+        for a in associations {
             a.release()
+        }
+        for c in clients {
+            c.flow.closeReadWithError(nil)
+            c.flow.closeWriteWithError(nil)
+        }
+        for g in groups {
+            if let liveId = g.liveFlowId, let flow = liveFlows.remove(id: liveId) { reportFlowEnd(flow) }
         }
         // nothing is proxied any more, so nothing is a live flow
         for flow in liveFlows.removeAll() { reportFlowEnd(flow) }
@@ -682,28 +697,50 @@ class AppProxyProvider: NETransparentProxyProvider {
         completionHandler()
     }
     
-    // one association per udp flow, holds both channels so we tear the whole thing
-    // down together when any side goes away
+    // ---- udp ----
+    //
+    // A udp flow of an application is one socket of that application. A socks5
+    // proxy carries udp in an association: one tcp control connection and one udp
+    // session that every datagram of every socket of that program goes through.
+    // The address of the real destination travels in the header of each datagram,
+    // so one association can carry many destinations.
+    //
+    // The association is shared on purpose, and the pool below is the whole point
+    // of it. It used to be one association per flow, and a program that asks a
+    // nameserver hundreds of times a minute opens a new socket every time: the
+    // extension held thousands of tcp connections and udp sessions, and the
+    // machine sat at a hundred percent. One association per program and proxy
+    // keeps that at one.
     private final class UDPAssociation {
-        let clientFlow: NEAppProxyUDPFlow
-        let controlConnection: UpstreamConnection  // socks5 tcp control channel, keeps the association alive
-        let udpSession: NWUDPSession            // relay channel to the socks server
-        let displayName: String
-        var loggedDestinations = Set<String>()  // dedupe connection logs, bounded
-        var isTornDown = false
-        // the id of this association in the live flow list, so the app can terminate it
-        var liveFlowId: UInt64?
-        var liveDestination: String?
-        private var lastActivity = Date()
-        private let activityLock = NSLock()
+        struct HostPort: Hashable { let host: String; let port: UInt16 }
 
+        let key: String
+        let controlConnection: UpstreamConnection  // socks5 tcp control channel, keeps the association alive
+        let udpSession: NWUDPSession                // relay channel to the socks server
+        let proxyLabel: String
+        var isTornDown = false
+        // the sockets that ride on this association
+        var clients: [ObjectIdentifier: UDPClient] = [:]
+        // which socket asked for which destination, so the answer goes back to it
+        var routes: [HostPort: UDPClient] = [:]
+        // the destinations that were written about already, so a line is written
+        // once per destination and not once per datagram
+        var loggedDestinations = Set<String>()
         // per-packet work is the hot path for quic/video, so the socks5 header for
         // a destination and the endpoint for a relay source are built once and
         // reused. both are capped so they can't grow forever.
-        struct HostPort: Hashable { let host: String; let port: UInt16 }
         var headerCache: [HostPort: Data] = [:]
         var endpointCache: [UInt64: (host: String, port: UInt16)] = [:]
         static let cacheLimit = 64
+        private var lastActivity = Date()
+        private let activityLock = NSLock()
+
+        init(key: String, controlConnection: UpstreamConnection, udpSession: NWUDPSession, proxyLabel: String) {
+            self.key = key
+            self.controlConnection = controlConnection
+            self.udpSession = udpSession
+            self.proxyLabel = proxyLabel
+        }
 
         func touch() {
             activityLock.lock(); lastActivity = Date(); activityLock.unlock()
@@ -712,6 +749,22 @@ class AppProxyProvider: NETransparentProxyProvider {
         func idleTime() -> TimeInterval {
             activityLock.lock(); defer { activityLock.unlock() }
             return Date().timeIntervalSince(lastActivity)
+        }
+
+        // The socket that asked for a destination.
+        //
+        // The relay answers with the address of the destination, so the answer
+        // goes back to the socket that asked for it. Some servers answer with
+        // the address they resolved the name to instead, and then the port is
+        // what still matches - but only when it leaves no doubt which socket
+        // it is.
+        //
+        // The caller holds the lock: the routes and the clients are read from
+        // the thread of the relay and written from the threads of the sockets.
+        func client(forHost host: String, port: UInt16) -> UDPClient? {
+            if let exact = routes[HostPort(host: host, port: port)] { return exact }
+            let samePort = clients.values.filter { $0.currentPort == port }
+            return samePort.count == 1 ? samePort[0] : nil
         }
 
         // NWUDPSession keeps its read handler after cancel(), and that handler
@@ -723,15 +776,80 @@ class AppProxyProvider: NETransparentProxyProvider {
             controlConnection.cancel()
             udpSession.cancel()
         }
+    }
 
-        init(clientFlow: NEAppProxyUDPFlow, controlConnection: UpstreamConnection, udpSession: NWUDPSession, displayName: String) {
-            self.clientFlow = clientFlow
-            self.controlConnection = controlConnection
-            self.udpSession = udpSession
+    // One socket of an application, carried by an association.
+    private final class UDPClient {
+        let flow: NEAppProxyUDPFlow
+        let displayName: String
+        let programKey: String
+        // the association is held weakly: the pool holds it, and the pool is the
+        // one that decides when it goes
+        weak var association: UDPAssociation?
+        var currentHost = ""
+        var currentPort: UInt16 = 0
+        var isTornDown = false
+        private var lastActivity = Date()
+        private let activityLock = NSLock()
+
+        init(flow: NEAppProxyUDPFlow, displayName: String, programKey: String) {
+            self.flow = flow
             self.displayName = displayName
+            self.programKey = programKey
+        }
+
+        func touch() {
+            activityLock.lock(); lastActivity = Date(); activityLock.unlock()
+        }
+
+        func idleTime() -> TimeInterval {
+            activityLock.lock(); defer { activityLock.unlock() }
+            return Date().timeIntervalSince(lastActivity)
         }
     }
-    private var udpAssociations: [NEAppProxyUDPFlow: UDPAssociation] = [:]
+
+    // One row of the app's traffic list for udp: the sockets of one program.
+    //
+    // One row per socket would fill the list with thousands of rows that all
+    // say the same thing - a helper that opens a socket per query opens
+    // hundreds of them a second - and writing them is what took the machine to
+    // a hundred percent. The destination of the row follows the last one that
+    // was seen.
+    private final class UDPGroup {
+        let key: String
+        let program: String
+        var destination: String
+        var port: UInt16
+        let proxy: String
+        var liveFlowId: UInt64?
+        var clients: Set<ObjectIdentifier> = []
+
+        init(key: String, program: String, destination: String, port: UInt16, proxy: String) {
+            self.key = key
+            self.program = program
+            self.destination = destination
+            self.port = port
+            self.proxy = proxy
+        }
+    }
+
+    // A handshake that is still running. The sockets that wait for it are kept
+    // here, so the association they all share can be made when it is done.
+    private final class UDPPending {
+        let key: String
+        var clients: [ObjectIdentifier: UDPClient] = [:]
+        var controlConnection: UpstreamConnection?
+        init(key: String) { self.key = key }
+    }
+
+    // the associations, by program and proxy
+    private var udpAssociations: [String: UDPAssociation] = [:]
+    // the sockets that are being carried
+    private var udpClients: [ObjectIdentifier: UDPClient] = [:]
+    // the handshakes that are still running
+    private var udpPending: [String: UDPPending] = [:]
+    // the rows the app is shown
+    private var udpGroups: [String: UDPGroup] = [:]
     private let udpLock = NSLock()
 
     // ---- live flows ----
@@ -803,8 +921,8 @@ class AppProxyProvider: NETransparentProxyProvider {
     }
 
     // udp has no close signal we can rely on (quic flows come and go), so idle
-    // associations are reaped here, otherwise each one pins a flow, a tcp
-    // control connection and a udp session for the life of the extension
+    // sockets are reaped here, otherwise each one pins a flow for the life of
+    // the extension
     private static let udpIdleTimeout: TimeInterval = 120
     private var udpSweepTimer: DispatchSourceTimer?
 
@@ -815,13 +933,35 @@ class AppProxyProvider: NETransparentProxyProvider {
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             self.sweepHandshakes()
-            self.udpLock.lock()
-            let stale = self.udpAssociations.filter { $0.value.idleTime() > AppProxyProvider.udpIdleTimeout }.map { $0.key }
-            self.udpLock.unlock()
-            for flow in stale { self.teardownUDP(flow) }
+            self.sweepUDP()
         }
         timer.resume()
         udpSweepTimer = timer
+    }
+
+    // The sockets that have been quiet for too long are closed, and an
+    // association that has no socket left on it is let go.
+    //
+    // The association is not thrown away with the socket: the next socket of the
+    // same program takes it instead of making a new one. That is what keeps a
+    // program that opens a socket per query down to one tcp connection.
+    private func sweepUDP() {
+        var staleClients: [UDPClient] = []
+        udpLock.lock()
+        for client in udpClients.values where client.idleTime() > AppProxyProvider.udpIdleTimeout {
+            staleClients.append(client)
+        }
+        udpLock.unlock()
+        for client in staleClients { self.teardownUDPClient(client) }
+
+        var staleAssociations: [UDPAssociation] = []
+        udpLock.lock()
+        for association in udpAssociations.values
+        where association.clients.isEmpty && association.idleTime() > AppProxyProvider.udpIdleTimeout {
+            staleAssociations.append(association)
+        }
+        udpLock.unlock()
+        for association in staleAssociations { self.teardownUDPAssociation(association) }
     }
 
     // tcp and udp proxy handshakes have no timeout of their own, so a proxy that
@@ -829,16 +969,19 @@ class AppProxyProvider: NETransparentProxyProvider {
     // entries are checked by the shared sweep timer, no per-flow timer is
     // scheduled (a timer closure would hold the flow for its full delay even
     // after the handshake succeeded, which adds up with quic churn)
-    private var pendingHandshakes: [ObjectIdentifier: (deadline: Date, flow: NEAppProxyFlow, connection: UpstreamConnection)] = [:]
+    //
+    // A udp handshake is for a whole pool of sockets and not for one flow, so it
+    // has no flow of its own: the key of the pool is what it carries.
+    private var pendingHandshakes: [ObjectIdentifier: (deadline: Date, flow: NEAppProxyFlow?, connection: UpstreamConnection, udpKey: String?)] = [:]
     private let handshakeLock = NSLock()
     private static let handshakeTimeout: TimeInterval = 20
     // grace between a client FIN and tearing the relay down, lets the upstream FIN flush
     private static let halfCloseTimeout: TimeInterval = 3
 
-    private func armHandshakeTimeout(flow: NEAppProxyFlow, connection: UpstreamConnection) {
+    private func armHandshakeTimeout(flow: NEAppProxyFlow?, connection: UpstreamConnection, udpKey: String? = nil) {
         let deadline = Date().addingTimeInterval(AppProxyProvider.handshakeTimeout)
         handshakeLock.lock()
-        pendingHandshakes[ObjectIdentifier(connection)] = (deadline, flow, connection)
+        pendingHandshakes[ObjectIdentifier(connection)] = (deadline, flow, connection, udpKey)
         handshakeLock.unlock()
     }
 
@@ -855,13 +998,21 @@ class AppProxyProvider: NETransparentProxyProvider {
         for key in expired.keys { pendingHandshakes.removeValue(forKey: key) }
         handshakeLock.unlock()
         for (_, entry) in expired {
+            // a udp handshake is for a whole pool of sockets, so it is given up
+            // as a whole: every socket that waits for it is closed
+            if let udpKey = entry.udpKey {
+                self.failUDPHandshake(key: udpKey, entry.connection, "SOCKS5 UDP handshake timed out", level: "WARN")
+                continue
+            }
             // a tcp flow must fail its connect (see FlowFailure), udp flows keep the clean close
             if let tcpFlow = entry.flow as? NEAppProxyTCPFlow {
                 closeRelay(tcpFlow, entry.connection, error: FlowFailure.timedOut)
+            } else if let flow = entry.flow {
+                entry.connection.cancel()
+                flow.closeReadWithError(nil)
+                flow.closeWriteWithError(nil)
             } else {
                 entry.connection.cancel()
-                entry.flow.closeReadWithError(nil)
-                entry.flow.closeWriteWithError(nil)
             }
         }
     }
@@ -1227,6 +1378,9 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
         let configCount = storedProxyConfigs.count
         let chainCount = storedChains.count
+        // whether a socks5 proxy is there at all: a udp flow asks for it every
+        // time, and walking the list every time is work for nothing
+        hasSocks5Proxy = storedProxyConfigs.values.contains { $0.type.lowercased() == "socks5" }
         // a proxy that was pointed somewhere else is probed again right away: the
         // old answer says nothing about the new place
         let moved = movedProxies(previous: previousConfigs)
@@ -1595,12 +1749,12 @@ class AppProxyProvider: NETransparentProxyProvider {
         // loop is the whole machine at a hundred percent, and the rule that
         // names the proxy is what stops it.
         let action = matchedRule?.action ?? globalAction
-        // the rule that decided is the rule that matched
         let decidingRuleId = matchedRule?.ruleId
         // Whether the rule names the programs it is for. It decides what the
         // proxy server is told about the traffic. Traffic that no rule names
         // is ProxiRoute's own.
         let ruleHasProcessFilter = matched?.matcher.hasProcessFilter ?? false
+
 
         if let action = action {
             switch action {
@@ -1728,7 +1882,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         // rules first: udp BLOCK and DIRECT need no proxy at all. only a rule that
         // sends udp through a proxy needs a socks5 one (http proxies can't carry udp)
         proxyLock.lock()
-        let hasAnySocks5 = storedProxyConfigs.values.contains { $0.type.lowercased() == "socks5" }
+        let hasAnySocks5 = hasSocks5Proxy
         proxyLock.unlock()
 
         let matched = findMatchingRule(bundleId: processPath, processName: processName, destination: "", port: 0, connectionProtocol: .udp, checkIpPort: false)
@@ -1750,6 +1904,7 @@ class AppProxyProvider: NETransparentProxyProvider {
         // the proxy server itself out of the tunnel.
         let action = matchedRule?.action ?? globalAction
         let decidingRuleId = matchedRule?.ruleId
+
 
         if let action = action {
             switch action {
@@ -1787,8 +1942,16 @@ class AppProxyProvider: NETransparentProxyProvider {
                     if error != nil {
                         return
                     }
+                    // the connection is counted before the line is written: the
+                    // traffic log can be rate limited, and the table in the app
+                    // has to show the real number either way
+                    self.countConnection(proxy: self.proxyLabel(socks5Config))
                     // pass the resolved display name (curl), not the raw signing id (curl-<hash>)
-                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, socksHost: socks5Config.host, socksPort: socks5Config.port, username: socks5Config.username, password: socks5Config.password, appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
+                    self.proxyUDPFlowViaSOCKS5(flow, displayName: displayName, programKey: processPath,
+                                               socksHost: socks5Config.host, socksPort: socks5Config.port,
+                                               proxyLabel: self.proxyLabel(socks5Config),
+                                               username: socks5Config.username, password: socks5Config.password,
+                                               appIdentity: socks5Config.sendAppId ? ProxyAppIdentity.payload(bundleId: processPath, processName: processName, ruleHasProcessFilter: ruleHasProcessFilter, proxyBridgeBundleId: AppProxyProvider.proxyBridgeBundleId) : nil)
                 }
                 return true
             }
@@ -1802,18 +1965,105 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
     }
     
-    // handshake failed before an association existed, so drop the control
-    // connection and close the flow instead of leaking them
-    private func failUDPHandshake(_ clientFlow: NEAppProxyUDPFlow, _ tcpConnection: UpstreamConnection, _ reason: String) {
-        log(reason, level: "ERROR")
+    // The handshake failed before an association existed, so the control
+    // connection is dropped and every socket that waited for it is closed.
+    private func failUDPHandshake(key: String, _ tcpConnection: UpstreamConnection, _ reason: String, level: String = "ERROR") {
+        log(reason, level: level)
         tcpConnection.cancel()
-        clientFlow.closeReadWithError(nil)
-        clientFlow.closeWriteWithError(nil)
+        self.failUDPPending(key: key)
     }
 
-    private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow, displayName: String, socksHost: String, socksPort: Int, username: String?, password: String?, appIdentity: ProxyAppIdentity.Payload? = nil, allowAppIdRetry: Bool = true) {
+    // Every socket that was waiting for the association of this key is closed.
+    private func failUDPPending(key: String) {
+        udpLock.lock()
+        let pending = udpPending.removeValue(forKey: key)
+        udpLock.unlock()
+        guard let pending = pending else { return }
+        for client in pending.clients.values {
+            self.teardownUDPClient(client)
+        }
+    }
+
+    // A udp socket of an application is carried by the association of its
+    // program and proxy. The association is made once and kept: the next socket
+    // of the same program joins it instead of making another one.
+    //
+    // That is the difference between one tcp connection and thousands of them
+    // for a program that opens a socket per query.
+    private func proxyUDPFlowViaSOCKS5(_ clientFlow: NEAppProxyUDPFlow,
+                                       displayName: String,
+                                       programKey: String,
+                                       socksHost: String,
+                                       socksPort: Int,
+                                       proxyLabel: String,
+                                       username: String?,
+                                       password: String?,
+                                       appIdentity: ProxyAppIdentity.Payload? = nil,
+                                       allowAppIdRetry: Bool = true) {
+        let key = udpPoolKey(programKey: programKey, socksHost: socksHost, socksPort: socksPort, username: username)
+        let client = UDPClient(flow: clientFlow, displayName: displayName, programKey: programKey)
+
+        udpLock.lock()
+        udpClients[ObjectIdentifier(clientFlow)] = client
+        let association = udpAssociations[key]
+        var pending = udpPending[key]
+        // the first socket of this key makes the handshake, the others wait for it
+        let needsHandshake = pending == nil
+        if pending == nil {
+            pending = UDPPending(key: key)
+            udpPending[key] = pending
+        }
+        pending?.clients[ObjectIdentifier(clientFlow)] = client
+        udpLock.unlock()
+
+        // the association is already there: the socket joins it, and no
+        // handshake is needed at all
+        if let association = association, !association.isTornDown {
+            udpLock.lock()
+            udpPending[key]?.clients.removeValue(forKey: ObjectIdentifier(clientFlow))
+            if udpPending[key]?.clients.isEmpty == true { udpPending.removeValue(forKey: key) }
+            udpLock.unlock()
+            self.attachUDPClient(client, to: association)
+            return
+        }
+
+        // a handshake for this key is already running: the socket waits for it
+        guard needsHandshake else { return }
+        self.startUDPHandshake(key: key, socksHost: socksHost, socksPort: socksPort, proxyLabel: proxyLabel,
+                               username: username, password: password, appIdentity: appIdentity,
+                               allowAppIdRetry: allowAppIdRetry)
+    }
+
+    // The key of the pool: one program and one proxy share one association.
+    private func udpPoolKey(programKey: String, socksHost: String, socksPort: Int, username: String?) -> String {
+        return "\(programKey)|\(socksHost):\(socksPort)|\(username ?? "")"
+    }
+
+    // A socket joins the association and starts to be read.
+    private func attachUDPClient(_ client: UDPClient, to association: UDPAssociation) {
+        udpLock.lock()
+        association.clients[ObjectIdentifier(client.flow)] = client
+        udpLock.unlock()
+        client.association = association
+        association.touch()
+        self.readAndForwardClientUDP(client)
+    }
+
+    // The handshake of the association of one key.
+    private func startUDPHandshake(key: String,
+                                   socksHost: String,
+                                   socksPort: Int,
+                                   proxyLabel: String,
+                                   username: String?,
+                                   password: String?,
+                                   appIdentity: ProxyAppIdentity.Payload?,
+                                   allowAppIdRetry: Bool) {
         let tcpConnection = makeUpstreamConnection(host: socksHost, port: String(socksPort))
-        armHandshakeTimeout(flow: clientFlow, connection: tcpConnection)
+        udpLock.lock()
+        udpPending[key]?.controlConnection = tcpConnection
+        udpLock.unlock()
+        // the timeout belongs to the whole pool of this key, not to one socket
+        armHandshakeTimeout(flow: nil, connection: tcpConnection, udpKey: key)
 
         // offer username/password auth when we have credentials, same as the tcp path.
         // when the application id is to be sent, the user/password method is offered
@@ -1828,7 +2078,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             guard let self = self else { return }
 
             if let error = error {
-                self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP greeting failed: \(error.localizedDescription)")
+                self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP greeting failed: \(error.localizedDescription)")
                 return
             }
 
@@ -1836,52 +2086,52 @@ class AppProxyProvider: NETransparentProxyProvider {
                 guard let self = self else { return }
 
                 if let error = error {
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP greeting response failed: \(error.localizedDescription)")
+                    self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP greeting response failed: \(error.localizedDescription)")
                     return
                 }
 
                 guard let data = data, data.count == 2, data[0] == 0x05 else {
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP greeting response invalid")
+                    self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP greeting response invalid")
                     return
                 }
 
                 switch data[1] {
                 case 0x00:
-                    self.sendSOCKS5UDPAssociate(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName)
+                    self.sendSOCKS5UDPAssociate(key: key, tcpConnection: tcpConnection, socksHost: socksHost, proxyLabel: proxyLabel)
                 case 0x02:
                     let credentials = ProxyAppIdentity.socks5Credentials(payload: appIdentity, username: username, password: password)
                     guard let credentials = credentials else {
-                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP wants a user name and there is none")
+                        self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP wants a user name and there is none")
                         return
                     }
                     // only a request that carried the application id can be tried again without it
                     let usedAppId = !useAuth && appIdentity != nil
-                    self.sendSOCKS5UDPAuth(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName, username: credentials.username, password: credentials.password, onAuthRefused: usedAppId && allowAppIdRetry ? { [weak self] in
+                    self.sendSOCKS5UDPAuth(key: key, tcpConnection: tcpConnection, socksHost: socksHost, proxyLabel: proxyLabel, username: credentials.username, password: credentials.password, onAuthRefused: usedAppId && allowAppIdRetry ? { [weak self] in
                         // the server refused the user name it was given, so the handshake
                         // starts again without the application id. the control connection
                         // is given up first: the sweep would otherwise time it out and
                         // close the flow the new handshake needs
                         self?.abandonConnection(tcpConnection)
-                        self?.proxyUDPFlowViaSOCKS5(clientFlow, displayName: displayName, socksHost: socksHost, socksPort: socksPort, username: username, password: password, appIdentity: nil, allowAppIdRetry: false)
+                        self?.startUDPHandshake(key: key, socksHost: socksHost, socksPort: socksPort, proxyLabel: proxyLabel, username: username, password: password, appIdentity: nil, allowAppIdRetry: false)
                     } : nil)
                 default:
                     // the server does not want the authentication the id needs, so the
                     // handshake is tried again without the id
                     if appIdentity != nil, allowAppIdRetry {
                         self.abandonConnection(tcpConnection)
-                        self.proxyUDPFlowViaSOCKS5(clientFlow, displayName: displayName, socksHost: socksHost, socksPort: socksPort, username: username, password: password, appIdentity: nil, allowAppIdRetry: false)
+                        self.startUDPHandshake(key: key, socksHost: socksHost, socksPort: socksPort, proxyLabel: proxyLabel, username: username, password: password, appIdentity: nil, allowAppIdRetry: false)
                     } else {
-                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP no acceptable auth method")
+                        self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP no acceptable auth method")
                     }
                 }
             }
         }
     }
 
-    private func sendSOCKS5UDPAuth(clientFlow: NEAppProxyUDPFlow, tcpConnection: UpstreamConnection, socksHost: String, displayName: String, username: String, password: String, onAuthRefused: (() -> Void)? = nil) {
+    private func sendSOCKS5UDPAuth(key: String, tcpConnection: UpstreamConnection, socksHost: String, proxyLabel: String, username: String, password: String, onAuthRefused: (() -> Void)? = nil) {
         let user = Array(username.utf8), pass = Array(password.utf8)
         guard user.count <= 255, pass.count <= 255 else {
-            self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP credentials too long")
+            self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP credentials too long")
             return
         }
 
@@ -1896,7 +2146,7 @@ class AppProxyProvider: NETransparentProxyProvider {
             guard let self = self else { return }
 
             if let error = error {
-                self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth write failed: \(error.localizedDescription)")
+                self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP auth write failed: \(error.localizedDescription)")
                 return
             }
 
@@ -1904,7 +2154,7 @@ class AppProxyProvider: NETransparentProxyProvider {
                 guard let self = self else { return }
 
                 if let error = error {
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth response failed: \(error.localizedDescription)")
+                    self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP auth response failed: \(error.localizedDescription)")
                     return
                 }
 
@@ -1915,17 +2165,17 @@ class AppProxyProvider: NETransparentProxyProvider {
                     if let onAuthRefused = onAuthRefused {
                         onAuthRefused()
                     } else {
-                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP auth rejected")
+                        self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP auth rejected")
                     }
                     return
                 }
 
-                self.sendSOCKS5UDPAssociate(clientFlow: clientFlow, tcpConnection: tcpConnection, socksHost: socksHost, displayName: displayName)
+                self.sendSOCKS5UDPAssociate(key: key, tcpConnection: tcpConnection, socksHost: socksHost, proxyLabel: proxyLabel)
             }
         }
     }
 
-    private func sendSOCKS5UDPAssociate(clientFlow: NEAppProxyUDPFlow, tcpConnection: UpstreamConnection, socksHost: String, displayName: String) {
+    private func sendSOCKS5UDPAssociate(key: String, tcpConnection: UpstreamConnection, socksHost: String, proxyLabel: String) {
         var request = Data()
         request.append(0x05)
         request.append(0x03)
@@ -1933,12 +2183,12 @@ class AppProxyProvider: NETransparentProxyProvider {
         request.append(0x01)
         request.append(contentsOf: [0, 0, 0, 0])
         request.append(contentsOf: [0, 0])
-        
+
         tcpConnection.write(request) { [weak self] error in
             guard let self = self else { return }
 
             if let error = error {
-                self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE failed: \(error.localizedDescription)")
+                self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP ASSOCIATE failed: \(error.localizedDescription)")
                 return
             }
 
@@ -1947,18 +2197,18 @@ class AppProxyProvider: NETransparentProxyProvider {
 
                 switch reply {
                 case .failed(let reason):
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE failed: \(reason)")
+                    self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP ASSOCIATE failed: \(reason)")
                 case .rejected(let rep):
-                    self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE rejected, REP=0x\(String(format: "%02x", rep)) (\(self.socksReplyReason(rep)))")
+                    self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP ASSOCIATE rejected, REP=0x\(String(format: "%02x", rep)) (\(self.socksReplyReason(rep)))")
                 case .success(let data):
                     let (parsedHost, relayPort) = self.parseSOCKS5Address(from: data, offset: 3)
                     // many socks servers reply 0.0.0.0 meaning "reuse the control connection host"
                     let relayHost = (parsedHost == "0.0.0.0" || parsedHost == "::" || parsedHost.isEmpty) ? socksHost : parsedHost
                     guard relayPort != 0 else {
-                        self.failUDPHandshake(clientFlow, tcpConnection, "SOCKS5 UDP ASSOCIATE returned no relay port")
+                        self.failUDPHandshake(key: key, tcpConnection, "SOCKS5 UDP ASSOCIATE returned no relay port")
                         return
                     }
-                    self.relayUDPThroughSOCKS5(clientFlow: clientFlow, relayHost: relayHost, relayPort: relayPort, tcpConnection: tcpConnection, displayName: displayName)
+                    self.makeUDPAssociation(key: key, relayHost: relayHost, relayPort: relayPort, tcpConnection: tcpConnection, proxyLabel: proxyLabel)
                 }
             }
         }
@@ -2089,61 +2339,218 @@ class AppProxyProvider: NETransparentProxyProvider {
         return ("0.0.0.0", 0)
     }
     
-    private func relayUDPThroughSOCKS5(clientFlow: NEAppProxyUDPFlow, relayHost: String, relayPort: UInt16, tcpConnection: UpstreamConnection, displayName: String) {
-        guard completeHandshake(tcpConnection) else { return }
+    // The association is made, and every socket that was waiting for it rides
+    // on it now. The association stays in the pool: the next socket of the same
+    // program takes it instead of making another one.
+    private func makeUDPAssociation(key: String, relayHost: String, relayPort: UInt16, tcpConnection: UpstreamConnection, proxyLabel: String) {
+        guard completeHandshake(tcpConnection) else {
+            // the sweep gave the handshake up already, so the sockets that wait
+            // for it are let go as well
+            self.failUDPPending(key: key)
+            return
+        }
         let relayEndpoint = NWHostEndpoint(hostname: relayHost, port: String(relayPort))
         let udpSession = self.createUDPSession(to: relayEndpoint, from: nil)
 
-        let association = UDPAssociation(clientFlow: clientFlow, controlConnection: tcpConnection, udpSession: udpSession, displayName: displayName)
+        let association = UDPAssociation(key: key, controlConnection: tcpConnection, udpSession: udpSession, proxyLabel: proxyLabel)
 
         udpLock.lock()
-        let existing = udpAssociations[clientFlow]
-        udpAssociations[clientFlow] = association
+        let existing = udpAssociations[key]
+        udpAssociations[key] = association
+        let pending = udpPending.removeValue(forKey: key)
         udpLock.unlock()
-        // if the app reused a flow, drop the stale association first
+        // if the pool had an old association for this key, drop it first
         existing?.release()
 
-        // the udp channel is live: register it so the app can list and terminate it. the
-        // destination is only known once the first datagram arrives.
-        let liveId = liveFlows.register(proto: "UDP", process: displayName, destination: "unknown", port: 0,
-                                        proxy: "SOCKS5 \(relayHost):\(relayPort)") { [weak self] in
-            self?.teardownUDP(clientFlow)
+        var waiting: [UDPClient] = []
+        if let pending = pending { waiting = Array(pending.clients.values) }
+        for client in waiting {
+            self.attachUDPClient(client, to: association)
         }
-        association.liveFlowId = liveId
-        if let flow = liveFlows.snapshot(id: liveId) { reportFlowOpen(flow) }
 
-        readAndForwardClientUDP(association)
         readAndForwardRelayUDP(association)
         // note: we deliberately don't read the control connection to detect close.
         // holding a strong ref keeps the associate alive, and reading it risks a
         // spurious teardown that would EPIPE the app's udp socket.
     }
 
-    // idempotent, cancels both channels and closes the flow exactly once
-    private func teardownUDP(_ flow: NEAppProxyUDPFlow) {
+    // A socket is closed: it is taken off its association, and the row of the
+    // app's traffic list it was shown in goes with it.
+    private func teardownUDPClient(_ client: UDPClient) {
         udpLock.lock()
-        guard let assoc = udpAssociations.removeValue(forKey: flow), !assoc.isTornDown else {
+        guard !client.isTornDown else {
             udpLock.unlock()
             return
         }
-        assoc.isTornDown = true
+        client.isTornDown = true
+        udpClients.removeValue(forKey: ObjectIdentifier(client.flow))
+        let association = client.association
+        association?.clients.removeValue(forKey: ObjectIdentifier(client.flow))
+        if let association = association {
+            association.routes = association.routes.filter { $0.value !== client }
+        }
         udpLock.unlock()
 
-        assoc.release()
-        flow.closeReadWithError(nil)
-        flow.closeWriteWithError(nil)
-        // the channel is gone, so it is no longer a live flow
-        if let liveId = assoc.liveFlowId, let flow = liveFlows.remove(id: liveId) { reportFlowEnd(flow) }
+        // the row of the traffic list goes when the last socket of it is gone
+        self.leaveUDPGroup(client.programKey, client: client)
+
+
+        client.flow.closeReadWithError(nil)
+        client.flow.closeWriteWithError(nil)
     }
 
-    private func readAndForwardClientUDP(_ association: UDPAssociation) {
-        let clientFlow = association.clientFlow
-        clientFlow.readDatagrams { [weak self] datagrams, endpoints, error in
+    // The association is let go: the control connection and the udp session are
+    // closed, and the sockets that were on it are closed as well.
+    private func teardownUDPAssociation(_ association: UDPAssociation) {
+        udpLock.lock()
+        guard !association.isTornDown else {
+            udpLock.unlock()
+            return
+        }
+        association.isTornDown = true
+        udpAssociations.removeValue(forKey: association.key)
+        let clients = Array(association.clients.values)
+        association.clients.removeAll()
+        association.routes.removeAll()
+        udpLock.unlock()
+
+        for client in clients {
+            self.teardownUDPClient(client)
+        }
+        association.release()
+    }
+
+    // The socket joins the row of the traffic list of its program. One row is
+    // one program, so a program that opens a socket per query does not fill the
+    // list with a thousand rows.
+    private func joinUDPGroup(_ client: UDPClient, host: String, port: UInt16, association: UDPAssociation) {
+        let groupKey = client.programKey
+        var isNew = false
+        var moved = false
+        udpLock.lock()
+        var group = udpGroups[groupKey]
+        if group == nil {
+            group = UDPGroup(key: groupKey, program: client.displayName, destination: host, port: port, proxy: association.proxyLabel)
+            udpGroups[groupKey] = group
+            isNew = true
+        }
+        group?.clients.insert(ObjectIdentifier(client.flow))
+        // the row follows the destination that was seen last
+        if group?.destination != host || group?.port != port {
+            group?.destination = host
+            group?.port = port
+            moved = true
+        }
+        let liveId = group?.liveFlowId
+        udpLock.unlock()
+
+        if moved, let liveId = liveId {
+            liveFlows.setDestination(host, port: port, for: liveId)
+        }
+
+        guard isNew else { return }
+
+        // the row is told to the app once, when it is made
+        let newId = liveFlows.register(proto: "UDP", process: client.displayName, destination: host, port: port,
+                                        proxy: association.proxyLabel) { [weak self] in
+            self?.terminateUDPGroup(groupKey)
+        }
+        udpLock.lock()
+        let stillThere = udpGroups[groupKey] != nil
+        if stillThere { udpGroups[groupKey]?.liveFlowId = newId }
+        udpLock.unlock()
+        if stillThere {
+            if let flow = liveFlows.snapshot(id: newId) { reportFlowOpen(flow) }
+        } else {
+            // the row was gone before it was registered, so it goes with it
+            _ = liveFlows.remove(id: newId)
+        }
+    }
+
+    // A socket leaves the row of the traffic list. The row goes when the last
+    // socket of it is gone.
+    private func leaveUDPGroup(_ groupKey: String, client: UDPClient) {
+        udpLock.lock()
+        guard let group = udpGroups[groupKey] else {
+            udpLock.unlock()
+            return
+        }
+        group.clients.remove(ObjectIdentifier(client.flow))
+        let isEmpty = group.clients.isEmpty
+        let liveId = group.liveFlowId
+        if isEmpty { udpGroups.removeValue(forKey: groupKey) }
+        udpLock.unlock()
+
+        if isEmpty, let liveId = liveId, let flow = liveFlows.remove(id: liveId) { reportFlowEnd(flow) }
+    }
+
+    // The user terminated a row of the traffic list: every socket of it is
+    // closed.
+    private func terminateUDPGroup(_ groupKey: String) {
+        udpLock.lock()
+        let group = udpGroups[groupKey]
+        var clients: [UDPClient] = []
+        if let group = group {
+            for id in group.clients {
+                if let client = udpClients[id] { clients.append(client) }
+            }
+        }
+        udpLock.unlock()
+
+        for client in clients {
+            self.teardownUDPClient(client)
+        }
+    }
+
+    // The bytes a socket carried go into the row of the traffic list.
+    private func noteUDPBytes(_ client: UDPClient, up: Int64, down: Int64) {
+        guard up > 0 || down > 0 else { return }
+        udpLock.lock()
+        let liveId = udpGroups[client.programKey]?.liveFlowId
+        udpLock.unlock()
+        if let liveId = liveId { liveFlows.note(id: liveId, up: up, down: down) }
+    }
+
+    // The socket that asked for this destination.
+    //
+    // The relay answers with the address of the destination, so the answer goes
+    // back to the socket that asked for it. Some servers answer with the
+    // address they resolved the name to instead, and then the port is what
+    // still matches - but only when it leaves no doubt which socket it is.
+    private func udpClient(forHost host: String, port: UInt16, in association: UDPAssociation) -> UDPClient? {
+        udpLock.lock()
+        defer { udpLock.unlock() }
+        return association.client(forHost: host, port: port)
+    }
+
+    // The socks5 header of a destination, built once and reused.
+    private func udpHeader(for key: UDPAssociation.HostPort, host: String, port: UInt16, in association: UDPAssociation) -> Data? {
+        udpLock.lock()
+        if let cached = association.headerCache[key] {
+            udpLock.unlock()
+            return cached
+        }
+        udpLock.unlock()
+
+        guard let built = self.socks5UDPHeader(destHost: host, destPort: port) else { return nil }
+        udpLock.lock()
+        if association.headerCache.count < UDPAssociation.cacheLimit { association.headerCache[key] = built }
+        udpLock.unlock()
+        return built
+    }
+
+    // The datagrams of a socket go into the association of its program, with
+    // the address of the destination in the header of each one.
+    private func readAndForwardClientUDP(_ client: UDPClient) {
+        client.flow.readDatagrams { [weak self] datagrams, endpoints, error in
             guard let self = self else { return }
+
+            // the socket was closed while the read was pending
+            if client.isTornDown { return }
 
             if let error = error {
                 self.log("UDP read error: \(error.localizedDescription)", level: "ERROR")
-                self.teardownUDP(clientFlow)
+                self.teardownUDPClient(client)
                 return
             }
 
@@ -2151,13 +2558,20 @@ class AppProxyProvider: NETransparentProxyProvider {
             // re-arming on empty spins at 100% cpu because the read completes
             // immediately forever once the flow is closed (issue #89 / pr #90)
             guard let datagrams = datagrams, let endpoints = endpoints, !datagrams.isEmpty else {
-                self.teardownUDP(clientFlow)
+                self.teardownUDPClient(client)
                 return
             }
 
+            guard let association = client.association, !association.isTornDown else {
+                self.teardownUDPClient(client)
+                return
+            }
+
+            client.touch()
             association.touch()
             var toSend: [Data] = []
             toSend.reserveCapacity(datagrams.count)
+            var sentBytes: Int64 = 0
 
             for i in 0..<min(datagrams.count, endpoints.count) {
                 guard let nwHost = endpoints[i] as? NWHostEndpoint else { continue }
@@ -2165,33 +2579,41 @@ class AppProxyProvider: NETransparentProxyProvider {
                 let destPort = UInt16(nwHost.port) ?? 0
                 guard destPort != 0 else { continue }
 
-                // a udp flow has no destination until its first datagram arrives, and it can
-                // change afterwards, so the live flow list follows the last one seen
-                if let liveId = association.liveFlowId, association.liveDestination != destHost {
-                    association.liveDestination = destHost
-                    self.liveFlows.setDestination(destHost, for: liveId)
-                }
-
-                // log each distinct destination once, cap the set so it can't grow forever
+                // the destination is written about once, not once per datagram
+                var isNewDestination = false
+                udpLock.lock()
                 if !association.loggedDestinations.contains(destHost) {
-                    if association.loggedDestinations.count < 64 {
+                    if association.loggedDestinations.count < UDPAssociation.cacheLimit {
                         association.loggedDestinations.insert(destHost)
                     }
-                    self.sendLogToApp(protocol: "UDP", process: association.displayName, destination: destHost, port: nwHost.port, proxy: "SOCKS5")
+                    isNewDestination = true
+                }
+                udpLock.unlock()
+                if isNewDestination {
+                    self.logUDPConnection(process: client.displayName, destination: destHost,
+                                          port: destPort, proxy: association.proxyLabel)
                 }
 
+
+                // the socket is now on the row of this program
+                client.currentHost = destHost
+                client.currentPort = destPort
+                self.joinUDPGroup(client, host: destHost, port: destPort, association: association)
+
+                // and the answer that comes back goes to this socket
+                udpLock.lock()
+                association.routes[UDPAssociation.HostPort(host: destHost, port: destPort)] = client
+                udpLock.unlock()
+
                 let key = UDPAssociation.HostPort(host: destHost, port: destPort)
-                var header = association.headerCache[key]
-                if header == nil, let built = self.socks5UDPHeader(destHost: destHost, destPort: destPort) {
-                    if association.headerCache.count < UDPAssociation.cacheLimit { association.headerCache[key] = built }
-                    header = built
-                }
+                let header = self.udpHeader(for: key, host: destHost, port: destPort, in: association)
                 // a udp payload can be up to ~65507 bytes, don't drop mtu-sized quic packets
                 if let header = header, datagrams[i].count <= 65507 {
                     var packet = Data(capacity: header.count + datagrams[i].count)
                     packet.append(header)
                     packet.append(datagrams[i])
                     toSend.append(packet)
+                    sentBytes += Int64(datagrams[i].count)
                 }
             }
 
@@ -2202,13 +2624,15 @@ class AppProxyProvider: NETransparentProxyProvider {
                     }
                 }
             }
+            self.noteUDPBytes(client, up: sentBytes, down: 0)
 
-            self.readAndForwardClientUDP(association)
+            self.readAndForwardClientUDP(client)
         }
     }
 
+    // The datagrams that come back from the relay go to the socket that asked
+    // for that destination.
     private func readAndForwardRelayUDP(_ association: UDPAssociation) {
-        let clientFlow = association.clientFlow
         association.udpSession.setReadHandler({ [weak self, weak association] datagrams, error in
             guard let self = self, let association = association else { return }
 
@@ -2222,31 +2646,38 @@ class AppProxyProvider: NETransparentProxyProvider {
             guard let datagrams = datagrams, !datagrams.isEmpty else { return }
             association.touch()
 
-            var payloads: [Data] = []
-            var endpoints: [NWEndpoint] = []
-            payloads.reserveCapacity(datagrams.count)
-            endpoints.reserveCapacity(datagrams.count)
+            // the answers are gathered per socket, so one write carries all the
+            // datagrams of one socket and not one write per datagram
+            var batches: [ObjectIdentifier: (client: UDPClient, payloads: [Data], endpoints: [NWEndpoint])] = [:]
 
             for datagram in datagrams {
-                if let (payload, destHost, destPort) = self.decapsulateSOCKS5UDPWithEndpoint(datagram: datagram, association: association) {
-                    // A dns answer that came back through the proxy still says which
-                    // name belongs to which address.
-                    //
-                    // An app that resolves by itself - a browser with its own resolver -
-                    // asks the nameserver that the rule sends through the proxy, and
-                    // the proxy answers with the address it wants the app to use. That
-                    // address is often one that only means something to the proxy, and
-                    // without the name the connection that follows can only be given
-                    // that address. With the name the proxy is asked for the name, and
-                    // it resolves it the way it wants to.
-                    self.recordDNSAnswer(payload)
-                    payloads.append(payload)
-                    endpoints.append(NWHostEndpoint(hostname: destHost, port: String(destPort)))
-                }
+                guard let (payload, destHost, destPort) = self.decapsulateSOCKS5UDPWithEndpoint(datagram: datagram, association: association) else { continue }
+                guard let client = self.udpClient(forHost: destHost, port: destPort, in: association) else { continue }
+                if client.isTornDown { continue }
+
+                // A dns answer that came back through the proxy still says which
+                // name belongs to which address.
+                //
+                // An app that resolves by itself - a browser with its own resolver -
+                // asks the nameserver that the rule sends through the proxy, and
+                // the proxy answers with the address it wants the app to use. That
+                // address is often one that only means something to the proxy, and
+                // without the name the connection that follows can only be given
+                // that address. With the name the proxy is asked for the name, and
+                // it resolves it the way it wants to.
+                self.recordDNSAnswer(payload, fromPort: destPort)
+                client.touch()
+
+                let id = ObjectIdentifier(client.flow)
+                var batch = batches[id] ?? (client: client, payloads: [], endpoints: [])
+                batch.payloads.append(payload)
+                batch.endpoints.append(NWHostEndpoint(hostname: destHost, port: String(destPort)))
+                batches[id] = batch
+                self.noteUDPBytes(client, up: 0, down: Int64(payload.count))
             }
 
-            if !payloads.isEmpty {
-                clientFlow.writeDatagrams(payloads, sentBy: endpoints) { [weak self] error in
+            for (_, batch) in batches {
+                batch.client.flow.writeDatagrams(batch.payloads, sentBy: batch.endpoints) { [weak self] error in
                     if let error = error {
                         self?.log("UDP response write error: \(error.localizedDescription)", level: "ERROR")
                     }
@@ -2260,7 +2691,11 @@ class AppProxyProvider: NETransparentProxyProvider {
     // The dns proxy provider does the same for the queries the system resolver
     // makes. This is for the queries an app makes itself, which the transparent
     // proxy carries to the proxy server.
-    private func recordDNSAnswer(_ payload: Data) {
+    //
+    // A dns answer comes from port 53, so the datagrams of the other ports are
+    // not parsed: parsing every datagram as a dns message is work for nothing.
+    private func recordDNSAnswer(_ payload: Data, fromPort: UInt16) {
+        guard fromPort == 53 else { return }
         guard let parsed = DNSParser.parse(payload) else { return }
         // an excluded name must not become a proxy destination
         guard !DNSPolicyStore.shared.policy.isExcluded(parsed.domain) else { return }
@@ -2921,6 +3356,58 @@ class AppProxyProvider: NETransparentProxyProvider {
         let proto = `protocol`
         let ruleText = rule.map { " (rule \($0))" } ?? ""
         diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)\(ruleText)")
+    }
+
+    // The connection of a udp flow.
+    //
+    // The line is rate limited per program. A program that opens a socket per
+    // query - a helper that asks a nameserver hundreds of times a minute, or
+    // one that probes ports - would otherwise fill the log with thousands of
+    // lines a second, and writing them is what took the machine to a hundred
+    // percent. The lines that were left out are said once at the end of the
+    // second, so nothing is lost.
+    private struct UDPLogWindow {
+        var count = 0
+        var started = Date()
+        var dropped = 0
+    }
+    private static let udpLogLinesPerSecond = 10
+    private var udpLogWindows: [String: UDPLogWindow] = [:]
+    private let udpLogLock = NSLock()
+
+    private func logUDPConnection(process: String, destination: String, port: UInt16, proxy: String) {
+        var summary: String? = nil
+        udpLogLock.lock()
+        var window = udpLogWindows[process] ?? UDPLogWindow()
+        if Date().timeIntervalSince(window.started) >= 1 {
+            // the second is over: the lines that were left out are said once
+            if window.dropped > 0 { summary = "\(window.dropped) more destinations" }
+            window = UDPLogWindow()
+        }
+        if window.count < AppProxyProvider.udpLogLinesPerSecond {
+            window.count += 1
+            udpLogWindows[process] = window
+            udpLogLock.unlock()
+            if let summary = summary {
+                self.sendUDPConnectionLine(process: process, destination: summary, port: 0, proxy: proxy)
+            }
+            self.sendUDPConnectionLine(process: process, destination: destination, port: port, proxy: proxy)
+        } else {
+            window.dropped += 1
+            udpLogWindows[process] = window
+            udpLogLock.unlock()
+        }
+    }
+
+    private func sendUDPConnectionLine(process: String, destination: String, port: UInt16, proxy: String) {
+        guard trafficLoggingEnabled else { return }
+        appendLog(.connection(proto: "UDP", process: process, destination: destination, port: String(port), proxy: proxy))
+        // the same line in the unified log. the app reads the activity log over the
+        // provider channel, and that channel does not open on a build that is not
+        // signed by a developer: this is then the only place where the decision the
+        // extension made can be seen.
+        let proto = "UDP"
+        diag("Connection \(proto) \(process) -> \(destination):\(port) via \(proxy)")
     }
 }
 
