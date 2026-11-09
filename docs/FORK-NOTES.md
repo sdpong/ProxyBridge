@@ -1970,3 +1970,39 @@ zip 里有 `Contents/Helpers/com.sdpong.proxiroute.helper`（356528 字节）+
 `build.sh` 打印 "Using the helper that is already inside the app bundle."；
 pkg 载荷里 helper 是 `100755 0/0`、daemon 是 `100644 0/0`（root:wheel）；
 pkg 里的 app `codesign --verify` 通过（helper 在签名覆盖范围内）。
+
+## 网关模式：没装 helper 时，「打开网关」开关不该能点
+
+用户问「不装 helper 只点打开网关」和「装 helper 再打开网关」有什么区别的时候，
+查出来的两件事：
+
+**一、两个动作是两层完全不同的东西。**
+
+| | 谁做 | 改不改这台机器 | 要密码吗 |
+|---|---|---|---|
+| 安装 helper | app 用 `osascript` 要 root，把 root 程序装到 `/Library/PrivilegedHelperTools/`、plist 装到 `/Library/LaunchDaemons/`，launchd 拉起来 | **不改**（安装脚本第一步恰恰是「机器先回原样」：`pfctl -f /etc/pf.conf` + `forwarding=0`） | **要** |
+| 打开网关 | app 通过 unix socket 问 helper；helper 装 PF 规则 + 开转发 | **改**：PF 里装 `rdr` 规则、`sysctl -w net.inet.ip.forwarding=1` | 不要（helper 已经是 root） |
+
+helper 启动时（`helper/main.swift` → `GatewayHelper.run()`）**只开 socket 干等**，
+不碰过滤器、不碰转发。所以「只装 helper 不开网关」= 机器上多个 root 常驻程序，
+网络行为跟没装一样。
+
+**二、「打开网关」这个开关在没有 helper 时是个陷阱。**
+
+`SettingsTabView` 里那个 Toggle 原来没有 `.disabled(...)`：
+helper 没装也能点，点了必然失败（app 连不上 helper 的 socket），
+而 `GatewayController.isEnabled` 的 didSet 会把 `true` 写进 `UserDefaults`
+（键 `gatewayEnabled`）——于是**每次打开 app 都会自动再试一次、再失败一次**，
+而且开关看起来是「开着的」，人怎么点都没用（点了就失败，失败后又变回…）。
+
+修法（`GatewayInstaller.canTurnOn` / `GatewayInstaller.initialGatewayState`）：
+
+- 没装 helper 时，开关和网卡选择器都置灰，并在开关下面写明为什么；
+- app 启动时先问 helper 的状态：**记住的「开」只有 helper 还在才保留**，
+  helper 不在了就把那个记住的状态丢掉（`UserDefaults` 里也清掉）；
+- 点「打开网关」时发现 helper 不在，开关自己弹回「关」，不留一个假的「开」；
+- 点「卸载」把 helper 拿走时，开关也跟着关掉。
+
+实测：先把 `defaults write com.sdpong.ProxiRoute gatewayEnabled -bool true` 写进去，
+再启动 app → `defaults read` 已经是 `0`；AX 树里「打开网关」`enabled=0`，
+底下出现「要先安装网关模式的 helper，才能打开网关。」，网卡选择器也是灰的。

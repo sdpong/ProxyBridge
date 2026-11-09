@@ -66,6 +66,15 @@ final class GatewayController: ObservableObject {
 
     static let storageKey = "gatewayEnabled"
 
+    // Whether the switch of the gateway mode may be turned on.
+    //
+    // The helper is the program of root that does the part of the gateway
+    // mode that needs root. Without it the switch would fail every time it
+    // was turned on, so it is not offered in the first place.
+    var canTurnOn: Bool {
+        return GatewayInstaller.canTurnOn(helperState)
+    }
+
     // The rules of the app, as the engine reads them.
     //
     // The traffic of the network has no program behind it, so the rules that
@@ -80,7 +89,19 @@ final class GatewayController: ObservableObject {
     private var pollTimer: Timer?
 
     init() {
-        isEnabled = UserDefaults.standard.bool(forKey: GatewayController.storageKey)
+        // The state of the helper is asked about before the state of the
+        // switch. A remembered "on" without the helper is a switch that fails
+        // at every start of the app, and there is nothing the person in front
+        // of it can do about it, so such a state is not kept.
+        let state = GatewayInstaller.state()
+        helperState = state
+        let stored = UserDefaults.standard.bool(forKey: GatewayController.storageKey)
+        isEnabled = GatewayInstaller.initialGatewayState(stored: stored, state: state)
+        if stored && !state.isInstalled {
+            // the remembered state is one the machine cannot keep, so it is
+            // not kept
+            UserDefaults.standard.set(false, forKey: GatewayController.storageKey)
+        }
         // The traffic of the network is carried by threads of their own, and
         // the log of the app belongs to the window: the lines are brought to
         // the main thread, or the window would be written to from two
@@ -110,6 +131,23 @@ final class GatewayController: ObservableObject {
 
     // Turns the gateway on.
     func start() {
+        // The gateway mode needs the helper: it is the program of root that
+        // loads the rules of the filter and turns the forwarding of the
+        // machine on. Without it there is nobody to ask, and the switch goes
+        // off again - a switch that stays on fails at every start of the app,
+        // and the person in front of it can do nothing about it.
+        let state = GatewayInstaller.state()
+        helperState = state
+        guard state.isInstalled else {
+            isEnabled = false
+            isRunning = false
+            dataPlane.stop()
+            status = L10n.t("The helper of the gateway mode is not installed. Install it with the button in this card.")
+            log("The gateway mode could not be turned on: the helper of the gateway mode is not installed", level: "ERROR")
+            startPolling()
+            return
+        }
+
         let name = interface.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else {
             status = L10n.t("The gateway mode needs an interface: the network card the other terminals reach this machine through.")
@@ -279,6 +317,15 @@ final class GatewayController: ObservableObject {
         // gone, so nothing comes in any more
         dataPlane.stop()
         isRunning = false
+        // the switch goes off with the helper: there is nothing left to turn
+        // it on, and a switch that stays on is a switch that fails at every
+        // start of the app.
+        //
+        // The helper is said to be gone before the switch is turned off, so
+        // that the turning off does not ask a helper that is not there to
+        // take the rules of the machine back.
+        helperInstalled = false
+        isEnabled = false
         refreshHelperState()
         if result.ok {
             helperMessage = L10n.t("The helper of the gateway mode is gone.")

@@ -59,6 +59,26 @@ enum GatewayInstaller {
         return GatewayHelperClient.status().ok ? .running : .installed
     }
 
+    // Whether the gateway mode can be turned on at all.
+    //
+    // The gateway mode needs the helper: it is the program of root that loads
+    // the rules of the filter and turns the forwarding of the machine on.
+    // Without it there is nobody to ask, so the switch is not offered.
+    static func canTurnOn(_ state: State) -> Bool {
+        return state.isInstalled
+    }
+
+    // The state the switch of the gateway mode starts in.
+    //
+    // A machine that was the gateway of its network stays that way when the
+    // app is opened again - but only while the helper is there. A remembered
+    // "on" without the helper is a switch that fails at every start of the
+    // app, and there is nothing the person in front of it can do about it, so
+    // it starts off.
+    static func initialGatewayState(stored: Bool, state: State) -> Bool {
+        return stored && state.isInstalled
+    }
+
     // Puts the helper in place and starts it.
     //
     // The path of the app is needed: the helper travels inside the bundle

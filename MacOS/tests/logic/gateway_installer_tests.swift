@@ -232,4 +232,28 @@ check(install.contains("SRC_TOOLS=\"$APP/Contents/Helpers/$NAME\""),
 check(install.contains("SRC_DAEMON=\"$APP/Contents/Resources/$NAME.plist\""),
       "the app takes the daemon out of the resources of the bundle")
 
+
+// ---------------------------------------------------------------- the switch
+
+print("gateway switch tests:")
+
+// The gateway mode needs the helper: it is the program of root that loads the
+// rules of the filter and turns the forwarding of the machine on. Without it
+// there is nobody to ask, so the switch is not offered at all.
+check(!GatewayInstaller.canTurnOn(.notInstalled), "the gateway cannot be turned on without the helper")
+check(GatewayInstaller.canTurnOn(.installed), "the gateway can be turned on when the helper is there")
+check(GatewayInstaller.canTurnOn(.running), "the gateway can be turned on when the helper is running")
+
+// A remembered "on" is only kept while the helper is on the machine. A switch
+// that fails at every start of the app is a switch the person in front of it
+// cannot get out of.
+check(GatewayInstaller.initialGatewayState(stored: true, state: .running),
+      "a remembered on is kept while the helper is there")
+check(GatewayInstaller.initialGatewayState(stored: true, state: .installed),
+      "a remembered on is kept while the helper is there")
+check(!GatewayInstaller.initialGatewayState(stored: true, state: .notInstalled),
+      "a remembered on is dropped when the helper is gone")
+check(!GatewayInstaller.initialGatewayState(stored: false, state: .running),
+      "a remembered off stays off")
+
 print("gateway installer tests: ALL PASS")

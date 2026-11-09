@@ -197,6 +197,17 @@ struct SettingsTabView: View {
                         get: { viewModel.gateway.isEnabled },
                         set: { viewModel.gateway.isEnabled = $0 }
                     ))
+                    // The helper is the program of root that does the part of
+                    // the gateway mode that needs root. Without it there is
+                    // nobody to ask, so the switch is not offered.
+                    .disabled(!viewModel.gateway.canTurnOn)
+
+                    if !viewModel.gateway.canTurnOn {
+                        Text(L10n.t("The helper of the gateway mode has to be installed before the gateway can be turned on."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     Picker(L10n.t("Interface"), selection: Binding(
                         get: { viewModel.gateway.interface },
@@ -207,6 +218,9 @@ struct SettingsTabView: View {
                             Text(name).tag(name)
                         }
                     }
+                    // the network card is only of use when the gateway can be
+                    // turned on at all
+                    .disabled(!viewModel.gateway.canTurnOn)
 
                     HStack {
                         Text(L10n.t("Status"))

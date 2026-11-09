@@ -122,6 +122,7 @@ enum L10n {
         "Uninstall": "卸载",
         "Installed": "已安装",
         "Not Installed": "未安装",
+        "The helper of the gateway mode has to be installed before the gateway can be turned on.": "要先安装网关模式的 helper，才能打开网关。",
         "Installed, Not Running": "已安装，未运行",
         "The helper of the gateway mode is installed.": "网关模式的 helper 已安装。",
         "The helper of the gateway mode is not installed. Install it with the button in this card.": "网关模式的 helper 还没装。用这张卡里的「安装」按钮装上。",
