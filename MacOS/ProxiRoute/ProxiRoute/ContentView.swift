@@ -317,10 +317,12 @@ struct TabStatusView: View {
         switch viewModel.runtimeMode {
         case .local:
             let state = viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied")
-            return "\(L10n.t("Local")) \u{00b7} \(state)"
+            let waiting = viewModel.waitingForUpstream ? " \u{00b7} " + L10n.t("Waiting for the upstream") : ""
+            return "\(L10n.t("Local")) \u{00b7} \(state)\(waiting)"
         case .gateway:
             let state = viewModel.isProxyActive ? L10n.t("Proxied") : L10n.t("Not Proxied")
-            return "\(L10n.t("Gateway")) \u{00b7} \(state)"
+            let waiting = viewModel.waitingForUpstream ? " \u{00b7} " + L10n.t("Waiting for the upstream") : ""
+            return "\(L10n.t("Gateway")) \u{00b7} \(state)\(waiting)"
         case .server:
             let state = viewModel.localProxyRunning ? L10n.t("Running") : L10n.t("Not Running")
             let clients = viewModel.localProxyClients

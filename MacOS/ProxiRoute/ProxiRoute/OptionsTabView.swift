@@ -21,6 +21,11 @@ struct OptionsTabView: View {
     @AppStorage("closeToMenuBar") private var closeToMenuBar = false
     @AppStorage("keepProxyRunningInBackground") private var keepProxyRunningInBackground = true
     @State private var runAtStartup = LoginItem.isEnabled
+    // whether macOS should start the app as soon as the proxy on this
+    // machine is ready
+    @State private var startAfterUpstream = LaunchOrderAgent.isEnabled
+    // what the last change of that switch did, in words
+    @State private var launchOrderNote = ""
 
     var body: some View {
         ScrollView {
@@ -83,8 +88,26 @@ struct OptionsTabView: View {
                             LoginItem.setEnabled($0)
                         }
                     ))
+
+                    Toggle(L10n.t("Start after the upstream proxy is ready"), isOn: Binding(
+                        get: { startAfterUpstream },
+                        set: {
+                            startAfterUpstream = $0
+                            launchOrderNote = LaunchOrderAgent.setEnabled($0)
+                        }
+                    ))
+
+                    if !launchOrderNote.isEmpty {
+                        Text(launchOrderNote)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } footer: {
-                    Text(L10n.t("Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit."))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L10n.t("Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit."))
+                        Text(L10n.t("macOS starts all the login items at the same moment, so the order cannot be set in the system settings. With this switch on, macOS starts ProxiRoute as soon as the proxy on this machine - Clash Meta, for example - answers on its port, and ProxiRoute takes the traffic over only when that proxy is ready."))
+                    }
                 }
             }
             .formStyle(.grouped)

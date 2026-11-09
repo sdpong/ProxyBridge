@@ -8,6 +8,12 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     @Published var connections: [ConnectionLog] = []
     @Published var activityLogs: [ActivityLog] = []
     @Published var isProxyActive = false
+    // Whether the app is waiting for an upstream that runs on this machine.
+    //
+    // The traffic is not taken over while this is on: taking it over before
+    // the upstream is there means that every connection of the machine goes
+    // to a port that nothing answers on.
+    @Published private(set) var waitingForUpstream = false
     @Published var isTrafficLoggingEnabled = true
     // the system DNS proxy lets the extension learn which names belong to which addresses, which
     // host name rules and "send hostname" need. per profile, on by default
@@ -326,6 +332,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         loadDNSSetting()
         loadProfiles()
         loadProxyConfig()
+        // the list of what the launch agent waits for is written down right
+        // away, so that the agent of the next login waits for the upstream of
+        // this profile and not for the one of the profile before it
+        refreshUpstreamWaitFile()
         // The running mode says what the app does with the traffic of this
         // machine. An app that was written before the mode existed is taken
         // over by the mode that fits what it was doing, so that an update
@@ -1072,6 +1082,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         if let data = try? JSONEncoder().encode(proxyConfigs) {
             UserDefaults.standard.set(data, forKey: "proxyConfigs")
         }
+        refreshUpstreamWaitFile()
     }
 
     func addProxyConfig(_ config: ProxyConfig) {
@@ -1348,11 +1359,103 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         return ["proxiroute": payload]
     }
 
+    // Starts the proxy.
+    //
+    // The traffic of this machine is taken over, and everything that is taken
+    // over goes to the upstream proxies of the rules. When one of those runs
+    // on this machine - Clash Meta on 127.0.0.1, for example - and is not
+    // ready yet, every connection of the machine would go to a port that
+    // nothing answers on, and the machine would be without a network.
+    //
+    // So the start waits for the upstream. The wait has a limit: an upstream
+    // that never comes is not a reason to never start, and a person has to be
+    // able to use the proxy without it.
+    //
+    // macOS starts all the login items at the same moment, so the order in
+    // which the app and the upstream come up cannot be set anywhere. Waiting
+    // is the way out of it.
     func startProxy() {
+        let endpoints = localUpstreamEndpoints()
+        guard !endpoints.isEmpty else {
+            startProxyNow()
+            return
+        }
+
+        waitingForUpstream = true
+        addLog("INFO", L10n.f("Waiting for the upstream proxy %@", endpoints.map(\.text).joined(separator: ", ")))
+
+        UpstreamReadiness.wait(for: endpoints, timeout: upstreamWaitTimeout, onReady: { endpoint in
+            DispatchQueue.main.async {
+                self.addLog("INFO", L10n.f("The upstream proxy %@ is ready", endpoint.text))
+            }
+        }, completion: { missing in
+            DispatchQueue.main.async {
+                self.waitingForUpstream = false
+                if !missing.isEmpty {
+                    self.addLog("WARN", L10n.f("The upstream proxy %@ did not answer. The proxy starts anyway", missing.map(\.text).joined(separator: ", ")))
+                }
+                self.startProxyNow()
+            }
+        })
+    }
+
+    private func startProxyNow() {
         ensureNetworkConfiguration { manager in
             self.addLog("INFO", L10n.t("Configuration saved"))
             self.reloadAndStartTunnel(manager: manager)
         }
+    }
+
+    // How long the start waits for an upstream of this machine, in seconds.
+    //
+    // Clash Meta is up in a second or two, so the wait is over long before the
+    // limit - the limit is there for an upstream that never comes.
+    private let upstreamWaitTimeout: TimeInterval = 20
+
+    // The upstream proxies of the rules that run on this machine.
+    //
+    // Only the proxies that a rule really uses are looked at: a proxy that is
+    // in the list but in no rule carries no traffic, and waiting for it would
+    // hold the start of the proxy for nothing.
+    func localUpstreamEndpoints() -> [UpstreamEndpoint] {
+        let saved = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
+        var used = Set<String>()
+        for rule in saved {
+            guard (rule["enabled"] as? Bool) ?? true else { continue }
+            let action = rule["action"] as? String ?? ""
+            guard !action.isEmpty, action != "DIRECT" else { continue }
+            // a rule that names a chain uses every proxy of that chain
+            if action.hasPrefix(ProxyChain.actionPrefix) {
+                let chainId = String(action.dropFirst(ProxyChain.actionPrefix.count))
+                if let chain = chains.first(where: { $0.id == chainId }) {
+                    used.formUnion(chain.proxyIds)
+                }
+                continue
+            }
+            used.insert(action)
+        }
+
+        var endpoints: [UpstreamEndpoint] = []
+        for config in proxyConfigs where used.contains(config.id) {
+            endpoints.append(UpstreamEndpoint(host: config.host, port: config.port))
+        }
+        // no rule at all: every proxy of the list is a candidate
+        if used.isEmpty {
+            for config in proxyConfigs {
+                endpoints.append(UpstreamEndpoint(host: config.host, port: config.port))
+            }
+        }
+        return UpstreamWait.localEndpoints(endpoints)
+    }
+
+    // Writes down what the launch agent has to wait for.
+    //
+    // The agent of the next login has to wait for the upstream of then and
+    // not for the one of today, so the list is written every time the proxies
+    // or the rules change.
+    private func refreshUpstreamWaitFile() {
+        guard LaunchOrderAgent.isEnabled || LaunchOrderAgent.isInstalled else { return }
+        LaunchOrderAgent.writeWaitFile(for: localUpstreamEndpoints())
     }
 
     // makes the system DNS proxy entry match the profile's Enable DNS setting. on: the extension sees
@@ -2526,6 +2629,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // over without the check. So when the channel is closed the tunnel is
     // restarted instead: the change lands, and the open connections drop.
     private func deliverChangeToExtension() {
+        refreshUpstreamWaitFile()
         guard let session = tunnelSession else { return }
         if providerChannelAvailable {
             sendProxyConfigsToExtension(session: session)

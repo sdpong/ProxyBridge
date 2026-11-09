@@ -9,10 +9,22 @@ enum LoginItem {
 
     static func setEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: "runAtStartup")
+        // the script of the launch agent reads this file: it is the only way
+        // the script can know whether the app should start at all, because the
+        // script runs before the app does
+        LaunchOrderAgent.writeStartFlag(enabled)
         applyToSystem(enabled)
     }
 
     static func applyToSystem(_ enabled: Bool) {
+        // The launch agent starts the app when the upstream is ready. When it
+        // is in place, the app must not be a login item as well: two
+        // launchers would start the app twice, and the one that waits for the
+        // upstream would be the one that loses.
+        guard !LaunchOrderAgent.isEnabled else {
+            unregister()
+            return
+        }
         guard #available(macOS 13.0, *) else { return }
         do {
             if enabled, SMAppService.mainApp.status != .enabled {
@@ -23,6 +35,13 @@ enum LoginItem {
         } catch {
             // registration can fail if the app isn't in /Applications, ignore
         }
+    }
+
+    // Takes the app out of the login items of the system.
+    private static func unregister() {
+        guard #available(macOS 13.0, *) else { return }
+        guard SMAppService.mainApp.status == .enabled else { return }
+        try? SMAppService.mainApp.unregister()
     }
 }
 
@@ -454,12 +473,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // then.
         StandardMenuLocalizer.install()
         // keep the real login item in sync with the active profile's setting
+        LaunchOrderAgent.writeStartFlag(LoginItem.isEnabled)
         LoginItem.applyToSystem(LoginItem.isEnabled)
 
         // a login-item / resume launch is not a "default" launch. if we got here
         // that way and startup is enabled, come up in the menu bar with no window
         let isDefaultLaunch = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
-        if !isDefaultLaunch && LoginItem.isEnabled {
+        // The launch agent starts the app when the upstream is ready, and it
+        // says so with an environment variable. The window stays out of the way
+        // then too: the point of the agent is that the proxy is up early, not
+        // that a window pops up in the middle of the login.
+        let startedByAgent = ProcessInfo.processInfo.environment[UpstreamWait.startHiddenVariable] == "1"
+        if startedByAgent || (!isDefaultLaunch && LoginItem.isEnabled) {
             AppDelegate.startHidden = true
             NSApp.setActivationPolicy(.accessory)
         }
@@ -592,6 +617,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // The full screen of the window. It was in the view menu of macOS, and
     // that menu is gone: everything in it was about a sidebar or a toolbar,
     // and this app has none of them.
+    //
     // The name of the action is not the one of macOS on purpose. macOS draws
     // a growing ghost of the window next to an item whose action is the full
     // screen, and a person who opened the window menu saw that ghost spread
