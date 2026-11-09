@@ -97,4 +97,36 @@ let guiSource = (try? String(contentsOf: appFolder.appendingPathComponent("Proxi
 check(guiSource.contains("CommandGroup(replacing: .windowArrangement)"),
       "the items that move and resize the window are taken out at the source")
 
+// ---------------------------------------------------------------- the full screen
+//
+// macOS draws a ghost of the window next to the item that goes full screen,
+// and the ghost grows while the mouse stays on the item. A person who opened
+// the window menu saw that ghost spread over the screen and the picture of it
+// shiver, and the cursor landed on that item by itself, because it was the
+// second one in the menu.
+//
+// So the full screen is not in the window menu any more. It is in the menu of
+// the app, where macOS draws no ghost.
+
+check(noise.contains("Enter Full Screen"), "the item that goes full screen is taken out of the window menu")
+check(noise.contains("进入全屏"), "the item that goes full screen is taken out of the window menu")
+
+let localizerSource = (try? String(contentsOf: appFolder.appendingPathComponent("StandardMenuLocalizer.swift"), encoding: .utf8)) ?? ""
+check(!localizerSource.contains("#selector(AppDelegate.toggleWindowFullScreen)"),
+      "the full screen is not put into the window menu")
+
+// The way into the full screen is in the menu of the app.
+check(guiSource.contains("CommandGroup(replacing: .appInfo)"),
+      "the menu of the app is built by the app")
+check(guiSource.contains("L10n.t(\"Enter Full Screen\")"),
+      "the full screen is in the menu of the app")
+
+// The action is not called the way macOS calls it. macOS draws the ghost for
+// an item whose action is the full screen, and the name of the action is
+// what it looks at.
+check(!guiSource.contains("@objc func toggleFullScreen()"),
+      "the action of the full screen is not called the way macOS calls it")
+check(guiSource.contains("@objc func toggleWindowFullScreen()"),
+      "the action of the full screen has a name of its own")
+
 print("menu tests: ALL PASS")

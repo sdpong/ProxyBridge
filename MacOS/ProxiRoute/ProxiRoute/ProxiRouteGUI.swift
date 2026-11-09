@@ -161,6 +161,19 @@ struct ProxiRouteGUIApp: App {
                     AppDelegate.shared?.openSettingsTab()
                 }
                 .keyboardShortcut(",", modifiers: .command)
+
+                // The full screen is here and not in the window menu.
+                //
+                // macOS draws a ghost of the window next to the item that goes
+                // full screen, and the ghost grows while the mouse stays on
+                // the item. In the window menu the cursor lands on that item
+                // by itself, so the ghost was drawn every time the menu was
+                // opened - and a person saw it spread and the picture of it
+                // shiver. The menu of the app gets no ghost.
+                Button(L10n.t("Enter Full Screen")) {
+                    AppDelegate.shared?.toggleWindowFullScreen()
+                }
+                .keyboardShortcut("f", modifiers: [.control, .command])
             }
 
             CommandMenu(L10n.t("Profile")) {
@@ -579,7 +592,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // The full screen of the window. It was in the view menu of macOS, and
     // that menu is gone: everything in it was about a sidebar or a toolbar,
     // and this app has none of them.
-    @objc func toggleFullScreen() {
+    // The name of the action is not the one of macOS on purpose. macOS draws
+    // a growing ghost of the window next to an item whose action is the full
+    // screen, and a person who opened the window menu saw that ghost spread
+    // over the screen. The item is in the menu of the app now, and the action
+    // is not called the way macOS calls it.
+    @objc func toggleWindowFullScreen() {
         guard let window = AppDelegate.mainWindow ?? NSApp.windows.first else { return }
         window.toggleFullScreen(nil)
     }

@@ -409,24 +409,33 @@ enum StandardMenuLocalizer {
     // Puts the items of the window menu at the top of it.
     //
     // The window menu of SwiftUI lists the windows of the app. What is missing
-    // is the way to the main window and to the full screen, and those are the
-    // two things a person reaches for.
+    // is the way to the main window, and that is the one thing a person reaches
+    // for.
+    //
+    // The full screen is not here, and that is the point of this change.
+    //
+    // macOS draws a ghost of the window next to the item that goes full
+    // screen, and the ghost grows while the mouse stays on the item. A person
+    // who opened the window menu saw that ghost spread and the picture of it
+    // shiver - and the cursor lands on that item by itself, because it is the
+    // second one in the menu, so the ghost was drawn every single time the
+    // menu was opened.
+    //
+    // The full screen went into the menu of the app instead. macOS draws no
+    // ghost there, and the item is still one click away (and on the keys of
+    // macOS for it: control-command-f).
     private static func putWindowItems(_ menu: NSMenu) {
         guard let delegate = AppDelegate.shared,
               let window = menu.items.first(where: { isWindowMenu($0) }),
               let submenu = window.submenu else { return }
-        // they are already there when the menus are built again
+        // it is already there when the menus are built again
         guard !submenu.items.contains(where: { $0.representedObject as? String == "windowItems" }) else { return }
 
         let open = NSMenuItem(title: L10n.t("Open ProxiRoute"), action: #selector(AppDelegate.showMainWindow), keyEquivalent: "")
         open.target = delegate
         open.representedObject = "windowItems"
-        let full = NSMenuItem(title: L10n.t("Enter Full Screen"), action: #selector(AppDelegate.toggleFullScreen), keyEquivalent: "")
-        full.target = delegate
-        full.representedObject = "windowItems"
         submenu.insertItem(open, at: 0)
-        submenu.insertItem(full, at: 1)
-        submenu.insertItem(.separator(), at: 2)
+        submenu.insertItem(.separator(), at: 1)
     }
 
     // whether a menu of the menu bar is the edit menu

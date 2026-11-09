@@ -160,4 +160,18 @@ let windowMenuNoiseTitles: Set<String> = [
     "排在前面",
     "移到前面",
     "移到前面",
+    // The item that goes full screen.
+    //
+    // macOS draws a ghost of the window next to it, and the ghost grows while
+    // the mouse stays on the item. The ghost was drawn every time the window
+    // menu was opened, because the cursor lands on the second item of the menu
+    // by itself.
+    //
+    // The full screen is in the menu of the app instead - see
+    // StandardMenuLocalizer.putWindowItems - and these titles are here so that
+    // the item of macOS itself is taken out of the window menu as well, and
+    // not only the one this app puts there.
+    "Enter Full Screen",
+    "进入全屏",
+    "进入全屏幕",
 ]
