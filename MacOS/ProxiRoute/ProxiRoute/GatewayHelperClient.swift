@@ -119,11 +119,13 @@ enum GatewayHelperClient {
 
     // The words for a helper that is not there.
     //
-    // The helper is installed by the package of ProxiRoute. A build that is
-    // only the app bundle - the one that is unpacked from a zip - has no
-    // helper, and the person is told so, with the way to get one.
+    // The helper is installed by the package of ProxiRoute, or by the button
+    // of the settings of the gateway mode: the app asks macOS for the
+    // privilege and puts it in place by itself. A build that is only the app
+    // bundle - the one that is unpacked from a zip - has the helper in it as
+    // well, so the button works there too.
     private static func notInstalled() -> String {
-        return "The helper of the gateway mode is not installed. Install ProxiRoute with its package to use the gateway mode."
+        return "The helper of the gateway mode is not installed. Install it with the button in the settings of the gateway mode, or install ProxiRoute with its package."
     }
 
     // Writes everything.

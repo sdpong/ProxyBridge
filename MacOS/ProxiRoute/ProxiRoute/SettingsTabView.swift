@@ -184,6 +184,52 @@ struct SettingsTabView: View {
                     Text(L10n.t("The other terminals of the network point at this machine as their gateway. Their traffic goes out by the rules of the app, the same rules as the traffic of this machine, except that a rule naming a program does not apply to them: they have no program."))
                 }
 
+                // The helper of the gateway mode is a program of root, and
+                // putting it in place needs the password of an administrator.
+                // The app asks macOS for that privilege, the way every other
+                // installer does, so that the person does not have to type a
+                // command in a terminal.
+                Section {
+                    HStack {
+                        Text(L10n.t("Helper of the Gateway Mode"))
+                        Spacer()
+                        Text(helperStateText)
+                            .foregroundColor(helperIsInstalled ? .green : .secondary)
+                    }
+
+                    HStack {
+                        Button(L10n.t("Install")) {
+                            viewModel.gateway.installHelper()
+                        }
+                        // the helper is already there: there is nothing to
+                        // install, and the button says so
+                        .disabled(helperIsInstalled || viewModel.gateway.isInstalling)
+
+                        if helperIsInstalled {
+                            Button(L10n.t("Uninstall")) {
+                                viewModel.gateway.uninstallHelper()
+                            }
+                        }
+                    }
+                    .disabled(viewModel.gateway.isInstalling)
+
+                    if viewModel.gateway.isInstalling {
+                        Text(L10n.t("The password of an administrator is asked for. The installation waits for it."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if !viewModel.gateway.helperMessage.isEmpty {
+                        Text(viewModel.gateway.helperMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } footer: {
+                    Text(L10n.t("The helper is a program of root: it loads the rules of the packet filter, turns the forwarding of the machine on, and asks the kernel where a redirected connection was going. Installing it needs the password of an administrator; taking it out puts the machine back the way it was."))
+                }
+
                 // The routing options: they say where the traffic goes when
                 // this machine is the gateway of the network. They are the
                 // sections of the form of the routing window, put in here so
@@ -192,6 +238,11 @@ struct SettingsTabView: View {
             }
             .formStyle(.grouped)
             .frame(maxWidth: .infinity)
+            .onAppear {
+                // the helper may have been taken away while the window was
+                // closed, so the card asks before it shows anything
+                viewModel.gateway.refreshHelperState()
+            }
             SettingsCardFooter {
                 Button(L10n.t("Save")) {
                     viewModel.updateRouteSettings(route)
@@ -204,6 +255,27 @@ struct SettingsTabView: View {
     // The interfaces the other terminals could reach this machine through.
     private var gatewayInterfaces: [String] {
         return InterfaceList.shared.entries.map { $0.name }
+    }
+
+    // Whether the helper of the gateway mode is on the machine.
+    private var helperIsInstalled: Bool {
+        return viewModel.gateway.helperState.isInstalled
+    }
+
+    // What the card says about the helper.
+    //
+    // A helper that is there but does not answer is a different thing from a
+    // helper that is not there: the first one is broken, the second one is
+    // not installed yet, and the person has to know which one it is.
+    private var helperStateText: String {
+        switch viewModel.gateway.helperState {
+        case .notInstalled:
+            return L10n.t("Not Installed")
+        case .installed:
+            return L10n.t("Installed, Not Running")
+        case .running:
+            return L10n.t("Installed")
+        }
     }
 
     // MARK: - the proxy server

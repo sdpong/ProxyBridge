@@ -29,6 +29,12 @@ final class GatewayController: ObservableObject {
     @Published private(set) var helperInstalled = false
     // how many connections of the network have been carried
     @Published private(set) var carriedConnections = 0
+    // whether the helper of the gateway mode is on the machine
+    @Published private(set) var helperState: GatewayInstaller.State = .notInstalled
+    // whether an installation is going on right now
+    @Published private(set) var isInstalling = false
+    // what the last installation said
+    @Published private(set) var helperMessage: String = ""
 
     // The part of the gateway mode that runs in the app.
     //
@@ -172,6 +178,7 @@ final class GatewayController: ObservableObject {
     // going on: the helper may have been taken away by a person who knows
     // what they are doing, and the machine may have been restarted.
     func refresh() {
+        refreshHelperState()
         let result = GatewayHelperClient.status()
         helperInstalled = result.ok
         if !result.ok {
@@ -195,13 +202,96 @@ final class GatewayController: ObservableObject {
     // How often the helper is asked.
     private let pollInterval: TimeInterval = 3.0
 
+    // MARK: - the helper of the gateway mode
+
+    // Asks whether the helper is on the machine.
+    //
+    // It is a file and a socket, and neither of them needs root to be read:
+    // the folder of the privileged helper tools can be read by anybody, and
+    // the socket is for the people of the machine.
+    func refreshHelperState() {
+        helperState = GatewayInstaller.state()
+    }
+
+    // Puts the helper of the gateway mode in place.
+    //
+    // It needs the password of an administrator, and macOS asks for it in the
+    // dialog of the administrator. The app cannot be a program of root
+    // itself: it is signed ad hoc, and the system does not trust an app
+    // without a team to run something as root.
+    func installHelper() {
+        guard !isInstalling else { return }
+        isInstalling = true
+        helperMessage = ""
+        let appPath = Bundle.main.bundlePath
+        GatewayInstaller.install(appPath: appPath) { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.finishInstall(result)
+            }
+        }
+    }
+
+    // Takes the helper of the gateway mode out of the machine.
+    //
+    // The machine goes back the way it was first, and only then is the helper
+    // taken away: a helper that is taken away while its rules are in place
+    // leaves the traffic of the network being redirected to a port where
+    // nobody listens.
+    func uninstallHelper() {
+        guard !isInstalling else { return }
+        isInstalling = true
+        helperMessage = ""
+        // The gateway goes off first, the way it goes off when the switch is
+        // turned off: the rules of the filter go back before the helper is
+        // taken away. The script does it as well, but the app asks its own
+        // helper, so that the app and the machine agree.
+        _ = GatewayHelperClient.disable()
+        GatewayInstaller.uninstall { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.finishUninstall(result)
+            }
+        }
+    }
+
+    // What the installation said.
+    private func finishInstall(_ result: GatewayInstaller.Result) {
+        isInstalling = false
+        refreshHelperState()
+        if result.ok {
+            helperMessage = L10n.t("The helper of the gateway mode is installed.")
+            log("The helper of the gateway mode was installed", level: "INFO")
+        } else {
+            helperMessage = result.message
+            log("The helper of the gateway mode could not be installed: \(result.message)", level: "ERROR")
+        }
+    }
+
+    // What the removal said.
+    private func finishUninstall(_ result: GatewayInstaller.Result) {
+        isInstalling = false
+        // the program stops listening as well: the rules of the filter are
+        // gone, so nothing comes in any more
+        dataPlane.stop()
+        isRunning = false
+        refreshHelperState()
+        if result.ok {
+            helperMessage = L10n.t("The helper of the gateway mode is gone.")
+            log("The helper of the gateway mode was taken out", level: "INFO")
+        } else {
+            helperMessage = result.message
+            log("The helper of the gateway mode could not be taken out: \(result.message)", level: "ERROR")
+        }
+    }
+
     private func startPolling() {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             // The timer runs on the main thread, and the window belongs to the
             // main thread. The jump is written down, so that the compiler
-            // does not have to guess where the line is written.
-            Task { @MainActor in
+            // does not have to guess where the line is written. The weak
+            // reference is taken inside the task, so that nothing that
+            // changes is shared between the threads.
+            Task { @MainActor [weak self] in
                 self?.refresh()
             }
         }
