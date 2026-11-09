@@ -647,7 +647,10 @@ enum LogText {
         let out = NSMutableAttributedString()
         for log in logs {
             out.append(seg("[\(log.timestamp)] ", .secondaryLabelColor))
-            out.append(seg("[\(log.level)] ", log.level == "ERROR" ? .systemRed : .systemBlue))
+            // a warning is worth seeing: it says that something is not right
+            // even though the app carries on
+            let isBad = log.level == "ERROR" || log.level == "WARN"
+            out.append(seg("[\(log.level)] ", isBad ? .systemRed : .systemBlue))
             out.append(seg(log.message, .labelColor))
             out.append(seg("\n", .labelColor))
         }

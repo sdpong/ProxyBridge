@@ -592,6 +592,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         switch viewModel.runtimeMode {
         case .local, .gateway:
             // the traffic of this machine is taken over in every mode
+            if viewModel.waitingForUpstream {
+                // the proxy is not off, it is waiting for the upstream on this
+                // machine. Saying "off" would be a lie: the traffic is still
+                // the traffic of the system.
+                return L10n.t("Proxy: Waiting for the upstream")
+            }
             return viewModel.isProxyActive ? L10n.t("Proxy: On") : L10n.t("Proxy: Off")
         case .server:
             return viewModel.localProxyRunning ? L10n.t("Proxy Server: On") : L10n.t("Proxy Server: Off")

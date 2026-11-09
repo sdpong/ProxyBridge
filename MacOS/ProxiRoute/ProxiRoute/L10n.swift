@@ -108,6 +108,7 @@ enum L10n {
         "Settings...": "设置…",
         "Proxy: On": "代理：开",
         "Proxy: Off": "代理：关",
+        "Proxy: Waiting for the upstream": "代理：等待上游",
         "Proxy Server: On": "代理服务器：开",
         "Proxy Server: Off": "代理服务器：关",
 
