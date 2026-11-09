@@ -1867,3 +1867,67 @@ going to the original destination
 - `Windows/README.md` —— Windows 端架构说明
 - `MacOS/README.md` —— macOS 端架构说明
 - `CONTRIBUTING.md` —— 上游贡献指南（提交 PR 前看这个）
+
+
+## 窗口与菜单栏：本轮查实的三件事
+
+这一轮是顺着「菜单栏的窗口点了会先拉长后变短」查下去的，查出来的不是一个原因，是三个。
+下面的都是**在本机实测过的**，不是推的。
+
+### 1. `WindowGroup` 没有 id → 每次 reopen 叠一个新窗口
+
+`ProxiRouteGUI.swift` 里主窗口是 `WindowGroup { ... }`，**没有 id**。
+SwiftUI 的语义是：无 id 的 `WindowGroup` 每次 app 被重新打开都会新建一个窗口。
+而 app 每次从菜单栏回来都会走一次 `applicationShouldHandleReopen` → `showMainWindow()`。
+
+实测（改之前）：
+- 全新启动：AX 窗口数 = 1
+- 反复 reopen 之后：AX 窗口数 = 2（且不继续增长，稳在 2）
+- 两个窗口内容完全相同，都是主窗口，位置重叠
+
+两个窗口叠在屏幕上，其中一个从不关闭 —— 这就是「点左上角窗口时看起来怪」的来源。
+
+**修法**：`WindowGroup(id: "main")` + `applicationShouldHandleReopen` 返回 `false`
+（窗口由 app 自己带回来，就不要让系统再带一个）。
+另外 `WindowAccessor` 里给窗口钉 `contentMinSize` / `contentMaxSize`，
+让尺寸由窗口自己定，而不是由内容定（设置页是 ScrollView，会要全部高度）。
+
+实测（改之后）：窗口数恒为 1；关窗 → 从菜单栏唤回，高度稳定 652 点。
+
+### 2. 「窗口」菜单里塞满了会改变窗口尺寸的项
+
+macOS 26 的「窗口」菜单里有一堆系统自己加的项：
+`关闭 / 全部关闭 / 最小化 / 全部最小化 / 缩放 / 全部缩放 / 填充 / 居中 /
+移动与调整大小 / 全屏幕平铺 / 移到屏幕… / 窗口平铺到屏幕… / 前置全部窗口 / 排在前面`。
+
+这些是 macOS 记下来的**窗口位置与尺寸历史项**——点一下就把窗口改成它以前的样子。
+本 app 的窗口尺寸由内容决定，跟这些历史项合不来。
+
+实测（改之前，菜单 24 项）：其中 8 项直接改变窗口尺寸，另有 2 项是窗口排列。
+
+**修法**：把这些标题加进 `windowNoiseTitles`（`StandardMenuLocalizer.swift`），
+由 `pruneWindowMenu` 删掉。中英文两套标题都要写。
+清单拆到独立文件 `ProxiRoute/WindowMenuNoise.swift`，这样测试不用拉整个 app 的依赖链
+（菜单代码依赖 `AppDelegate`，测试只需要那份标题清单）。
+
+实测（改之后，菜单 11 项）：只剩
+`打开 ProxiRoute / 进入全屏 / 代理设置 / 代理规则 / 网关 / 代理服务器 / 关于 / 检查更新 / ProxiRoute`，
+**没有一项会动窗口尺寸**。
+
+### 3. 「安装 / 卸载」按钮被折叠在网关卡片中段
+
+`SettingsTabView.gatewayCard` 里，helper 那一段（状态行 + 安装/卸载按钮 + 说明）
+原本排在「打开网关 / 网卡 / 状态 / 已承载连接」之后、路由选项之前。
+卡片很长，**按钮在折叠线以下**——用户说「网关页面没看到」是真的没看到。
+
+AX 树里能找到 `AXButton d='安装'`，说明按钮渲染了，只是位置看不见。
+
+**修法**：helper 段提到卡片**第一项**。没有 helper 的话网关模式什么也不干，
+这本来就是这张卡最该先说的话。
+
+### 关于「噪音」
+
+用户怀疑是日志噪音。查下来**不是**：
+`activityLogs` 上限 500 条、裁到 400 条（`ProxiRouteViewModel.swift:115-117`），
+裁剪只减条数不改数组结构，不会让窗口先涨后跌；而且日志页是 `NSScrollView`，
+本身没有理想高度。真正让窗口变的是上面第 1 条的第二个窗口。
