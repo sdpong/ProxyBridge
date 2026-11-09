@@ -102,6 +102,34 @@ mkdir -p "$SCRIPT_DIR/build/component/Library/PrivilegedHelperTools"
 mkdir -p "$SCRIPT_DIR/build/component/Library/LaunchDaemons"
 cp -R "$APP_PATH" "$SCRIPT_DIR/build/component/Applications/"
 
+# The helper and the daemon go into the payload of the package, in the places
+# where they really live on the machine.
+#
+# Why they are in the payload and not only copied by the postinstall script:
+# the receipt of the package only knows about the files that are in the
+# payload. A file that a script copies into /Library afterwards is not in the
+# receipt, so taking the package away leaves the helper behind - a program of
+# root that keeps running and keeps the machine changed. Putting them in the
+# payload means the package owns those two places, and the removal takes the
+# files away from exactly the places where they were put.
+#
+# The modes are set here because pkgbuild keeps the mode of the file it
+# archives: 755 for the program of root, 644 for the text file of the daemon.
+# The ownership is root:wheel - pkgbuild applies the recommended ownership to
+# the files of the system domain.
+cp -f "$HELPER_PATH" "$SCRIPT_DIR/build/component/Library/PrivilegedHelperTools/$HELPER_NAME"
+chmod 755 "$SCRIPT_DIR/build/component/Library/PrivilegedHelperTools/$HELPER_NAME"
+cp -f "$SCRIPT_DIR/scripts/$HELPER_NAME.plist" "$SCRIPT_DIR/build/component/Library/LaunchDaemons/$HELPER_NAME.plist"
+chmod 644 "$SCRIPT_DIR/build/component/Library/LaunchDaemons/$HELPER_NAME.plist"
+
+# The package has to carry the helper in the place where it belongs, and the
+# build fails here rather than in the middle of an installation if it does not.
+if [ ! -f "$SCRIPT_DIR/build/component/Library/PrivilegedHelperTools/$HELPER_NAME" ] \
+   || [ ! -f "$SCRIPT_DIR/build/component/Library/LaunchDaemons/$HELPER_NAME.plist" ]; then
+    echo "ERROR: the helper of the gateway mode is not in the payload of the package"
+    exit 1
+fi
+
 # strip AppleDouble junk so it never lands in the payload
 dot_clean "$SCRIPT_DIR/build/component" 2>/dev/null || true
 find "$SCRIPT_DIR/build/component" -name '._*' -delete 2>/dev/null || true

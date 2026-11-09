@@ -8,6 +8,12 @@ HELPER="$HERE/../../ProxiRoute/helper"
 APP="$HERE/../../ProxiRoute/ProxiRoute"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# where the scripts of the package live, for the tests that read them.
+# the test files are copied into a temporary folder before they are compiled,
+# so a path derived from the place of the test file would point nowhere.
+export PROXIRoute_SCRIPTS="$HERE/../../ProxiRoute/scripts"
+
 run_test() {   # <test file> <extension sources...>
     local test="$1"; shift
     cp "$HERE/$test" "$TMP/main.swift"

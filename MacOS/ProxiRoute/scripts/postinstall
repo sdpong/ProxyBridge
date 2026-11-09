@@ -22,9 +22,18 @@ APP_EXECUTABLE="/Applications/ProxiRoute.app/Contents/MacOS/ProxiRoute"
 BIN_DIR="/usr/local/bin"
 
 HELPER_NAME="com.sdpong.proxiroute.helper"
+
+# The two places the helper of the gateway mode lives on the machine. They
+# are the same two places in every path into the gateway mode: the package
+# puts them there, the app puts them there with its own install button, and
+# every way of taking it away takes them away from exactly these two.
 HELPER_TOOLS="/Library/PrivilegedHelperTools/$HELPER_NAME"
 HELPER_DAEMON="/Library/LaunchDaemons/$HELPER_NAME.plist"
+
+# where the helper is inside the bundle, used only when the package did not
+# carry it (a package of an earlier version)
 HELPER_SOURCE="/Applications/ProxiRoute.app/Contents/Helpers/$HELPER_NAME"
+HELPER_DAEMON_SOURCE="/Applications/ProxiRoute.app/Contents/Resources/$HELPER_NAME.plist"
 
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
@@ -89,9 +98,14 @@ put_the_machine_back() {
     rm -f /var/run/com.sdpong.proxiroute.pf.rules /var/run/com.sdpong.proxiroute.pf.anchor
 }
 
-if [ -f "$HELPER_SOURCE" ]; then
-    # the daemon of an earlier version is taken out of the system first: the
-    # old one is still running, and it holds the old socket
+if [ -f "$HELPER_TOOLS" ]; then
+    # The package put the helper in the place where it belongs, and the
+    # receipt of the package knows about it. What is left here is to make
+    # sure the ownership and the mode are the ones the system expects of a
+    # program of root: the folder is root's, and nobody else may write in it.
+    #
+    # The daemon of an earlier version is taken out of the system first: it
+    # is still running, and it holds the old socket
     if [ -f "$HELPER_DAEMON" ]; then
         /bin/launchctl bootout system "$HELPER_NAME" >/dev/null 2>&1
         /bin/launchctl unload "$HELPER_DAEMON" >/dev/null 2>&1
@@ -99,8 +113,31 @@ if [ -f "$HELPER_SOURCE" ]; then
 
     put_the_machine_back
 
-    # the helper is put in place with the ownership the system expects of a
-    # program of root: the folder is root's, and nobody else may write in it
+    chown root:wheel "$HELPER_TOOLS" 2>/dev/null
+    chmod 755 "$HELPER_TOOLS" 2>/dev/null
+    say "The helper of the gateway mode is in place."
+
+    if [ -f "$HELPER_DAEMON" ]; then
+        chown root:wheel "$HELPER_DAEMON" 2>/dev/null
+        chmod 644 "$HELPER_DAEMON" 2>/dev/null
+    fi
+
+    # the daemon is registered with the system
+    if [ -f "$HELPER_DAEMON" ]; then
+        if /bin/launchctl bootstrap system "$HELPER_DAEMON" >/dev/null 2>&1; then
+            say "The helper of the gateway mode was started."
+        else
+            /bin/launchctl load -w "$HELPER_DAEMON" >/dev/null 2>&1 \
+                && say "The helper of the gateway mode was started." \
+                || say "The helper of the gateway mode could not be started. It will start at the next restart of the machine."
+        fi
+    fi
+elif [ -f "$HELPER_SOURCE" ]; then
+    # A package of an earlier version did not carry the helper, so it is
+    # taken out of the bundle of the app and put in place from there.
+    /bin/launchctl bootout system "$HELPER_NAME" >/dev/null 2>&1
+    put_the_machine_back
+
     mkdir -p "/Library/PrivilegedHelperTools" 2>/dev/null
     if [ -L "/Library/PrivilegedHelperTools" ]; then
         say "The folder of the privileged helper tools is a link, the helper was not installed."
@@ -115,14 +152,13 @@ if [ -f "$HELPER_SOURCE" ]; then
     # the daemon is registered with the system
     #
     # the daemon is a text file, so it travels in the resources of the bundle
-    if [ -f "/Applications/ProxiRoute.app/Contents/Resources/$HELPER_NAME.plist" ]; then
-        cp -f "/Applications/ProxiRoute.app/Contents/Resources/$HELPER_NAME.plist" "$HELPER_DAEMON" 2>/dev/null \
+    if [ -f "$HELPER_DAEMON_SOURCE" ]; then
+        cp -f "$HELPER_DAEMON_SOURCE" "$HELPER_DAEMON" 2>/dev/null \
             && chown root:wheel "$HELPER_DAEMON" 2>/dev/null \
             && chmod 644 "$HELPER_DAEMON" 2>/dev/null
     fi
 
     if [ -f "$HELPER_DAEMON" ]; then
-        /bin/launchctl bootout system "$HELPER_NAME" >/dev/null 2>&1
         if /bin/launchctl bootstrap system "$HELPER_DAEMON" >/dev/null 2>&1; then
             say "The helper of the gateway mode was started."
         else

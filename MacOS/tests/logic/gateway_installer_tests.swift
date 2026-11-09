@@ -104,4 +104,79 @@ if let bootout = bootout, let remove = remove {
           "the daemon goes out of the system before the helper is taken away")
 }
 
+// ---------------------------------------------------------------- the one place
+
+print("gateway installer path tests:")
+
+// The helper of the gateway mode lives in exactly two places on the machine,
+// and every path into the gateway mode uses those same two: the package puts
+// them there, the app puts them there with its own install button, and every
+// way of taking it away takes them away from exactly these two.
+//
+// Why it matters: the receipt of the package only knows about the files that
+// are in the payload of the package. A file that a script copies into
+// /Library afterwards is not in the receipt, so taking the package away
+// leaves a program of root behind, still running and still holding the
+// machine changed.
+
+let toolsPath = "/Library/PrivilegedHelperTools/com.sdpong.proxiroute.helper"
+let daemonPath = "/Library/LaunchDaemons/com.sdpong.proxiroute.helper.plist"
+
+check(GatewayInstaller.helperPath == toolsPath, "the helper lives in the privileged helper tools")
+check(GatewayInstaller.daemonPath == daemonPath, "the daemon lives in the launch daemons")
+
+// the install script of the app puts them in those places
+check(install.contains("TOOLS=\"\(toolsPath)\"") || install.contains("TOOLS=\"/Library/PrivilegedHelperTools/$NAME\""),
+      "the installation puts the helper in the privileged helper tools")
+check(install.contains("DAEMON=\"\(daemonPath)\"") || install.contains("DAEMON=\"/Library/LaunchDaemons/$NAME.plist\""),
+      "the installation puts the daemon in the launch daemons")
+
+// and the removal takes them away from exactly those places
+check(uninstall.contains("TOOLS=\"/Library/PrivilegedHelperTools/$NAME\""),
+      "the removal knows where the helper is")
+check(uninstall.contains("DAEMON=\"/Library/LaunchDaemons/$NAME.plist\""),
+      "the removal knows where the daemon is")
+check(uninstall.contains("rm -f \"$TOOLS\""), "the removal takes the helper away from that place")
+check(uninstall.contains("rm -f \"$DAEMON\""), "the removal takes the daemon away from that place")
+
+// the scripts of the package use the same two places
+//
+// The folder of the scripts is given by the environment, because the test is
+// compiled in a temporary folder: a path derived from the place of this file
+// would point at the temporary folder and nowhere else.
+let scriptsFolder: URL
+if let fromEnvironment = ProcessInfo.processInfo.environment["PROXIRoute_SCRIPTS"] {
+    scriptsFolder = URL(fileURLWithPath: fromEnvironment)
+} else {
+    scriptsFolder = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // logic
+        .deletingLastPathComponent()   // tests
+        .deletingLastPathComponent()   // ProxiRoute
+        .appendingPathComponent("scripts")
+}
+
+func readScript(_ name: String) -> String {
+    let url = scriptsFolder.appendingPathComponent(name)
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+    return text
+}
+
+let postinstall = readScript("postinstall")
+let removeScript = readScript("remove-gateway-helper.sh")
+
+check(postinstall.contains("HELPER_TOOLS=\"/Library/PrivilegedHelperTools/$HELPER_NAME\""),
+      "the package installs the helper in the privileged helper tools")
+check(postinstall.contains("HELPER_DAEMON=\"/Library/LaunchDaemons/$HELPER_NAME.plist\""),
+      "the package installs the daemon in the launch daemons")
+check(removeScript.contains("HELPER_TOOLS=\"/Library/PrivilegedHelperTools/$HELPER_NAME\""),
+      "the removal script knows where the helper is")
+check(removeScript.contains("HELPER_DAEMON=\"/Library/LaunchDaemons/$HELPER_NAME.plist\""),
+      "the removal script knows where the daemon is")
+
+// the daemon of the system starts the helper from that place, so the place
+// has to be the one the package puts it in
+let daemonPlist = readScript("com.sdpong.proxiroute.helper.plist")
+check(daemonPlist.contains("<string>\(toolsPath)</string>"),
+      "the daemon starts the helper from the place it is installed in")
+
 print("gateway installer tests: ALL PASS")
