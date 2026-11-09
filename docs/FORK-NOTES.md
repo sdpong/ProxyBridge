@@ -2340,7 +2340,7 @@ entitlements 里虽然写着 `com.apple.developer.networking.networkextension`�
 但它会把**当前这个扩展也一起移除**（脚本的意思就是「只留一份」），
 移除后需要重新打开 app、再去系统设置里授权一次。
 
-## stage31：app 认不出自己签不出名 —— 三处查实与改法
+## stage30 · 第二部分：app 认不出自己签不出名 —— 三处查实与改法
 
 ### 一、现象
 
@@ -2450,3 +2450,43 @@ entitlements 里虽然写着 `com.apple.developer.networking.networkextension`�
 FORK-NOTES 前面那节已经查实过 —— 受限 entitlement 必须由描述文件放行，
 这需要**付费开发者账号**（免费的 Personal Team 不支持网络扩展与系统扩展）。
 本轮做的是让 app **别再假装自己能用**，并且**别再往系统里堆记录**。
+
+### 六、顺带查实：保存的端口不是实际在用的端口
+
+查上面的问题时顺手量的，发现代理服务器**听错了端口**。
+
+偏好设置里写着：
+
+```xml
+<key>port</key><string>18888</string>
+<key>maxConnections</key><string>64</string>
+<key>idleTimeout</key><string>300</string>
+```
+
+**三个数字都是字符串。** 而 `LocalProxySettings.fromDictionary` 只认 `Int`：
+
+```swift
+settings.port = dict["port"] as? Int ?? 8888   // 读不出来 → 悄悄回到 8888
+```
+
+于是**保存下来的端口、连接数、空闲超时全部被丢掉**，服务器听回默认的 8888。
+偏好设置里还写着 18888，**两边对不上，而窗口上没有任何地方说这件事**。
+
+实测（`lsof -a -p <pid> -iTCP -sTCP:LISTEN`）：
+
+| | 改之前 | 改之后 |
+|---|---|---|
+| 实际监听的端口 | **8888**（默认值） | **18888**（保存的那个） |
+| SOCKS5 握手 | 连不上 | `05 00`（正常应答） |
+
+**修法**：写成文本的数字**仍然是那个数字**，所以按数字读；
+端口超出 1–65535 的**不是端口**，那种情况用默认值，服务器照样听得到。
+
+**为什么会出现字符串**：偏好设置是个文件，文件是人能改的 ——
+`defaults write com.sdpong.ProxiRoute localProxySettings.port -string 18888` 就是人会做的事。
+读的时候不能假设类型。
+
+（这条也说明了一件事：**「端口没绑定」这个现象我一开始判错了** ——
+`lsof -iTCP -sTCP:LISTEN` 没看到 8888，就说「端口没绑定」。
+其实服务器一直在听，只是听的是 8888，而 `lsof` 那次没匹配上。
+判故障先看代码和实际行为，不要只看一张图。）
