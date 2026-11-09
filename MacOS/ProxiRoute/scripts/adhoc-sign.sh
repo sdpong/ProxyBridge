@@ -34,7 +34,12 @@
 #   Set PROXIROUTE_APP_SANDBOX=1 to sign the app with the sandbox instead, which is
 #   what a build that has to run inside the App Store would use.
 #
-# Usage: adhoc-sign.sh <path to ProxiRoute.app>
+# Usage: adhoc-sign.sh <path to ProxiRoute.app> [--force]
+#
+# --force signs the app again even when it is already signed with the
+# entitlements. It is needed when something was put into the bundle after
+# the last signature: the signature has to cover it, or the system refuses
+# to run the app at all.
 
 set -e
 
@@ -42,6 +47,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 APP="${1:-$APP_ROOT/output/ProxiRoute.app}"
+
+FORCE=0
+if [ "${2:-}" = "--force" ]; then
+    FORCE=1
+fi
 APP_ENTITLEMENTS="$APP_ROOT/ProxiRoute/ProxiRouteReleaseNoSandbox.entitlements"
 EXT_ENTITLEMENTS="$APP_ROOT/extension/extensionRelease.entitlements"
 EXT_BINARY="Contents/Library/SystemExtensions/com.sdpong.proxiroute.extension.systemextension/Contents/MacOS/com.sdpong.proxiroute.extension"
@@ -63,8 +73,9 @@ if codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application"; then
 fi
 
 # Already ad-hoc signed with the entitlements (the CI signs once, the packager runs
-# again): nothing to do either.
-if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.developer.system-extension.install"; then
+# again): nothing to do either - unless the bundle was changed afterwards and
+# the signature has to be made again to cover what is in there now.
+if [ "$FORCE" -eq 0 ] && codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.developer.system-extension.install"; then
     echo "Already signed with the needed entitlements - nothing to do."
     exit 0
 fi

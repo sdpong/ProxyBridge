@@ -35,25 +35,44 @@ fi
 # is not part of the app bundle in the end - but it travels inside the bundle
 # until the installer puts it where it belongs.
 #
+# When the bundle already carries one, that one is used. The bundle is signed,
+# and the signature covers the helper inside it: building a second copy and
+# putting that one in would break the signature, and a bundle with a broken
+# signature is an app the system refuses to run. The CI puts the helper into
+# the bundle before it signs it, and the package is built from that bundle.
+#
 # It is built into output/ and not into build/: the build folder is wiped
 # later on, and the helper has to survive that.
-echo "Building the helper of the gateway mode..."
-bash "$SCRIPT_DIR/scripts/build-helper.sh" "$SCRIPT_DIR/output/$HELPER_NAME"
-HELPER_PATH="$SCRIPT_DIR/output/$HELPER_NAME"
+BUNDLED_HELPER="$APP_PATH/Contents/Helpers/$HELPER_NAME"
+BUNDLED_DAEMON="$APP_PATH/Contents/Resources/$HELPER_NAME.plist"
 
-# the helper and the daemon that starts it go into the bundle, where the
-# installer takes them from
-#
-# The helper is a program, so it goes into Contents/Helpers, which is where
-# macOS looks for the helpers of a bundle. The daemon of the helper is a text
-# file, and it goes into the resources: Contents/Helpers is a place for
-# programs, and the signature of the bundle refuses anything in it that is
-# not a program.
-mkdir -p "$APP_PATH/Contents/Helpers"
-cp -f "$HELPER_PATH" "$APP_PATH/Contents/Helpers/$HELPER_NAME"
-chmod 755 "$APP_PATH/Contents/Helpers/$HELPER_NAME"
-cp -f "$SCRIPT_DIR/scripts/$HELPER_NAME.plist" "$APP_PATH/Contents/Resources/$HELPER_NAME.plist"
-chmod 644 "$APP_PATH/Contents/Resources/$HELPER_NAME.plist"
+if [ -x "$BUNDLED_HELPER" ]; then
+    echo "Using the helper that is already inside the app bundle."
+    HELPER_PATH="$BUNDLED_HELPER"
+else
+    echo "Building the helper of the gateway mode..."
+    bash "$SCRIPT_DIR/scripts/build-helper.sh" "$SCRIPT_DIR/output/$HELPER_NAME"
+    HELPER_PATH="$SCRIPT_DIR/output/$HELPER_NAME"
+
+    # the helper and the daemon that starts it go into the bundle, where the
+    # installer takes them from
+    #
+    # The helper is a program, so it goes into Contents/Helpers, which is where
+    # macOS looks for the helpers of a bundle. The daemon of the helper is a text
+    # file, and it goes into the resources: Contents/Helpers is a place for
+    # programs, and the signature of the bundle refuses anything in it that is
+    # not a program.
+    mkdir -p "$APP_PATH/Contents/Helpers"
+    cp -f "$HELPER_PATH" "$BUNDLED_HELPER"
+    chmod 755 "$BUNDLED_HELPER"
+fi
+
+# the daemon of the helper belongs to the bundle as well, whether the helper
+# came from the bundle or was built here
+if [ ! -f "$BUNDLED_DAEMON" ]; then
+    cp -f "$SCRIPT_DIR/scripts/$HELPER_NAME.plist" "$BUNDLED_DAEMON"
+    chmod 644 "$BUNDLED_DAEMON"
+fi
 
 # The script that takes old system extension records out of the system travels
 # with the app: it needs root, and a person who has to type a long command with
@@ -210,9 +229,11 @@ fi
 
 rm -rf build
 
-# the helper is inside the app bundle now, so the copy that was built is not
-# needed any more
-rm -f "$HELPER_PATH"
+# the helper that was built here is inside the app bundle now, so that copy is
+# not needed any more. The one that was already in the bundle stays there.
+if [ "$HELPER_PATH" = "$SCRIPT_DIR/output/$HELPER_NAME" ]; then
+    rm -f "$HELPER_PATH"
+fi
 
 echo "✓ Build complete"
 echo "  App: output/ProxiRoute.app"

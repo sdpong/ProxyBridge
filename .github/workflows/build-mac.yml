@@ -138,6 +138,28 @@ jobs:
         # Verify code signature (an unsigned build has none, which is not an error here)
         codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxiRoute.app || true
 
+    - name: Put the helper of the gateway mode into the app
+      run: |
+        cd MacOS/ProxiRoute
+        # The helper of the gateway mode travels inside the bundle until the
+        # installer puts it where it belongs (/Library/PrivilegedHelperTools).
+        # Two paths take it from the bundle: the install button of the app, and
+        # the postinstall script of the package. A bundle without the helper in
+        # it cannot install the helper at all.
+        #
+        # The bundle is signed again after this, because the signature has to
+        # cover the helper. A build with a certificate is signed with that
+        # certificate, a build without one is signed ad-hoc with the
+        # entitlements the system extension needs.
+        chmod +x scripts/embed-helper.sh
+        APP_PATH="build/DerivedData/Build/Products/Release/ProxiRoute.app"
+        if [ "$HAS_SIGNING_CERT" = "true" ]; then
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"([^"]+)"/\1/')
+          bash scripts/embed-helper.sh "$APP_PATH" "$IDENTITY"
+        else
+          bash scripts/embed-helper.sh "$APP_PATH"
+        fi
+
     - name: Notarize App
       if: env.HAS_SIGNING_CERT == 'true'
       run: |

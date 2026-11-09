@@ -179,4 +179,57 @@ let daemonPlist = readScript("com.sdpong.proxiroute.helper.plist")
 check(daemonPlist.contains("<string>\(toolsPath)</string>"),
       "the daemon starts the helper from the place it is installed in")
 
+
+// ---------------------------------------------------------------- the bundle
+
+print("gateway helper bundle tests:")
+
+// The helper travels inside the app bundle until the installer puts it where
+// it belongs, and two paths take it from there: the install button of the app
+// and the postinstall script of the package. A bundle without the helper in it
+// cannot install the helper at all, so the bundle that ships has to carry it.
+//
+// The bundle is signed, and the signature covers the helper inside it. A
+// second copy of the helper put into a signed bundle breaks the signature,
+// and the system refuses to run an app with a broken signature. So the
+// package takes the helper that is already in the bundle, and does not build
+// another one.
+
+let appFolder = scriptsFolder.deletingLastPathComponent()   // ProxiRoute
+
+func readAt(_ url: URL) -> String {
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+    return text
+}
+
+let buildScript = readAt(appFolder.appendingPathComponent("build.sh"))
+let embedScript = readScript("embed-helper.sh")
+
+check(!embedScript.isEmpty, "there is a script that puts the helper into the bundle")
+check(embedScript.contains("\"$APP/Contents/Helpers/$HELPER_NAME\""),
+      "the helper goes into the helpers folder of the bundle")
+check(embedScript.contains("\"$APP/Contents/Resources/$HELPER_NAME.plist\""),
+      "the daemon goes into the resources of the bundle")
+check(embedScript.contains("adhoc-sign.sh"),
+      "the bundle is signed again after the helper is put into it")
+check(embedScript.contains("codesign --verify"),
+      "the bundle is checked after the helper is put into it")
+
+check(buildScript.contains("BUNDLED_HELPER=\"$APP_PATH/Contents/Helpers/$HELPER_NAME\""),
+      "the package knows the helper that is inside the bundle")
+check(buildScript.contains("if [ -x \"$BUNDLED_HELPER\" ]"),
+      "the package uses the helper that is already inside the bundle")
+check(buildScript.contains("BUNDLED_DAEMON=\"$APP_PATH/Contents/Resources/$HELPER_NAME.plist\""),
+      "the package knows the daemon that is inside the bundle")
+check(buildScript.contains("cp -f \"$HELPER_PATH\" \"$SCRIPT_DIR/build/component/Library/PrivilegedHelperTools/$HELPER_NAME\""),
+      "the helper of the bundle goes into the payload of the package")
+check(buildScript.contains("if [ \"$HELPER_PATH\" = \"$SCRIPT_DIR/output/$HELPER_NAME\" ]"),
+      "the package only deletes the helper it built itself, never the one in the bundle")
+
+// the install button of the app takes the helper out of those same two places
+check(install.contains("SRC_TOOLS=\"$APP/Contents/Helpers/$NAME\""),
+      "the app takes the helper out of the helpers folder of the bundle")
+check(install.contains("SRC_DAEMON=\"$APP/Contents/Resources/$NAME.plist\""),
+      "the app takes the daemon out of the resources of the bundle")
+
 print("gateway installer tests: ALL PASS")

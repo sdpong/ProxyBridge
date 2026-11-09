@@ -1896,7 +1896,7 @@ SwiftUI 的语义是：无 id 的 `WindowGroup` 每次 app 被重新打开都会
 
 ### 2. 「窗口」菜单里塞满了会改变窗口尺寸的项
 
-macOS 26 的「窗口」菜单里有一堆系统自己加的项：
+macOS 27 的「窗口」菜单里有一堆系统自己加的项：
 `关闭 / 全部关闭 / 最小化 / 全部最小化 / 缩放 / 全部缩放 / 填充 / 居中 /
 移动与调整大小 / 全屏幕平铺 / 移到屏幕… / 窗口平铺到屏幕… / 前置全部窗口 / 排在前面`。
 
@@ -1931,3 +1931,42 @@ AX 树里能找到 `AXButton d='安装'`，说明按钮渲染了，只是位置�
 `activityLogs` 上限 500 条、裁到 400 条（`ProxiRouteViewModel.swift:115-117`），
 裁剪只减条数不改数组结构，不会让窗口先涨后跌；而且日志页是 `NSScrollView`，
 本身没有理想高度。真正让窗口变的是上面第 1 条的第二个窗口。
+
+## 打包：CI 的 app zip 里没有 helper
+
+发 stage28 的时候查出来的：**CI 产出的 `ProxiRoute-v4.1.2-Universal.app.zip`
+里没有 `Contents/Helpers/com.sdpong.proxiroute.helper`，也没有
+`Contents/Resources/com.sdpong.proxiroute.helper.plist`**。
+
+实测（stage28 的 CI 产物）：解压后 `Contents/` 只有
+`Info.plist / Library / MacOS / PkgInfo / Resources`——没有 `Helpers`。
+
+**为什么这是坏的功能**：app 里的「安装」按钮是从 bundle 里取 helper 的
+（`GatewayInstaller.swift`：`SRC_TOOLS="$APP/Contents/Helpers/$NAME"`）。
+zip 是免安装版，没有 pkg 的 postinstall 帮它把 helper 放到
+`/Library/PrivilegedHelperTools`，所以**用 zip 的人点「安装」必然失败**。
+
+**为什么 CI 会这样**：`build-mac.yml` 的「Package App Bundle」步骤直接把
+`xcodebuild` 的产物打包成 zip，而 helper 是 `build.sh` 才放进去的
+（`build.sh` 负责编译 helper 并复制进 `Contents/Helpers`）。pkg 走的是
+`build.sh`，所以 pkg 有 helper，zip 没有。
+
+**修法**：
+
+- 新增 `scripts/embed-helper.sh`：编译 helper，放进 bundle
+  （`Contents/Helpers` + `Contents/Resources/*.plist`），**然后重新签一次 bundle**
+  ——签名要盖住里面的 helper。
+- `scripts/adhoc-sign.sh` 加 `--force`：bundle 里加了东西之后要能重签
+  （原来的早退逻辑会因为「已经有 entitlements」而跳过）。
+- `build-mac.yml` 在 Notarize 之前加一步「Put the helper of the gateway mode
+  into the app」，签完名再公证；zip 和 pkg 于是拿到同一个带 helper 的 bundle。
+- `build.sh` 改成**优先用 bundle 里已有的 helper**。原因：bundle 是签过名的，
+  签名盖住了里面的 helper；再塞一份新的进去会破坏签名，系统会拒绝运行这个 app。
+  pkg 的载荷里放的也就是 bundle 里那一份。
+
+实测（本地模拟 CI 全流程）：`xcodebuild → embed-helper.sh → ditto zip`，
+zip 里有 `Contents/Helpers/com.sdpong.proxiroute.helper`（356528 字节）+
+`Contents/Resources/com.sdpong.proxiroute.helper.plist`；
+`build.sh` 打印 "Using the helper that is already inside the app bundle."；
+pkg 载荷里 helper 是 `100755 0/0`、daemon 是 `100644 0/0`（root:wheel）；
+pkg 里的 app `codesign --verify` 通过（helper 在签名覆盖范围内）。
