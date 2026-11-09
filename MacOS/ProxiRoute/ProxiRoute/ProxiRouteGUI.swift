@@ -192,7 +192,7 @@ struct ProxiRouteGUIApp: App {
         }
         .defaultPosition(.center)
         
-        Window(L10n.t("Routing"), id: "routing") {
+        Window(L10n.t("Gateway"), id: "routing") {
             RouteSettingsView(viewModel: viewModel)
         }
         .windowResizability(.contentSize)
@@ -606,8 +606,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         }
     }
 
-    @objc func openRouting() {
-        openWindow(title: L10n.t("Routing"), size: NSSize(width: 620, height: 440)) {
+    @objc func openGateway() {
+        openWindow(title: L10n.t("Gateway"), size: NSSize(width: 620, height: 440)) {
             RouteSettingsView(viewModel: AppDelegate.viewModel!)
         }
     }

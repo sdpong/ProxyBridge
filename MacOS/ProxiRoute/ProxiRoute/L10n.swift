@@ -399,7 +399,6 @@ enum L10n {
         "Off": "关",
 
         // the routing: the switches that sit above the rules
-        "Routing": "路由",
         "Global Mode": "全局模式",
         "Everything Goes Through": "全部流量走",
         "The traffic that no rule names goes through this proxy. A rule that names a program still decides.": "没有规则匹配的流量走这个代理。规则里写明了程序的，仍然按规则走。",
@@ -418,7 +417,7 @@ enum L10n {
         "UDP and DNS": "UDP 与 DNS",
         "DNS Forwarding": "DNS 转发",
         "DNS forwarding is in the DNS settings. With it on, the answers are seen, and the rules can name a host name.": "DNS 转发在 DNS 设置里。打开后能看到应答，规则里才能写域名。",
-        "Routing settings saved": "路由设置已保存",
+        "Gateway settings saved": "网关设置已保存",
 
         // the proxy server that runs inside the app
         "Proxy Server": "代理服务器",

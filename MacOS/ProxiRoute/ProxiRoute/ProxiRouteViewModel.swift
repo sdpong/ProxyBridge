@@ -489,7 +489,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         routeSettings = settings
         settings.save()
         sendRouteOptionsToExtension(routeOptionsInEffect)
-        addLog("INFO", L10n.t("Routing settings saved"))
+        addLog("INFO", L10n.t("Gateway settings saved"))
     }
 
     // The routing options are the settings of the gateway: they say where the

@@ -28,11 +28,12 @@ struct SettingsTabView: View {
         ScrollView {
             VStack(spacing: 16) {
                 modeCard
-                // the routing options are the settings of the gateway: they
-                // say where the traffic goes when this machine is the gateway
-                // of the network. The other modes use the defaults.
+                // the gateway mode has a card of its own: the switch that
+                // turns it on, the helper that has to be there for it, and
+                // the routing options that say where the traffic goes when
+                // this machine is the gateway of the network. The other modes
+                // use the defaults.
                 if viewModel.runtimeMode == .gateway {
-                    routeCard
                     gatewayCard
                 }
                 // the proxy server is the service for the clients of the
@@ -127,28 +128,16 @@ struct SettingsTabView: View {
         )
     }
 
-    // MARK: - the routing options
-
-    private var routeCard: some View {
-        SettingsCard(icon: "arrow.triangle.branch", title: L10n.t("Routing")) {
-            RouteSettingsForm(settings: $route, viewModel: viewModel)
-            SettingsCardFooter {
-                Button(L10n.t("Save")) {
-                    viewModel.updateRouteSettings(route)
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-
     // MARK: - the gateway
 
     // The gateway mode: the switch that turns it on, the interface the other
-    // terminals reach this machine through, and what the helper says.
+    // terminals reach this machine through, the helper that has to be there
+    // for it, and the routing options that say where the traffic goes.
     //
-    // The helper is a program of root that the package installs. The card
-    // says when it is not there, because without it the traffic of the
-    // network has nowhere to go, and the reason has to be in words.
+    // The helper is a program of root that the app installs by itself, with
+    // the password of an administrator. The card says when it is not there,
+    // because without it the traffic of the network has nowhere to go, and
+    // the reason has to be in words.
     private var gatewayCard: some View {
         SettingsCard(icon: "network", title: L10n.t("Gateway")) {
             Form {
@@ -194,9 +183,21 @@ struct SettingsTabView: View {
                 } footer: {
                     Text(L10n.t("The other terminals of the network point at this machine as their gateway. Their traffic goes out by the rules of the app, the same rules as the traffic of this machine, except that a rule naming a program does not apply to them: they have no program."))
                 }
+
+                // The routing options: they say where the traffic goes when
+                // this machine is the gateway of the network. They are the
+                // sections of the form of the routing window, put in here so
+                // that the gateway of the network has one place and not two.
+                RouteSettingsSections(settings: $route, viewModel: viewModel).sections()
             }
             .formStyle(.grouped)
             .frame(maxWidth: .infinity)
+            SettingsCardFooter {
+                Button(L10n.t("Save")) {
+                    viewModel.updateRouteSettings(route)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
         }
     }
 
