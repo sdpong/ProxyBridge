@@ -219,6 +219,18 @@ jobs:
         bash scripts/adhoc-sign.sh build/DerivedData/Build/Products/Release/ProxiRoute.app
         codesign -d --entitlements - build/DerivedData/Build/Products/Release/ProxiRoute.app
 
+    - name: Verify the signature of the app
+      run: |
+        cd MacOS/ProxiRoute
+        # The signature decides whether the app can install its system extension,
+        # and it breaks quietly: anything that writes into the bundle after it was
+        # signed leaves the old signature behind, so the bundle still looks signed
+        # while the entitlement is gone. The person finds out on their own machine,
+        # after the download - so the bundle is checked here, where a broken build
+        # fails the job instead of shipping.
+        chmod +x scripts/verify-app-signature.sh
+        bash scripts/verify-app-signature.sh build/DerivedData/Build/Products/Release/ProxiRoute.app
+
     - name: Package App Bundle
       run: |
         cd MacOS/ProxiRoute
@@ -229,6 +241,14 @@ jobs:
           build/DerivedData/Build/Products/Release/ProxiRoute.app \
           "output/ProxiRoute-v${APP_VERSION}-Universal.app.zip"
         ls -la output/
+
+        # The zip is what people download and unzip, so the app inside it is
+        # checked after the zipping: a bundle that was signed before the zipping
+        # and changed by it is a bundle that does not work on the other machine.
+        rm -rf /tmp/zipcheck
+        mkdir -p /tmp/zipcheck
+        ditto -x -k "output/ProxiRoute-v${APP_VERSION}-Universal.app.zip" /tmp/zipcheck
+        bash scripts/verify-app-signature.sh /tmp/zipcheck/ProxiRoute.app
 
     - name: Upload App Artifact
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

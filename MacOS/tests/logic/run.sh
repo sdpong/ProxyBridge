@@ -56,3 +56,4 @@ run_test gateway_tests.swift "$APP/GatewayProtocol.swift" "$HELPER/GatewayFilter
 run_test gateway_dataplane_tests.swift "$APP/GatewayDataPlane.swift" "$APP/GatewayProtocol.swift" "$APP/GatewayHelperClient.swift" "$APP/ProxyRuleEngine.swift" "$APP/LocalProxySocket.swift" "$APP/LocalProxyUpstream.swift"
 run_test gateway_installer_tests.swift "$APP/GatewayInstaller.swift" "$APP/GatewayHelperClient.swift" "$APP/GatewayProtocol.swift"
 run_test menu_tests.swift "$APP/WindowMenuNoise.swift"
+run_test signature_tests.swift "$APP/WindowMenuNoise.swift"

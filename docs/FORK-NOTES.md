@@ -2089,3 +2089,69 @@ preferredLocalizations=["en"] appleLanguages=["zh-Hans"]
 
 实测：切到中文 → 弹窗 → 点「现在重启」→ app 重启（pid 变了）→ 菜单栏变成
 `ProxiRoute / 配置 / 窗口 / 帮助`；切到英文 → 重启 → `ProxiRoute / Profile / Window / Help` ✓
+
+## stage29-c：签名会静悄悄地坏掉，而坏掉的 app 要等用户装上才发现
+
+### 一、现象
+
+用户在 app 里打开代理，系统直接拒了：
+
+```
+[ERROR] 无法保存设置：permission denied
+[ERROR] 扩展失败：Missing entitlement com.apple.developer.system-extension.install
+[ERROR] macOS 不会从未签名的版本安装系统扩展。
+```
+
+### 二、根因（实测，不是猜的）
+
+`/Applications/ProxiRoute.app` 的签名是**坏的**，而 `codesign -dv` 看上去还像签了：
+
+```
+CodeDirectory v=20400 flags=0x20002(adhoc,linker-signed)
+Signature=adhoc
+Sealed Resources=none          ← 应该是有的
+```
+
+三处对不上：
+
+| 该有的 | 实际的 |
+|---|---|
+| app 带 `com.apple.developer.system-extension.install` | **没有**（`codesign -d --entitlements -` 输出为空） |
+| 扩展 bundle 已签名 | **完全没签**（`code object is not signed at all`） |
+| helper 已签名 | 已签（`flags=0x2(adhoc)`） |
+
+**为什么**：app 是被 `embed-helper.sh` 签过的（helper 签上了就是证据），**之后又跑了一次
+`xcodebuild`**。xcodebuild 重建会把 `Contents/MacOS/ProxiRoute` 和整个扩展 bundle 换成新的，
+新文件上没有签名 → **bundle 的签名被作废**。
+
+这就是它「静悄悄」的原因：`codesign -dv` 还能打印出签名（是 Mach-O 自己的 linker 签名，
+不是 bundle 的签名），不看 `--entitlements` 根本发现不了。
+
+**为什么难发现**：坏掉的 app 一样能启动、一样能开窗口、一样能改设置，
+**只有真的要接管流量的时候**系统才拒绝。而那一刻是**用户在自己机器上**、
+**下载安装之后**才知道。
+
+### 三、修法：让它在能修的时候失败
+
+新增 `MacOS/ProxiRoute/scripts/verify-app-signature.sh`，检查四件事：
+
+1. 整个 bundle 的签名有效（`codesign --verify`）
+2. app 带 `com.apple.developer.system-extension.install`
+3. 嵌套的扩展 bundle 已签名，且带 `com.apple.developer.networking.networkextension`
+4. bundle 里的 helper 已签名（helper 在 bundle 里，签名必须盖住它）
+
+接到两个地方：
+
+- `build.sh`：打包前跑 → 坏的 app **打不出包**
+- CI：签完名、打包后跑，且**把 zip 解开再验一次**（zip 才是别人下载的东西）
+
+外加 `MacOS/tests/logic/signature_tests.swift`（17 条断言）盯住这条链路不会被改没。
+
+### 四、实测
+
+- 坏签名（把扩展的签名去掉）→ 校验脚本 **exit 1** 并指出是哪一项 ✓
+- 修好的 app → 校验脚本 exit 0 ✓
+- 重新签名的 app 装回 `/Applications` → 启动后界面日志里 **没有 ERROR**，
+  换成正常的提示「macOS has to approve ProxiRoute once…」✓
+- 本地 `build.sh` 跑通，pkg 载荷里的 app 签名校验通过 ✓
+- **CI 已发布的 app.zip（stage29）解包后签名校验通过** → 之前发的产物没坏 ✓

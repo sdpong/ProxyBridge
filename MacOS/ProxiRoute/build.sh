@@ -86,6 +86,13 @@ fi
 echo "Signing the app for installation..."
 bash "$SCRIPT_DIR/scripts/adhoc-sign.sh" "$APP_PATH"
 
+# The signature is the thing that decides whether the app can install its system
+# extension, and it breaks quietly: anything that writes into the bundle after
+# it was signed leaves the old signature behind, so the bundle still looks signed
+# while the entitlement is gone. The person finds out on their own machine, after
+# the download. So the bundle is checked here, where it can still be fixed.
+bash "$SCRIPT_DIR/scripts/verify-app-signature.sh" "$APP_PATH"
+
 verify_universal() {
     local binary="$1"
     local archs
