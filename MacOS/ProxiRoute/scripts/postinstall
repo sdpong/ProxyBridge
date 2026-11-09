@@ -113,8 +113,10 @@ if [ -f "$HELPER_SOURCE" ]; then
     fi
 
     # the daemon is registered with the system
-    if [ -f "/Applications/ProxiRoute.app/Contents/Helpers/$HELPER_NAME.plist" ]; then
-        cp -f "/Applications/ProxiRoute.app/Contents/Helpers/$HELPER_NAME.plist" "$HELPER_DAEMON" 2>/dev/null \
+    #
+    # the daemon is a text file, so it travels in the resources of the bundle
+    if [ -f "/Applications/ProxiRoute.app/Contents/Resources/$HELPER_NAME.plist" ]; then
+        cp -f "/Applications/ProxiRoute.app/Contents/Resources/$HELPER_NAME.plist" "$HELPER_DAEMON" 2>/dev/null \
             && chown root:wheel "$HELPER_DAEMON" 2>/dev/null \
             && chmod 644 "$HELPER_DAEMON" 2>/dev/null
     fi

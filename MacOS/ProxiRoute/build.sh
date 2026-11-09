@@ -43,11 +43,17 @@ HELPER_PATH="$SCRIPT_DIR/output/$HELPER_NAME"
 
 # the helper and the daemon that starts it go into the bundle, where the
 # installer takes them from
+#
+# The helper is a program, so it goes into Contents/Helpers, which is where
+# macOS looks for the helpers of a bundle. The daemon of the helper is a text
+# file, and it goes into the resources: Contents/Helpers is a place for
+# programs, and the signature of the bundle refuses anything in it that is
+# not a program.
 mkdir -p "$APP_PATH/Contents/Helpers"
 cp -f "$HELPER_PATH" "$APP_PATH/Contents/Helpers/$HELPER_NAME"
 chmod 755 "$APP_PATH/Contents/Helpers/$HELPER_NAME"
-cp -f "$SCRIPT_DIR/scripts/$HELPER_NAME.plist" "$APP_PATH/Contents/Helpers/$HELPER_NAME.plist"
-chmod 644 "$APP_PATH/Contents/Helpers/$HELPER_NAME.plist"
+cp -f "$SCRIPT_DIR/scripts/$HELPER_NAME.plist" "$APP_PATH/Contents/Resources/$HELPER_NAME.plist"
+chmod 644 "$APP_PATH/Contents/Resources/$HELPER_NAME.plist"
 
 # The script that takes old system extension records out of the system travels
 # with the app: it needs root, and a person who has to type a long command with

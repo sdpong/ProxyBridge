@@ -79,6 +79,24 @@ if [ -f "$APP/$EXT_BINARY" ]; then
     echo "Signed the system extension (ad-hoc, with entitlements)."
 fi
 
+# The helper of the gateway mode travels inside the bundle until the installer
+# puts it where it belongs. A bundle cannot be signed while a part of it is
+# unsigned ("code object is not signed at all"), so the helper is signed as
+# well - it is a program of root, and it is signed ad hoc like everything else
+# here.
+HELPERS_DIR="$APP/Contents/Helpers"
+if [ -d "$HELPERS_DIR" ]; then
+    for binary in "$HELPERS_DIR"/*; do
+        [ -f "$binary" ] || continue
+        # the launch daemon of the helper is a text file, not a program
+        case "$binary" in
+            *.plist) continue ;;
+        esac
+        codesign --force --sign - --timestamp=none "$binary"
+        echo "Signed $(basename "$binary") (ad-hoc)."
+    done
+fi
+
 codesign --force --sign - \
     --entitlements "$APP_ENTITLEMENTS" \
     --options runtime --timestamp=none \
