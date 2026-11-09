@@ -138,6 +138,24 @@ jobs:
         # Verify code signature (an unsigned build has none, which is not an error here)
         codesign -dv --verbose=4 build/DerivedData/Build/Products/Release/ProxiRoute.app || true
 
+    - name: Run the logic tests
+      run: |
+        cd MacOS/tests/logic
+        # The tests of the parts that can be tested without a machine: the rule
+        # engine, the parsers, the gateway, the scripts of the installation, the
+        # menu, the signature and the way the window is drawn.
+        bash run.sh
+
+    - name: Run the benchmark of the text of the log
+      run: |
+        cd MacOS/tests/bench
+        # The text of the log is built again only for the lines that are new.
+        # The benchmark measures that difference, so a change that brings the
+        # old way back fails here instead of on the machine of the person who
+        # uses the app.
+        swiftc -O LogTextBenchmark.swift -o /tmp/logbench
+        /tmp/logbench
+
     - name: Put the helper of the gateway mode into the app
       run: |
         cd MacOS/ProxiRoute
