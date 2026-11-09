@@ -80,10 +80,10 @@ struct LocalProxySettings: Equatable {
         }
         settings.listenAddress = dict["listenAddress"] as? String ?? ""
         settings.listenInterface = dict["listenInterface"] as? String ?? ""
-        settings.port = dict["port"] as? Int ?? 8888
+        settings.port = port(dict["port"]) ?? LocalProxySettings().port
         settings.udpEnabled = dict["udpEnabled"] as? Bool ?? false
-        settings.maxConnections = dict["maxConnections"] as? Int ?? 64
-        settings.idleTimeout = dict["idleTimeout"] as? Int ?? 300
+        settings.maxConnections = number(dict["maxConnections"]) ?? LocalProxySettings().maxConnections
+        settings.idleTimeout = number(dict["idleTimeout"]) ?? LocalProxySettings().idleTimeout
         if let kind = dict["upstream"] as? String {
             switch kind {
             case "proxy":
@@ -95,6 +95,33 @@ struct LocalProxySettings: Equatable {
             }
         }
         return settings
+    }
+
+    // A number that is in the preferences.
+    //
+    // The preferences are a file, and a file can be written by hand:
+    // "defaults write com.sdpong.ProxiRoute localProxySettings.port -string
+    // 18888" is a thing people do. A number that is written as text is still
+    // that number, so it is read as one - otherwise the port silently goes
+    // back to 8888 and the server listens on a port nobody asked for, while
+    // the preferences still say the other one.
+    static func number(_ value: Any?) -> Int? {
+        if let number = value as? Int { return number }
+        if let number = value as? NSNumber { return number.intValue }
+        if let text = value as? String {
+            return Int(text.trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+
+    // The port, when it is a port.
+    //
+    // A port that is out of range is not a port, and the socket call would
+    // fail with a reason that says nothing about it. The default is used
+    // instead, and the person sees a server that listens.
+    static func port(_ value: Any?) -> Int? {
+        guard let port = number(value), port > 0, port <= 65535 else { return nil }
+        return port
     }
 
     static func load() -> LocalProxySettings {
