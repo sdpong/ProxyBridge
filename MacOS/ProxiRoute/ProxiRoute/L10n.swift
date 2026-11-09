@@ -116,6 +116,7 @@ enum L10n {
         // the gateway mode
         "This machine is the gateway of the network: the other terminals reach it through the interface below, and their traffic goes out by the rules of the app.": "本机是网络的网关：其他终端通过下面的网卡连到本机，它们的流量按应用的规则走。",
         "Turn the gateway on": "打开网关",
+        "Connections Carried": "已承载连接",
         "Interface": "网卡",
         "Choose": "请选择",
         "Status": "状态",

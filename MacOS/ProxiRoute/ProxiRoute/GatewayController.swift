@@ -27,12 +27,17 @@ final class GatewayController: ObservableObject {
     @Published private(set) var status: String = ""
     @Published private(set) var isRunning = false
     @Published private(set) var helperInstalled = false
+    // how many connections of the network have been carried
+    @Published private(set) var carriedConnections = 0
 
-    // The port the redirected traffic is taken in on.
+    // The part of the gateway mode that runs in the app.
     //
-    // It is a port of this machine on the loopback: the filter sends the
-    // traffic of the network there, and the app listens on it.
-    static let redirectPort = 18081
+    // The helper is a program of root, and this is the program that takes the
+    // traffic of the network in and carries it. The two are told apart by
+    // what they need, and they are put in step by this controller: the
+    // filter has to be on before the traffic comes in, and it has to be off
+    // before the program stops listening.
+    private let dataPlane = GatewayDataPlane()
 
     // The interface the traffic of the network comes in through.
     //
@@ -70,6 +75,15 @@ final class GatewayController: ObservableObject {
 
     init() {
         isEnabled = UserDefaults.standard.bool(forKey: GatewayController.storageKey)
+        // The traffic of the network is carried by threads of their own, and
+        // the log of the app belongs to the window: the lines are brought to
+        // the main thread, or the window would be written to from two
+        // threads at once.
+        dataPlane.logHandler = { [weak self] message, level in
+            Task { @MainActor in
+                self?.log(message, level: level)
+            }
+        }
     }
 
     // The gateway is asked to start.
@@ -78,6 +92,9 @@ final class GatewayController: ObservableObject {
     // helper is what the person is told: if the helper is not installed, or
     // if it refused, the reason is in words.
     func apply() {
+        // the rules of the app are the rules the traffic of the network goes
+        // by, and they may have changed since the last time
+        dataPlane.update(rules: rules, proxies: proxies, chains: chains)
         if isEnabled {
             start()
         } else {
@@ -94,13 +111,31 @@ final class GatewayController: ObservableObject {
             return
         }
 
-        let result = GatewayHelperClient.enable(interface: name, redirectPort: GatewayController.redirectPort)
+        // The program that takes the traffic in has to be listening before the
+        // rules of the filter are in place: a client whose connection is
+        // redirected to a port that nobody listens on is a client with no
+        // internet at all.
+        switch dataPlane.start() {
+        case .failure(let failure):
+            isRunning = false
+            status = failure.reason
+            log("The gateway mode could not be started: \(failure.reason)", level: "ERROR")
+            return
+        case .success:
+            break
+        }
+
+        let result = GatewayHelperClient.enable(interface: name, redirectPort: GatewayDataPlane.redirectPort)
         if result.ok {
             isRunning = true
             helperInstalled = true
             status = L10n.f("The gateway mode is on: the traffic of the network comes in through %@.", name)
             log("The gateway mode was turned on on \(name)", level: "INFO")
         } else {
+            // The rules of the filter are not in place, so no traffic comes
+            // in. The program stops listening as well, or it would wait for
+            // a traffic that cannot come.
+            dataPlane.stop()
             isRunning = false
             status = result.message
             log("The gateway mode could not be turned on: \(result.message)", level: "ERROR")
@@ -112,11 +147,15 @@ final class GatewayController: ObservableObject {
     func stop() {
         stopPolling()
         guard helperInstalled else {
+            dataPlane.stop()
             isRunning = false
             status = ""
             return
         }
+        // The rules of the filter go first: the traffic of the network is not
+        // taken in any more, and only then does the program stop listening.
         let result = GatewayHelperClient.disable()
+        dataPlane.stop()
         if result.ok {
             isRunning = false
             status = L10n.t("The gateway mode is off.")
@@ -149,6 +188,8 @@ final class GatewayController: ObservableObject {
                 ? L10n.t("The gateway mode is on.")
                 : L10n.t("The gateway mode is off.")
         }
+        // what the traffic of the network has carried so far
+        carriedConnections = dataPlane.statistics.connections
     }
 
     // How often the helper is asked.

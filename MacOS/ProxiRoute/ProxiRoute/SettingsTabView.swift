@@ -175,6 +175,16 @@ struct SettingsTabView: View {
                             .foregroundColor(viewModel.gateway.isRunning ? .green : .secondary)
                     }
 
+                    // How much of the traffic of the network has gone through
+                    // this machine. It is the one number that says whether
+                    // the gateway mode does anything at all.
+                    HStack {
+                        Text(L10n.t("Connections Carried"))
+                        Spacer()
+                        Text("\(viewModel.gateway.carriedConnections)")
+                            .foregroundColor(.secondary)
+                    }
+
                     if !viewModel.gateway.status.isEmpty {
                         Text(viewModel.gateway.status)
                             .font(.caption)
