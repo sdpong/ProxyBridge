@@ -917,6 +917,8 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         }
         applyDNSProxy()
         updatePollingState()
+        // the rules of the new profile are the ones the agent has to wait for
+        refreshUpstreamWaitFile()
     }
 
     func switchProfile(to name: String) {
@@ -1453,7 +1455,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // The agent of the next login has to wait for the upstream of then and
     // not for the one of today, so the list is written every time the proxies
     // or the rules change.
-    private func refreshUpstreamWaitFile() {
+    func refreshUpstreamWaitFile() {
         guard LaunchOrderAgent.isEnabled || LaunchOrderAgent.isInstalled else { return }
         LaunchOrderAgent.writeWaitFile(for: localUpstreamEndpoints())
     }

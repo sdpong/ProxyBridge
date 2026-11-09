@@ -159,6 +159,8 @@ check(viewModel.contains("UpstreamReadiness.wait(for: endpoints"), "the start wa
 check(viewModel.contains("func localUpstreamEndpoints()"), "the app knows which upstream run on this machine")
 check(viewModel.contains("UpstreamWait.localEndpoints(endpoints)"), "the upstream of this machine are picked out")
 check(viewModel.contains("refreshUpstreamWaitFile()"), "the file of the agent is written when the proxies change")
+check(read("ProxyRulesView.swift").contains("viewModel.refreshUpstreamWaitFile()"),
+      "the file of the agent is written when the rules change")
 check(viewModel.contains("LaunchOrderAgent.writeWaitFile(for:"), "the file of the agent is written")
 
 let agentFile = read("LaunchOrderAgent.swift")

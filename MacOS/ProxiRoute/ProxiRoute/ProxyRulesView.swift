@@ -403,6 +403,11 @@ struct ProxyRulesView: View {
     // persist the current list and push it to the extension if the tunnel is up
     private func saveAndSync() {
         UserDefaults.standard.set(rules.map { $0.toDict() }, forKey: "proxyRules")
+        // The list of what the launch agent waits for is made of the proxies
+        // that the rules point to. A rule that was changed here can point at
+        // another proxy, so the list has to be written again - the rules do
+        // not go through the view model to be saved.
+        viewModel.refreshUpstreamWaitFile()
         if let session = viewModel.tunnelSession {
             RuleManager.resyncRules(session: session) { _, _ in }
         }
