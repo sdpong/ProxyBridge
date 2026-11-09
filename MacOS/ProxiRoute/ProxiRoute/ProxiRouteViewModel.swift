@@ -1163,22 +1163,21 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
     
     private func installAndStartProxy() {
-        // A build without a team id cannot run a network extension: macOS does
-        // not validate the restricted entitlements of an ad-hoc signature, so
-        // the extension registers and is then refused, and the network
-        // extension APIs of the app do not answer at all.
+        // The extension is asked for on every start, as it always was.
         //
-        // Asking the system to install it anyway has a price. The system keeps
-        // a record of every install it is asked for, and it cannot tell that
-        // the copy it already has is the copy it is being asked for, so every
-        // start of the app leaves another record behind - all of them the same
-        // extension, and all of them waiting to be taken out at the next
-        // restart. The question is asked only when the answer can be yes.
-        let team = ExtensionDiagnosis.teamIdentifier()
-        guard ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: team) else {
-            reportUnsignedBuild()
-            return
-        }
+        // An earlier version of this file skipped the request when the build
+        // has no team id, on the ground that macOS does not validate the
+        // restricted entitlements of an ad-hoc signature. That was measured
+        // with a small program of its own, and it was the wrong measurement:
+        // the program did not carry the entitlements of the app, so the
+        // system refused the program and not the extension. The extension of
+        // the app itself does run on this machine - the unified log of the
+        // 8th of November shows it working, asking for its container every
+        // few seconds and answering the app.
+        //
+        // So the request is made, and the app says what it knows about its
+        // own signature instead of deciding for the system.
+        //
         // Stop our own tunnel first so macOS replaces the running extension binary with
         // the newly installed one instead of reusing the old cached process. Only the
         // configurations this app wrote are touched: another app's tunnel (the upstream
@@ -1280,7 +1279,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // The app says which one it is, because the two need different things.
     private func reportSilentNetworkExtension() {
         let team = ExtensionDiagnosis.teamIdentifier()
-        if !ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: team) {
+        if !ExtensionDiagnosis.hasTeamIdentifier(team) {
             reportUnsignedBuild()
             return
         }
@@ -1782,7 +1781,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         } else {
             extensionProblem = ExtensionDiagnosis.unsignedBuildSummary()
         }
-        addLog("ERROR", L10n.t("This build is signed ad hoc, so it has no team id. macOS does not answer the network extension APIs of such an app and does not validate the restricted entitlements it needs, so no tunnel is written and no traffic is proxied. The proxy server of the app still works."))
+        addLog("ERROR", L10n.t("The signature of this build has no team id: it is signed ad hoc. macOS asks for the team id for the restricted entitlements of a network extension, so this is the first thing to look at when the tunnel does not come up. The proxy server of the app does not need the extension and works all the same."))
     }
 
     // The extension did not answer at all. The traffic is proxied, but the window

@@ -1,21 +1,14 @@
 import Foundation
 
-// Whether the app should ask the system to install its system extension.
+// Whether the signature of this build carries a team id.
 //
-// A build signed by a developer has a team id, and the system recognises the
-// copy of the extension it already has: asking for it on every start leaves
-// nothing behind.
+// The app does not decide anything with this answer: the extension is asked
+// for in every case, and the system is the one that decides whether it takes
+// it. What the answer is for is the notice in the window, and for telling the
+// two reasons of a silent system apart.
 //
-// A build signed ad hoc has no team id, and the system cannot tell that the
-// copy it is being asked for is the one it already has. Every start of the app
-// leaves another record behind - all of them the same extension, and all of
-// them waiting to be taken out at the next restart. Measured on this machine:
-// six records after six starts.
-//
-// A build without a team id cannot run a network extension anyway: macOS does
-// not validate the restricted entitlements of an ad-hoc signature, and the
-// network extension APIs of the app do not answer at all. So asking is not
-// worth a record per start.
+// A build signed by a developer has a team id. A build signed ad hoc has
+// none.
 //
 // Compiled as main.swift by run.sh.
 
@@ -29,17 +22,17 @@ func check(_ name: String, _ ok: Bool) {
     }
 }
 
-// a build with a team id asks the system to install the extension
-check("a build with a team id installs the extension",
-      ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: "B8HN38M7A7"))
-check("a build with a team id installs the extension, whatever the team is",
-      ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: "TEAMID1234"))
+// a build with a team id has one
+check("a build with a team id has one",
+      ExtensionDiagnosis.hasTeamIdentifier("B8HN38M7A7"))
+check("a build with a team id has one, whatever the team is",
+      ExtensionDiagnosis.hasTeamIdentifier("TEAMID1234"))
 
-// a build without a team id does not
-check("a build without a team id does not install the extension",
-      !ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: nil))
-check("a build with an empty team id does not install the extension",
-      !ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: ""))
+// a build without a team id has none
+check("a build without a team id has none",
+      !ExtensionDiagnosis.hasTeamIdentifier(nil))
+check("a build with an empty team id has none",
+      !ExtensionDiagnosis.hasTeamIdentifier(""))
 
 // the probe reads the team id of the running code
 //
@@ -51,9 +44,9 @@ check("a build with an empty team id does not install the extension",
 let team = ExtensionDiagnosis.teamIdentifier()
 check("the probe never returns an empty team id", !(team?.isEmpty ?? false))
 check("the probe and the decision agree",
-      ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: team) == (team != nil))
+      ExtensionDiagnosis.hasTeamIdentifier(team) == (team != nil))
 
-// the notice about an unsigned build says what is lost and what is not
+// the notice about a build without a team id says what is known
 //
 // The texts are checked in english: the key of a translation is the english
 // text itself, and a string that has no translation stays english. So the
@@ -62,15 +55,27 @@ check("the probe and the decision agree",
 L10n.language = .english
 let summary = ExtensionDiagnosis.unsignedBuildSummary()
 check("the summary names the signature", summary.contains("not signed by a developer"))
-check("the summary says that nothing is proxied", summary.contains("Nothing is proxied"))
+check("the summary says what to look at when the tunnel does not come up",
+      summary.contains("tunnel"))
 let explanation = ExtensionDiagnosis.unsignedBuildExplanation()
 check("the explanation has paragraphs", explanation.count >= 3)
-check("the explanation says what still works",
-      explanation.contains { $0.contains("What still works") })
-check("the explanation says what is lost",
-      explanation.contains { $0.contains("What does not") })
+check("the explanation says what it costs",
+      explanation.contains { $0.contains("What that costs") })
+check("the explanation says what works anyway",
+      explanation.contains { $0.contains("proxy server") })
 check("the explanation says what it takes",
       explanation.contains { $0.contains("Developer ID") })
+
+// the notice does not claim that the extension cannot run
+//
+// The extension of this app does run on this machine, ad-hoc signature and
+// all: the unified log of the 8th of November shows it working, asking for
+// its container every few seconds and answering the app. So the notice says
+// what the signature is, and it does not say that the extension is refused.
+check("the summary does not say that the extension cannot run",
+      !summary.contains("will not run"))
+check("the explanation does not say that the extension cannot run",
+      !explanation.contains { $0.contains("do not answer at all") })
 
 // every text of the notice is translated
 L10n.language = .chinese

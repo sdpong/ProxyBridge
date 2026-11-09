@@ -112,19 +112,13 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         return team
     }
 
-    // Whether the system should be asked to install the system extension.
+    // Whether the signature of this build carries a team id.
     //
-    // The question is asked once per start, and the system keeps a record of
-    // every install it is asked for. A build that has a team id asks for the
-    // extension every time and the system recognises the copy it already has,
-    // so nothing is left behind. A build that has no team id is asked for it
-    // too, and every one of those asks leaves another record behind: the
-    // records pile up with every start of the app, all of them the same
-    // extension, and the system takes them out only at the next restart.
-    //
-    // A build without a team id cannot run the extension anyway, so asking
-    // for it buys nothing and costs a record per start.
-    static func shouldInstallSystemExtension(teamIdentifier: String?) -> Bool {
+    // The app does not decide anything with this: it is what the notice in
+    // the window says, and what the two reasons of a silent system are told
+    // apart by. The extension is asked for in both cases - the system is the
+    // one that decides whether it takes it.
+    static func hasTeamIdentifier(_ teamIdentifier: String?) -> Bool {
         guard let team = teamIdentifier else { return false }
         return !team.isEmpty
     }
@@ -178,24 +172,26 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         ]
     }
 
-    // ---- this build cannot run a network extension at all ----
+    // ---- this build has no team id ----
     //
     // The one line that says what the notice is about, and the long form that
-    // says what is lost and what is not.
+    // says what is known and what is not.
     //
-    // The condition is standing: it is true from the first launch of the build
-    // until the build is signed. A window that looks ready and proxies nothing
-    // is the worst of the three, so the app says this out loud instead of
-    // waiting for an approval that is never asked for.
+    // What is known: the signature of this build carries no team id, and
+    // macOS ties a lot to the team id - the restricted entitlements of a
+    // network extension among them. What is not known: whether the system
+    // will take this build. It does take it here - the extension of the app
+    // runs and answers - so the notice says what the signature is and stops
+    // there. It is the tunnel that says whether it worked.
     static func unsignedBuildSummary() -> String {
-        return L10n.t("This build is not signed by a developer, so macOS will not run its network extension. Nothing is proxied through the tunnel.")
+        return L10n.t("This build is not signed by a developer, so its signature carries no team id. macOS ties a lot to that team id, so this is the first thing to look at when the tunnel does not come up.")
     }
 
     static func unsignedBuildExplanation() -> [String] {
         return [
-            L10n.t("macOS validates the restricted entitlements of a build that is signed by a developer and carries a provisioning profile. This build is signed ad hoc, so its system extension registers and is then refused, and the network extension APIs of the app do not answer at all."),
-            L10n.t("What still works: the rules, the proxies and the chains are all here, and the proxy server of the app serves the clients of the network. What does not: the tunnel, the dns proxy, and the rules that go with the traffic of this machine."),
-            L10n.t("To get the tunnel, the build has to be signed with a Developer ID certificate and a provisioning profile that carries the network extension entitlement. That needs a paid developer membership: the free Personal Team supports neither network extensions nor system extensions.")
+            L10n.t("The signature of this build has no team id: it is signed ad hoc. macOS asks for the team id for the restricted entitlements of a network extension, so a build without one can be refused where a build with one is not."),
+            L10n.t("What that costs, when it costs anything: the tunnel may not come up, and the switches the extension reads while it runs may not be available. The rules, the proxies and the chains are all here either way, and the proxy server of the app does not need the extension at all."),
+            L10n.t("A build signed with a Developer ID certificate and a provisioning profile that carries the network extension entitlement does not have this problem. That needs a paid developer membership: the free Personal Team supports neither network extensions nor system extensions.")
         ]
     }
 }
