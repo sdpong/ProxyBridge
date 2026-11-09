@@ -5,6 +5,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="4.1.2"
 
+# The name of the helper of the gateway mode. It is the same name in the
+# privileged helper tools folder, in the launch daemon and in the log.
+HELPER_NAME="com.sdpong.proxiroute.helper"
+
 # the pkg name/version here and the version shown in the app (About page, bundle)
 # come from different places, make a mismatch fail the build instead of shipping it
 PROJECT_VERSIONS=$(grep "MARKETING_VERSION" "$SCRIPT_DIR/ProxiRoute.xcodeproj/project.pbxproj" | sed -E 's/.*= *([^;]+);.*/\1/' | sort -u)
@@ -24,6 +28,26 @@ if [ ! -d "$APP_PATH" ]; then
     echo "Export the app from Xcode to output/ first"
     exit 1
 fi
+
+# The helper of the gateway mode is built here and not by the Xcode project.
+#
+# It is a program of root that lives in /Library/PrivilegedHelperTools, so it
+# is not part of the app bundle in the end - but it travels inside the bundle
+# until the installer puts it where it belongs.
+#
+# It is built into output/ and not into build/: the build folder is wiped
+# later on, and the helper has to survive that.
+echo "Building the helper of the gateway mode..."
+bash "$SCRIPT_DIR/scripts/build-helper.sh" "$SCRIPT_DIR/output/$HELPER_NAME"
+HELPER_PATH="$SCRIPT_DIR/output/$HELPER_NAME"
+
+# the helper and the daemon that starts it go into the bundle, where the
+# installer takes them from
+mkdir -p "$APP_PATH/Contents/Helpers"
+cp -f "$HELPER_PATH" "$APP_PATH/Contents/Helpers/$HELPER_NAME"
+chmod 755 "$APP_PATH/Contents/Helpers/$HELPER_NAME"
+cp -f "$SCRIPT_DIR/scripts/$HELPER_NAME.plist" "$APP_PATH/Contents/Helpers/$HELPER_NAME.plist"
+chmod 644 "$APP_PATH/Contents/Helpers/$HELPER_NAME.plist"
 
 # The script that takes old system extension records out of the system travels
 # with the app: it needs root, and a person who has to type a long command with
@@ -59,7 +83,18 @@ fi
 # left over from an earlier run would be copied into itself
 rm -rf "$SCRIPT_DIR/build"
 mkdir -p "$SCRIPT_DIR/build/component"
-cp -R "$APP_PATH" "$SCRIPT_DIR/build/component/"
+
+# The payload mirrors the places the files really go to.
+#
+# The app goes to /Applications, and the helper of the gateway mode goes to
+# /Library/PrivilegedHelperTools with its launch daemon in
+# /Library/LaunchDaemons. One pkgbuild call can only have one root, so the
+# root holds the whole shape of the disk and the install location is the
+# root of the disk.
+mkdir -p "$SCRIPT_DIR/build/component/Applications"
+mkdir -p "$SCRIPT_DIR/build/component/Library/PrivilegedHelperTools"
+mkdir -p "$SCRIPT_DIR/build/component/Library/LaunchDaemons"
+cp -R "$APP_PATH" "$SCRIPT_DIR/build/component/Applications/"
 
 # strip AppleDouble junk so it never lands in the payload
 dot_clean "$SCRIPT_DIR/build/component" 2>/dev/null || true
@@ -76,7 +111,8 @@ pkgbuild --analyze --root build/component build/component.plist
 /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :0:BundleIsRelocatable bool false" build/component.plist
 
-# scripts/postinstall installs the `proxiroute` command (a launcher for the app's own executable).
+# scripts/postinstall installs the `proxiroute` command (a launcher for the app's own executable)
+# and the helper of the gateway mode.
 # an installer script that is not executable is skipped silently, so check it here
 [ -x "$SCRIPT_DIR/scripts/postinstall" ] || { echo "ERROR: scripts/postinstall is not executable (chmod +x)"; exit 1; }
 pkgbuild \
@@ -85,7 +121,7 @@ pkgbuild \
     --scripts "$SCRIPT_DIR/scripts" \
     --identifier com.sdpong.ProxiRoute \
     --version "$VERSION" \
-    --install-location /Applications \
+    --install-location / \
     build/temp.pkg
 
 cat > build/distribution.xml << 'EOF'
@@ -139,6 +175,10 @@ else
 fi
 
 rm -rf build
+
+# the helper is inside the app bundle now, so the copy that was built is not
+# needed any more
+rm -f "$HELPER_PATH"
 
 echo "✓ Build complete"
 echo "  App: output/ProxiRoute.app"

@@ -390,6 +390,13 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     @Published private(set) var localProxyClients = 0
     private let localProxyServer = LocalProxyServer()
 
+    // The gateway mode: this machine is the gateway of the network, and the
+    // traffic of the other terminals comes in through it.
+    //
+    // The helper does the part that needs root, and the app asks it over a
+    // unix socket.
+    let gateway = GatewayController()
+
     // The traffic of the clients of the proxy server.
     //
     // The extension counts the traffic of this machine, and it runs in every
@@ -531,6 +538,43 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         } else {
             stopLocalProxyServer()
         }
+
+        // The gateway mode is a service for the other terminals of the
+        // network, so it starts and stops with the mode, the same way the
+        // proxy server does.
+        if mode.runsGateway {
+            startGateway()
+        } else {
+            stopGateway()
+        }
+    }
+
+    // The gateway mode.
+    //
+    // The helper is a program of root, and the app asks it over a unix
+    // socket. The answer of the helper is what the window shows: if the
+    // helper is not there, or if it refused, the reason is in words.
+    func startGateway() {
+        gateway.logHandler = { [weak self] message, level in
+            self?.addLog(level, message)
+            NSLog("[ProxiRoute] %@: %@", level, message)
+        }
+        // the rules and the proxies of the app are what the traffic of the
+        // network goes by
+        gateway.rules = localProxyRules()
+        gateway.proxies = proxyConfigs.map { config in
+            ProxyEndpoint(id: config.id, name: config.name, type: config.type,
+                          host: config.host, port: config.port,
+                          username: config.username, password: config.password)
+        }
+        gateway.chains = localProxyChains()
+        gateway.apply()
+    }
+
+    // The gateway mode goes off.
+    func stopGateway() {
+        gateway.isEnabled = false
+        gateway.stop()
     }
 
     // The mode is the one switch: the server listens when the mode says so,

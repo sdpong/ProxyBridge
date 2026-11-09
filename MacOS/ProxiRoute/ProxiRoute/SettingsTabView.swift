@@ -33,6 +33,7 @@ struct SettingsTabView: View {
                 // of the network. The other modes use the defaults.
                 if viewModel.runtimeMode == .gateway {
                     routeCard
+                    gatewayCard
                 }
                 // the proxy server is the service for the clients of the
                 // network, so it is only of use in its own mode
@@ -74,13 +75,14 @@ struct SettingsTabView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     // The gateway mode is meant for the other terminals of
-                    // the network. The forwarding of them is not there yet,
-                    // and the card says so instead of letting the person
-                    // wait for a traffic that never comes.
+                    // the network. The card below says whether the helper of
+                    // the gateway mode is there, and whether the gateway is
+                    // on, so that the person is not left waiting for a
+                    // traffic that never comes.
                     if viewModel.runtimeMode == .gateway {
-                        Text(L10n.t("Today only the traffic of this machine is taken over. The forwarding of the other terminals of the network is not there yet."))
+                        Text(L10n.t("This machine is the gateway of the network: the other terminals reach it through the interface below, and their traffic goes out by the rules of the app."))
                             .font(.caption)
-                            .foregroundColor(.orange)
+                            .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -137,6 +139,60 @@ struct SettingsTabView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
+    }
+
+    // MARK: - the gateway
+
+    // The gateway mode: the switch that turns it on, the interface the other
+    // terminals reach this machine through, and what the helper says.
+    //
+    // The helper is a program of root that the package installs. The card
+    // says when it is not there, because without it the traffic of the
+    // network has nowhere to go, and the reason has to be in words.
+    private var gatewayCard: some View {
+        SettingsCard(icon: "network", title: L10n.t("Gateway")) {
+            Form {
+                Section {
+                    Toggle(L10n.t("Turn the gateway on"), isOn: Binding(
+                        get: { viewModel.gateway.isEnabled },
+                        set: { viewModel.gateway.isEnabled = $0 }
+                    ))
+
+                    Picker(L10n.t("Interface"), selection: Binding(
+                        get: { viewModel.gateway.interface },
+                        set: { viewModel.gateway.interface = $0 }
+                    )) {
+                        Text(L10n.t("Choose")).tag("")
+                        ForEach(gatewayInterfaces, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+
+                    HStack {
+                        Text(L10n.t("Status"))
+                        Spacer()
+                        Text(viewModel.gateway.isRunning ? L10n.t("Running") : L10n.t("Not Running"))
+                            .foregroundColor(viewModel.gateway.isRunning ? .green : .secondary)
+                    }
+
+                    if !viewModel.gateway.status.isEmpty {
+                        Text(viewModel.gateway.status)
+                            .font(.caption)
+                            .foregroundColor(viewModel.gateway.isRunning ? .secondary : .orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } footer: {
+                    Text(L10n.t("The other terminals of the network point at this machine as their gateway. Their traffic goes out by the rules of the app, the same rules as the traffic of this machine, except that a rule naming a program does not apply to them: they have no program."))
+                }
+            }
+            .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    // The interfaces the other terminals could reach this machine through.
+    private var gatewayInterfaces: [String] {
+        return InterfaceList.shared.entries.map { $0.name }
     }
 
     // MARK: - the proxy server

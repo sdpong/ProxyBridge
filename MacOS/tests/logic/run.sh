@@ -4,6 +4,7 @@
 set -e
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXT="$HERE/../../ProxiRoute/extension"
+HELPER="$HERE/../../ProxiRoute/helper"
 APP="$HERE/../../ProxiRoute/ProxiRoute"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -43,3 +44,4 @@ run_test localproxy_tests.swift "$APP/LocalProxyServer.swift" "$APP/LocalProxySo
 run_test ruleengine_tests.swift "$APP/ProxyRuleEngine.swift"
 run_test runtimemode_tests.swift "$APP/RuntimeMode.swift"
 run_test trafficmerge_tests.swift "$APP/TrafficMerge.swift"
+run_test gateway_tests.swift "$APP/GatewayProtocol.swift" "$HELPER/GatewayFilter.swift" "$HELPER/GatewayNetwork.swift"

@@ -1,17 +1,45 @@
 #!/bin/sh
-# Runs as root after the ProxiRoute package is installed. Installs the `proxiroute` command, a
-# short launcher that starts the app's own executable in command line mode (there is no second
-# binary). A failure here must never fail the installation of the app, so it always exits 0.
+# Runs as root after the ProxiRoute package is installed.
 #
-# Fixed paths on purpose: this runs as root, so nothing from the environment is trusted.
+# It does three things:
+#
+#   1. installs the `proxiroute` command, a launcher for the app's own
+#      executable in command line mode (there is no second binary);
+#   2. installs the helper of the gateway mode and tells the system to
+#      start it;
+#   3. puts the rules of the packet filter back, in case a helper of an
+#      earlier version left them behind.
+#
+# A failure here must never fail the installation of the app, so it always
+# exits 0. The reasons why something did not work are written to the log of
+# the installation, which is where a person looks when the gateway mode does
+# not do what they asked.
+#
+# Fixed paths on purpose: this runs as root, so nothing from the environment
+# is trusted.
 # (tests copy the script and replace these two lines)
 APP_EXECUTABLE="/Applications/ProxiRoute.app/Contents/MacOS/ProxiRoute"
 BIN_DIR="/usr/local/bin"
+
+HELPER_NAME="com.sdpong.proxiroute.helper"
+HELPER_TOOLS="/Library/PrivilegedHelperTools/$HELPER_NAME"
+HELPER_DAEMON="/Library/LaunchDaemons/$HELPER_NAME.plist"
+HELPER_SOURCE="/Applications/ProxiRoute.app/Contents/Helpers/$HELPER_NAME"
 
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 umask 022
 LINK="$BIN_DIR/proxiroute"
+
+# The log of the installation. The Installer shows it when the install goes
+# wrong, and it is where the reason of a failure is.
+LOG="/var/log/com.sdpong.proxiroute.install.log"
+
+say() {
+    echo "$@" >> "$LOG" 2>/dev/null
+}
+
+# ---------------------------------------------------------------- the launcher
 
 [ -x "$APP_EXECUTABLE" ] || exit 0
 
@@ -36,4 +64,73 @@ exec "\$APP" --cli "\$@"
 LAUNCHER
 chmod 755 "$TMP" 2>/dev/null
 mv -f "$TMP" "$LINK" 2>/dev/null || rm -f "$TMP"
+
+# ---------------------------------------------------------------- the helper
+
+say "ProxiRoute installed."
+
+# The helper of the gateway mode. It is a program of root that lives in
+# /Library/PrivilegedHelperTools, and the system starts it from there.
+#
+# The rules of the packet filter of a helper that is not running any more
+# would keep the traffic of the network being taken in and sent nowhere, so
+# the rules of the machine are put back before the helper is replaced.
+#
+# The switch of the filter itself is left alone: it was not ours to begin
+# with, and a machine whose owner turned the filter on must not have it
+# turned off by installing an app.
+put_the_machine_back() {
+    if [ -x /sbin/pfctl ]; then
+        /sbin/pfctl -f /etc/pf.conf >/dev/null 2>&1
+    fi
+    if [ -x /usr/sbin/sysctl ]; then
+        /usr/sbin/sysctl -w net.inet.ip.forwarding=0 >/dev/null 2>&1
+    fi
+    rm -f /var/run/com.sdpong.proxiroute.pf.rules /var/run/com.sdpong.proxiroute.pf.anchor
+}
+
+if [ -f "$HELPER_SOURCE" ]; then
+    # the daemon of an earlier version is taken out of the system first: the
+    # old one is still running, and it holds the old socket
+    if [ -f "$HELPER_DAEMON" ]; then
+        /bin/launchctl bootout system "$HELPER_NAME" >/dev/null 2>&1
+        /bin/launchctl unload "$HELPER_DAEMON" >/dev/null 2>&1
+    fi
+
+    put_the_machine_back
+
+    # the helper is put in place with the ownership the system expects of a
+    # program of root: the folder is root's, and nobody else may write in it
+    mkdir -p "/Library/PrivilegedHelperTools" 2>/dev/null
+    if [ -L "/Library/PrivilegedHelperTools" ]; then
+        say "The folder of the privileged helper tools is a link, the helper was not installed."
+    else
+        cp -f "$HELPER_SOURCE" "$HELPER_TOOLS" 2>/dev/null \
+            && chown root:wheel "$HELPER_TOOLS" 2>/dev/null \
+            && chmod 755 "$HELPER_TOOLS" 2>/dev/null \
+            && say "The helper of the gateway mode was installed." \
+            || say "The helper of the gateway mode could not be installed."
+    fi
+
+    # the daemon is registered with the system
+    if [ -f "/Applications/ProxiRoute.app/Contents/Helpers/$HELPER_NAME.plist" ]; then
+        cp -f "/Applications/ProxiRoute.app/Contents/Helpers/$HELPER_NAME.plist" "$HELPER_DAEMON" 2>/dev/null \
+            && chown root:wheel "$HELPER_DAEMON" 2>/dev/null \
+            && chmod 644 "$HELPER_DAEMON" 2>/dev/null
+    fi
+
+    if [ -f "$HELPER_DAEMON" ]; then
+        /bin/launchctl bootout system "$HELPER_NAME" >/dev/null 2>&1
+        if /bin/launchctl bootstrap system "$HELPER_DAEMON" >/dev/null 2>&1; then
+            say "The helper of the gateway mode was started."
+        else
+            /bin/launchctl load -w "$HELPER_DAEMON" >/dev/null 2>&1 \
+                && say "The helper of the gateway mode was started." \
+                || say "The helper of the gateway mode could not be started. It will start at the next restart of the machine."
+        fi
+    fi
+else
+    say "This build has no helper of the gateway mode, so the gateway mode is not available."
+fi
+
 exit 0
