@@ -124,6 +124,7 @@ enum L10n {
         "Not Installed": "未安装",
         "Installed, Not Running": "已安装，未运行",
         "The helper of the gateway mode is installed.": "网关模式的 helper 已安装。",
+        "The helper of the gateway mode is not installed. Install it with the button in this card.": "网关模式的 helper 还没装。用这张卡里的「安装」按钮装上。",
         "The helper of the gateway mode is gone.": "网关模式的 helper 已卸载。",
         "The password of an administrator is asked for. The installation waits for it.": "系统会要求管理员密码，安装在等这个密码。",
         "The helper is a program of root: it loads the rules of the packet filter, turns the forwarding of the machine on, and asks the kernel where a redirected connection was going. Installing it needs the password of an administrator; taking it out puts the machine back the way it was.": "helper 是一个 root 程序：它装载过滤器规则、打开本机转发、并向内核打听被重定向的连接原来要去哪。安装需要管理员密码；卸载会把机器恢复原样。",

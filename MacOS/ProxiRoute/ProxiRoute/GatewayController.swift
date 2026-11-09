@@ -143,7 +143,13 @@ final class GatewayController: ObservableObject {
             // a traffic that cannot come.
             dataPlane.stop()
             isRunning = false
-            status = result.message
+            // A helper that is not there is said in the words of the window,
+            // and the words point at the button that puts it there. Anything
+            // else is said in the words of the helper, which is the one that
+            // knows what went wrong.
+            status = GatewayInstaller.state().isInstalled
+                ? result.message
+                : L10n.t("The helper of the gateway mode is not installed. Install it with the button in this card.")
             log("The gateway mode could not be turned on: \(result.message)", level: "ERROR")
         }
         startPolling()
