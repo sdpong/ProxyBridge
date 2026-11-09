@@ -2302,3 +2302,29 @@ RSS 增量测出来是 0 —— 但它们**产生得极快**，回收跟不上�
 ```bash
 swiftc -O bench3.swift -o bench3   # 见下
 ```
+
+### 八、顺带查实：这台机器上扩展接管不了（与本次优化无关）
+
+做上面那组实测的时候发现的：重启 Mac 之后，扩展再也接管不了流量了。
+
+**现象**：
+- `systemextensionsctl list` 里 ProxiRoute 是 `activated enabled`（系统层面已授权）
+- 但 `/Library/Preferences/com.apple.networkextension.plist` 里**透明代理配置 0 条**
+- 于是「网络 → VPN 与过滤器」里**根本没有 ProxiRoute 这个条目**，也就没有开关可开
+- app 界面显示的是：「macOS 把隧道绑定到了一个应用已被删除的扩展上」
+
+**为什么**：
+`NETransparentProxyManager.saveToPreferences` 要写系统的网络配置，
+而**写网络配置的 app 必须有有效的 Team ID**。这个 fork 是 ad-hoc 签名
+（`TeamIdentifier=not set`），拿不到这个权限。
+
+所以：**ad-hoc 签名的 build 在这台机器上写不进隧道配置**。
+上游的正式版有 Developer ID，没这个问题。
+
+这不影响本次优化（优化的是 app 进程自己怎么画窗口），
+但它意味着：**要在这台机器上复现「扩展满负荷」的场景，需要一份有 Developer ID 的签名**，
+或者用别的方式产生同样的日志压力（本次用基准测试量的是产生垃圾的速度，绕开了这个限制）。
+
+**顺带**：`remove-old-extensions.sh` 这个脚本确实管用，
+但它会把**当前这个扩展也一起移除**（脚本的意思就是「只留一份」），
+移除后需要重新打开 app、再去系统设置里授权一次。

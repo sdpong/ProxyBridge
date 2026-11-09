@@ -416,10 +416,18 @@ if let client = connectLocal(port: settings.port) {
     check("the request of the open connection is sent", sendBytes(client, Array(request.utf8)))
     _ = readSome(client, 64)
     var open = server.trafficSnapshot()
-    for _ in 0..<20 {
+    // The totals and the list of the open connections are not written at the
+    // same moment, and a slow machine needs a moment longer. So the waiting is
+    // for what the checks are about - the totals and the list - and not for a
+    // fixed number of tries.
+    //
+    // It waited only for the totals before, and then asked for the list right
+    // away: on a busy machine the list was not there yet, and the test failed
+    // for a reason that has nothing to do with the code it checks.
+    for _ in 0..<100 {
         open = server.trafficSnapshot()
         let row = open.totals.first { $0.proxy == "Direct" }
-        if (row?.bytesUp ?? 0) >= 10 { break }
+        if (row?.bytesUp ?? 0) >= 10 && !open.flows.isEmpty { break }
         Thread.sleep(forTimeInterval: 0.1)
     }
     let openDirect = open.totals.first { $0.proxy == "Direct" }
