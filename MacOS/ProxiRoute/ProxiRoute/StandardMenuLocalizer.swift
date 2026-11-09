@@ -123,41 +123,46 @@ enum StandardMenuLocalizer {
         ]
     }
 
-    // The items of macOS 26 that belong to the tabs and to the window sets.
+    // The items of macOS 26 that belong to the tabs and to the window sets,
+    // and the items that close, shrink and move the window.
     //
-    // The app has one window and no row of tabs, so those items are always
-    // grey: they are about a set of windows or a tab bar that does not exist
-    // here. A grey item is a promise that is never kept, so they are taken
-    // out instead of being renamed.
+    // The app has one window and no row of tabs, so the items about a set of
+    // windows or a tab to move are always grey: they are about a set of
+    // windows or a tab bar that does not exist here. A grey item is a promise
+    // that is never kept, so they are taken out instead of being renamed.
+    //
+    // The items that close, shrink, fill and center the window are taken out
+    // for a different reason: they are the ones that change the size of the
+    // window, and macOS remembers the sizes the window had. A menu with
+    // "Fill" and "Center" in it is a menu where a click moves the window, and
+    // the window of this app has a size of its own that its content decides.
+    // The way to the window is here: "Open ProxiRoute" and "Enter Full
+    // Screen". The rest is noise.
+    // The items of macOS 26 that belong to the tabs and to the window sets,
+    // and the items that close, shrink and move the window.
+    //
+    // The app has one window and no row of tabs, so the items about a set of
+    // windows or a tab to move are always grey: they are about a set of
+    // windows or a tab bar that does not exist here. A grey item is a promise
+    // that is never kept, so they are taken out instead of being renamed.
+    //
+    // The items that close, shrink, fill and center the window are taken out
+    // for a different reason: they are the ones that change the size of the
+    // window, and macOS remembers the sizes the window had. A menu with
+    // "Fill" and "Center" in it is a menu where a click moves the window, and
+    // the window of this app has a size of its own that its content decides.
+    // The way to the window is here: "Open ProxiRoute" and "Enter Full
+    // Screen". The rest is noise.
+    //
+    // The titles are in a file of their own, so that the tests can look at
+    // them without the whole app around it.
     private static var windowNoiseTitles: [Title] {
-        return [
-            // the words macOS uses in english ...
-            Title(english: "Remove Window from Set", chinese: "从组中移除窗口", text: ""),
-            Title(english: "Add Tab to Window Set", chinese: "将标签页添加到窗口组", text: ""),
-            Title(english: "Move Tab to New Window", chinese: "将标签页移到新窗口", text: ""),
-            Title(english: "Merge All Windows", chinese: "合并所有窗口", text: ""),
-            Title(english: "Show Previous Tab", chinese: "显示上一个标签页", text: ""),
-            Title(english: "Show Next Tab", chinese: "显示下一个标签页", text: ""),
-            Title(english: "Select Previous Tab", chinese: "选择上一个标签页", text: ""),
-            Title(english: "Select Next Tab", chinese: "选择下一个标签页", text: ""),
-            Title(english: "New Tab", chinese: "新建标签页", text: ""),
-            Title(english: "Close Tab", chinese: "关闭标签页", text: ""),
-            Title(english: "Duplicate Tab", chinese: "复制标签页", text: ""),
-            Title(english: "Move Window to New Set", chinese: "将窗口移到新组", text: ""),
-            Title(english: "Rename Window Set", chinese: "重命名窗口组", text: ""),
-            // ... and the ones it uses in chinese
-            Title(english: "从组中移除窗口", chinese: "从组中移除窗口", text: ""),
-            Title(english: "将标签页添加到窗口组", chinese: "将标签页添加到窗口组", text: ""),
-            Title(english: "将标签页移到新窗口", chinese: "将标签页移到新窗口", text: ""),
-            Title(english: "合并所有窗口", chinese: "合并所有窗口", text: ""),
-            Title(english: "显示上一个标签页", chinese: "显示上一个标签页", text: ""),
-            Title(english: "显示下一个标签页", chinese: "显示下一个标签页", text: ""),
-            Title(english: "选择上一个标签页", chinese: "选择上一个标签页", text: ""),
-            Title(english: "选择下一个标签页", chinese: "选择下一个标签页", text: ""),
-            Title(english: "新建标签页", chinese: "新建标签页", text: ""),
-            Title(english: "关闭标签页", chinese: "关闭标签页", text: ""),
-            Title(english: "复制标签页", chinese: "复制标签页", text: "")
-        ]
+        // Every title of the list is a title on its own: the list holds the
+        // english words and the chinese words of every item, one after the
+        // other, and a title matches when it is one of them.
+        return windowMenuNoiseTitles.sorted().map { title in
+            Title(english: title, chinese: title, text: "")
+        }
     }
 
     // The items that macOS 26 put into the edit menu and that have nothing to
