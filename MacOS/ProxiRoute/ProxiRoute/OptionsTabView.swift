@@ -89,7 +89,7 @@ struct OptionsTabView: View {
                         }
                     ))
 
-                    Toggle(L10n.t("Start after the upstream proxy is ready"), isOn: Binding(
+                    Toggle(L10n.t("Start ProxiRoute at the login"), isOn: Binding(
                         get: { startAfterUpstream },
                         set: {
                             startAfterUpstream = $0
@@ -106,7 +106,7 @@ struct OptionsTabView: View {
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(L10n.t("Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit."))
-                        Text(L10n.t("macOS starts all the login items at the same moment, so the order cannot be set in the system settings. With this switch on, macOS starts ProxiRoute as soon as the proxy on this machine - Clash Meta, for example - answers on its port, and ProxiRoute takes the traffic over only when that proxy is ready."))
+                        Text(L10n.t("macOS starts all the login items at the same moment, so the order cannot be set in the system settings. With this switch on, macOS starts ProxiRoute as soon as the login is there - before the browsers and the other apps that use the network - and ProxiRoute takes the traffic over as soon as the proxy on this machine - Clash Meta, for example - answers on its port."))
                     }
                 }
             }

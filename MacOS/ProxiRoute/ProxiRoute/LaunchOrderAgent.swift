@@ -1,12 +1,17 @@
 import Foundation
 
-// The launch agent that starts the app when the upstream is ready.
+// The launch agent that starts the app at the login.
 //
 // macOS has no order for the login items: they all start at the same moment,
 // and nothing in the system settings says which one comes first. A launch
-// agent is the way to bring an order back. It runs at every login, waits for
-// the upstream proxy on this machine - Clash Meta, for example - and starts
-// the app when the port answers.
+// agent is the way to bring an order back. It runs at every login and starts
+// the app right away, so that the proxy of the machine is up before the
+// browsers and before the other apps that use the network.
+//
+// The upstream proxy on this machine - Clash Meta, for example - is not waited
+// for here: the app waits for that on its own, before it takes the traffic of
+// the machine over, and it knows the rules and the proxies. The agent only
+// writes the order down, so that it can be seen afterwards.
 //
 // It is an agent of the user and not of the system: it lives in the folder of
 // the launch agents of the user, so it needs no password and no root, and it
@@ -49,7 +54,7 @@ enum LaunchOrderAgent {
                 // start of the app: the app is started by hand most of the
                 // time, and the next login would come before that.
                 LoginItem.applyToSystem(LoginItem.isEnabled)
-                return L10n.t("ProxiRoute will be started by macOS when the upstream proxy is ready.")
+                return L10n.t("ProxiRoute will be started by macOS at the login, before the browsers and the other apps that use the network.")
             } catch {
                 UserDefaults.standard.set(false, forKey: enabledKey)
                 // The agent could not be put in place, so the app has to be a
@@ -119,11 +124,15 @@ enum LaunchOrderAgent {
         try manager.createDirectory(at: home.appendingPathComponent("Library/Logs/ProxiRoute"),
                                     withIntermediateDirectories: true)
 
-        // the script that waits and starts the app
+        // the script that starts the app at the login
         let script = UpstreamWait.scriptText(home: home)
         try script.write(to: UpstreamWait.scriptURL(home: home), atomically: true, encoding: .utf8)
         try manager.setAttributes([.posixPermissions: 0o755],
                                    ofItemAtPath: UpstreamWait.scriptURL(home: home).path)
+        // the script of the build before this one is taken away, so that
+        // nothing of it is left behind
+        try? manager.removeItem(at: UpstreamWait.supportFolderURL(home: home)
+            .appendingPathComponent(UpstreamWait.oldScriptName))
 
         // the agent itself
         let plist = UpstreamWait.agentDictionary(home: home)
@@ -151,7 +160,9 @@ enum LaunchOrderAgent {
     static func uninstall() {
         let manager = FileManager.default
         _ = runLaunchctl(["bootout", "gui/\(getuid())/\(UpstreamWait.agentLabel)"])
-        for url in [UpstreamWait.agentPlistURL(), UpstreamWait.scriptURL()] {
+        var urls = [UpstreamWait.agentPlistURL(), UpstreamWait.scriptURL()]
+        urls.append(UpstreamWait.supportFolderURL().appendingPathComponent(UpstreamWait.oldScriptName))
+        for url in urls {
             try? manager.removeItem(at: url)
         }
     }

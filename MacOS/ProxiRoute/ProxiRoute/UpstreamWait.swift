@@ -36,8 +36,13 @@ struct UpstreamEndpoint: Hashable {
 enum UpstreamWait {
     /// the file that tells the waiting script what to wait for
     static let waitFileName = "wait-for.txt"
-    /// the script that starts the app when the upstream is ready
-    static let scriptName = "start-after-upstream.sh"
+    /// the script that starts the app at the login
+    ///
+    /// The name of the script of the build before this one: it is taken away
+    /// when the agent is put in place, so that nothing of it is left behind.
+    static let oldScriptName = "start-after-upstream.sh"
+    /// the script that starts the app at the login
+    static let scriptName = "start-at-login.sh"
     /// the file that says whether the app should start at all
     static let startFlagName = "start-at-login.txt"
     /// the label of the launch agent that runs the script at every login
@@ -49,8 +54,13 @@ enum UpstreamWait {
     /// the environment variable that tells the app that the agent started it,
     /// and that it should stay out of the way instead of showing its window
     static let startHiddenVariable = "PROXIRoute_START_HIDDEN"
-    /// how long the script waits for the upstream, in seconds
-    static let scriptWaitLimit = 300
+    /// how long the script watches the upstream, in seconds
+    ///
+    /// The script does not hold the start of the app - the app starts at the
+    /// login - it only writes down when the upstream answered, so that the
+    /// order can be seen afterwards. The watch is over after a minute, because
+    /// the order is only of interest right after the login.
+    static let scriptWaitLimit = 60
 
     // MARK: - the hosts of this machine
 
@@ -91,6 +101,31 @@ enum UpstreamWait {
             }
         }
         return out
+    }
+
+    /// The endpoints of this machine, in the order of how much they carry.
+    ///
+    /// Only the ones that run on this machine are waited for, and each one of
+    /// them only once. The one that the most rules use comes first: the
+    /// start of the proxy waits for that one, and an upstream that carries
+    /// three rules out of twenty-six does not hold up the whole proxy
+    /// because it is not up yet.
+    ///
+    /// The ones with the same number of rules keep the order they came in.
+    static func orderedLocalEndpoints(_ usage: [(endpoint: UpstreamEndpoint, rules: Int)]) -> [UpstreamEndpoint] {
+        var seen = Set<UpstreamEndpoint>()
+        var kept: [(endpoint: UpstreamEndpoint, rules: Int)] = []
+        for item in usage where isLocalHost(item.endpoint.host) {
+            guard seen.insert(item.endpoint).inserted else { continue }
+            kept.append(item)
+        }
+        let numbered = kept.enumerated().map {
+            (rules: $0.element.rules, order: $0.offset, endpoint: $0.element.endpoint)
+        }
+        return numbered.sorted { left, right in
+            if left.rules != right.rules { return left.rules > right.rules }
+            return left.order < right.order
+        }.map { $0.endpoint }
     }
 
     // MARK: - the file
@@ -149,16 +184,23 @@ enum UpstreamWait {
 
     /// what the script writes down
     static func logURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        return home.appendingPathComponent("Library/Logs/ProxiRoute/start-after-upstream.log")
+        return home.appendingPathComponent("Library/Logs/ProxiRoute/start-at-login.log")
     }
 
     // MARK: - the script
 
-    /// The script that waits for the upstream and starts the app.
+    /// The script that starts the app at the login.
     ///
     /// It is a plain shell script and not a program of the app: it has to run
     /// at every login, before the app is there, and it has to run even when
     /// the app of this build is not installed any more.
+    ///
+    /// The script starts the app and does not wait for anything. The order
+    /// that a person asked for is this: the proxy of the machine comes up
+    /// before the browsers and before the other apps that use the network.
+    /// The upstream proxy on this machine - Clash Meta, for example - is a
+    /// thing of its own: the app waits for it before it takes the traffic
+    /// over, and that wait is inside the app, where the rules are known.
     static func scriptText(home: URL = FileManager.default.homeDirectoryForCurrentUser,
                            appPath: String = "/Applications/ProxiRoute.app") -> String {
         let waitFile = waitFileURL(home: home).path
@@ -167,14 +209,20 @@ enum UpstreamWait {
         let logFolder = (log as NSString).deletingLastPathComponent
         return """
         #!/bin/sh
-        # Starts ProxiRoute when the upstream proxy on this machine is ready.
+        # Starts ProxiRoute at the login, before the browsers and the other
+        # apps that use the network.
         #
-        # macOS starts every login item at the same moment, so the order
-        # cannot be set anywhere. This script is the order: it waits for the
-        # upstream - Clash Meta, for example - and starts the app when the port
-        # answers.
+        # macOS starts every login item at the same moment, and nothing in the
+        # system settings says that one of them comes before another one. This
+        # script is that order: the launch agent that runs it starts at the
+        # login, and it starts the app as soon as it is there.
         #
-        # The list of what to wait for is written by the app.
+        # The app does not take the traffic of the machine over before the
+        # upstream proxy on this machine answers - it waits for that on its
+        # own - so the machine keeps its network while the wait is on.
+        #
+        # The list of what the app waits for is written by the app. It is used
+        # here to write the order down, so that it can be seen afterwards.
 
         WAIT_FILE="\(waitFile)"
         START_FLAG="\(startFlag)"
@@ -204,36 +252,10 @@ enum UpstreamWait {
             exit 0
         fi
 
-        # The app is already running. There is nothing to start, and the app
-        # waits for the upstream itself.
+        # The app is already running. There is nothing to start.
         if pgrep -x "\(processName)" > /dev/null 2>&1; then
             say "the app is already running"
             exit 0
-        fi
-
-        DEADLINE=$(($(date +%s) + LIMIT))
-
-        wait_for() {
-            host="$1"
-            port="$2"
-            while :; do
-                if nc -z -G 1 "$host" "$port" > /dev/null 2>&1; then
-                    say "the upstream $host:$port is ready"
-                    return 0
-                fi
-                if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-                    say "the upstream $host:$port did not answer in time"
-                    return 1
-                fi
-                sleep 0.5
-            done
-        }
-
-        if [ -f "$WAIT_FILE" ]; then
-            while read -r host port; do
-                [ -z "$host" ] && continue
-                wait_for "$host" "$port"
-            done < "$WAIT_FILE"
         fi
 
         say "starting the app"
@@ -243,6 +265,29 @@ enum UpstreamWait {
             open -g -b "$BUNDLE"
         fi
         say "the app was started"
+
+        # The order is written down: the app is started, and the upstream of
+        # this machine answers a moment later. The app waits for the upstream
+        # by itself before it takes the traffic over.
+        if [ -f "$WAIT_FILE" ]; then
+            while read -r host port; do
+                [ -z "$host" ] && continue
+                DEADLINE=$(($(date +%s) + LIMIT))
+                while :; do
+                    if nc -z -G 1 "$host" "$port" > /dev/null 2>&1; then
+                        say "the upstream $host:$port is ready"
+                        break
+                    fi
+                    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                        say "the upstream $host:$port did not answer in $LIMIT seconds"
+                        break
+                    fi
+                    sleep 0.5
+                done
+            done < "$WAIT_FILE"
+        fi
+
+        say "the agent is done"
 
         """
     }

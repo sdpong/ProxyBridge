@@ -69,13 +69,17 @@ enum UpstreamReadiness {
         return reason == 0
     }
 
-    /// Waits until every endpoint answers.
+    /// Waits until the endpoint that matters most answers.
     ///
-    /// The endpoints are asked one after the other, and the ones that are
-    /// ready are not asked again. The wait has a limit, and the endpoints that
-    /// are still not ready when it is over are given back: the caller decides
-    /// what to do with them, and the app starts anyway - a proxy that is not
-    /// there is a reason to say so, not a reason to never start.
+    /// The endpoints come in the order of how much they carry: the first one
+    /// is the one that the most rules use. The wait ends as soon as that one
+    /// answers, because an upstream that carries three rules out of
+    /// twenty-six must not hold up the whole proxy.
+    ///
+    /// The endpoints that are still not ready when the wait is over are given
+    /// back: the caller decides what to do with them, and the app starts
+    /// anyway - a proxy that is not there is a reason to say so, not a reason
+    /// to never start.
     ///
     /// The work is done on a thread of its own, so that the window of the app
     /// keeps answering while it waits.
@@ -90,26 +94,23 @@ enum UpstreamReadiness {
         }
         queue.async {
             let deadline = Date().addingTimeInterval(timeout)
-            var waiting = endpoints
+            let mostUsed = endpoints[0]
             var ready: [UpstreamEndpoint] = []
 
-            while !waiting.isEmpty {
-                var stillWaiting: [UpstreamEndpoint] = []
-                for endpoint in waiting {
+            while true {
+                for endpoint in endpoints where !ready.contains(endpoint) {
                     if canConnect(endpoint, timeout: 1.0) {
                         ready.append(endpoint)
                         onReady(endpoint)
-                    } else {
-                        stillWaiting.append(endpoint)
                     }
                 }
-                waiting = stillWaiting
-                if waiting.isEmpty { break }
+                // the one that carries the most is there: the wait is over
+                if ready.contains(mostUsed) { break }
                 if Date() >= deadline { break }
                 Thread.sleep(forTimeInterval: 0.5)
             }
 
-            completion(waiting)
+            completion(endpoints.filter { !ready.contains($0) })
         }
     }
 }

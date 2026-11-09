@@ -57,6 +57,39 @@ check(!local.contains(UpstreamEndpoint(host: "example.com", port: 443)), "a prox
 check(local.filter { $0 == UpstreamEndpoint(host: "127.0.0.1", port: 9991) }.count == 1,
       "the same proxy is not waited for twice")
 
+// ---------------------------------------------------------------- the order of the endpoints
+
+// The endpoint that the most rules use comes first: the start of the proxy
+// waits for that one and not for all of them.
+let ordered = UpstreamWait.orderedLocalEndpoints([
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 7991), rules: 3),
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 9991), rules: 13),
+    (endpoint: UpstreamEndpoint(host: "example.com", port: 443), rules: 20),
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 1080), rules: 1)
+])
+check(ordered.count == 3, "only the upstream of this machine is waited for")
+check(ordered.first == UpstreamEndpoint(host: "127.0.0.1", port: 9991),
+      "the upstream that carries the most rules comes first")
+check(ordered.last == UpstreamEndpoint(host: "127.0.0.1", port: 1080),
+      "the upstream that carries the least comes last")
+check(!ordered.contains(UpstreamEndpoint(host: "example.com", port: 443)),
+      "a proxy somewhere else is not waited for")
+
+// The same proxy twice is waited for once.
+let orderedTwice = UpstreamWait.orderedLocalEndpoints([
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 9991), rules: 13),
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 9991), rules: 13)
+])
+check(orderedTwice.count == 1, "the same proxy is not waited for twice")
+
+// The ones with the same number of rules keep the order they came in.
+let orderedTie = UpstreamWait.orderedLocalEndpoints([
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 1111), rules: 2),
+    (endpoint: UpstreamEndpoint(host: "127.0.0.1", port: 2222), rules: 2)
+])
+check(orderedTie.first == UpstreamEndpoint(host: "127.0.0.1", port: 1111),
+      "the ones with the same number of rules keep their order")
+
 // ---------------------------------------------------------------- the file
 
 let text = UpstreamWait.waitFileText(local)
@@ -81,6 +114,16 @@ check(script.contains("pgrep -x \"ProxiRoute\""), "the script does not start a s
 check(script.contains("open -g"), "the app is started in the background, without a window in front")
 check(script.contains("nc -z"), "the script asks the port of the upstream")
 check(script.hasPrefix("#!/bin/sh"), "the script is a shell script")
+
+// The order: the app is started first, and the upstream is only looked at
+// afterwards. The app waits for the upstream by itself, before it takes the
+// traffic over, and it knows the rules and the proxies.
+let startAt = script.range(of: "starting the app")
+let waitAt = script.range(of: "nc -z")
+check(startAt != nil && waitAt != nil && startAt!.lowerBound < waitAt!.lowerBound,
+      "the app is started before the upstream is looked at")
+check(!script.contains("wait_for"), "the start of the app is not held back by a port")
+check(script.contains("the upstream $host:$port is ready"), "the order is written down")
 
 // ---------------------------------------------------------------- the agent
 
@@ -157,7 +200,9 @@ let viewModel = read("ProxiRouteViewModel.swift")
 check(viewModel.contains("func startProxy()"), "the app has a place where it starts the proxy")
 check(viewModel.contains("UpstreamReadiness.wait(for: endpoints"), "the start waits for the upstream")
 check(viewModel.contains("func localUpstreamEndpoints()"), "the app knows which upstream run on this machine")
-check(viewModel.contains("UpstreamWait.localEndpoints(endpoints)"), "the upstream of this machine are picked out")
+check(viewModel.contains("UpstreamWait.orderedLocalEndpoints(usage)"), "the upstream of this machine are picked out")
+check(viewModel.contains("counts[action, default: 0] += 1"), "the rules that use every proxy are counted")
+check(viewModel.contains("counts[id, default: 0] += 1"), "the rules that use a chain are counted as well")
 check(viewModel.contains("refreshUpstreamWaitFile()"), "the file of the agent is written when the proxies change")
 check(read("ProxyRulesView.swift").contains("viewModel.refreshUpstreamWaitFile()"),
       "the file of the agent is written when the rules change")
@@ -181,5 +226,13 @@ check(agentFile.contains("func sync()"), "the machine is made to match the switc
 check(read("ProxiRouteGUI.swift").contains("LaunchOrderAgent.sync()"),
       "the machine is made to match the switch at every start")
 check(agentFile.contains("func writeWaitFile"), "the file that says what to wait for is written")
+check(agentFile.contains("UpstreamWait.oldScriptName"), "the script of the build before this one is taken away")
+
+// The wait ends with the upstream that carries the most: an upstream that is
+// not up must not hold up the whole proxy.
+check(read("UpstreamReadiness.swift").contains("let mostUsed = endpoints[0]"),
+      "the wait is for the upstream that carries the most")
+check(read("UpstreamReadiness.swift").contains("if ready.contains(mostUsed) { break }"),
+      "the wait ends as soon as that one answers")
 
 print("upstream wait tests: ALL PASS")
