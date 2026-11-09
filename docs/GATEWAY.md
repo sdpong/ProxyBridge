@@ -62,7 +62,7 @@ $ sysctl net.inet.ip.forwarding      → 0
 - **App Sandbox 是障碍**：沙盒进程不能开 `/dev/pf`、不能改 sysctl。
   本 fork 的 app 本来就**不带沙盒**（`adhoc-sign.sh` 的注释：沙盒留给扩展），所以兼容。
 
-### 3. ad-hoc 签名下 `SMAppService` / `SMJobBless` 注册不了 → 走 pkg postinstall
+### 3. ad-hoc 签名下 `SMAppService` / `SMJobBless` 注册不了 → 两条路都走
 
 - `SMJobBless` 文档要求 *"Xcode must sign both the calling app and target executable tool"*；
   `SMJobBless` 已 deprecated，官方建议 `SMAppService`。
@@ -71,11 +71,14 @@ $ sysctl net.inet.ip.forwarding      → 0
   本 fork **没有** Developer ID 凭据（macOS 产物是 ad-hoc 签名 + 未公证）。
 - Apple DTS（Quinn）的原话：*"If you already have a way to install your daemon — your installer package —
   there's really no point in involving SMJobBless."*
-- **所以唯一可行路径**：pkg 的 postinstall 阶段本来就是 root 上下文
-  （`MacOS/ProxiRoute/scripts/postinstall` 现在就以 root 跑），
-  在那里装 root helper 到 `/Library/PrivilegedHelperTools/`、
-  装 LaunchDaemon plist 到 `/Library/LaunchDaemons/`、`launchctl bootstrap system`。
-  **这条路不需要任何签名凭据**，和本 fork 现在的分发形态（pkg + ad-hoc）兼容。
+- **所以有两条路，两条都不需要签名凭据**：
+  1. **pkg 的 postinstall**：它本来就是 root 上下文，在那里装 helper 到
+     `/Library/PrivilegedHelperTools/`、装 LaunchDaemon plist 到 `/Library/LaunchDaemons/`、
+     `launchctl bootstrap system`。
+  2. **app 自己向 macOS 要这个权限**：`osascript -e 'do shell script "…" with administrator privileges'`，
+     就是平时装软件时弹的那个管理员授权对话框。
+     走这条路的理由：人不用先找安装包。**代价**：脚本必须写进签名的二进制里，
+     不能作为文件躺在 app 旁边（能被改的文件以 root 跑就是 root）。
 
 ## 二、三端现状对比
 
@@ -168,11 +171,13 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 
 | 环节 | 做法 |
 |---|---|
-| helper 二进制 | 新 target；不放进带沙盒的 extension；独立 Mach-O，签名脚本要加一段（`scripts/adhoc-sign.sh` 现在只签扩展与 app） |
-| 安装 | `pkgbuild --root build/component` 可以直接放 `/Library/LaunchDaemons`（`MacOS/ProxiRoute/build.sh:82-89` 现在就是这么放 app 的） |
+| helper 二进制 | **独立 Mach-O**（`MacOS/ProxiRoute/helper/`），不进 Xcode target、不带 app 的签名：`scripts/build-helper.sh` 用 swiftc 交叉编译成 universal，签名交给 `scripts/adhoc-sign.sh` 一起做 |
+| 安装（包） | `pkgbuild --root build/component` 直接放 `/Library/LaunchDaemons`（`MacOS/ProxiRoute/build.sh:82-89` 现在就是这么放 app 的） |
 | postinstall | `MacOS/ProxiRoute/scripts/postinstall` 已是 root 上下文 → 加「装 helper + bootstrap LaunchDaemon」 |
-| 启停 | app 通过 unix socket / Mach service 连 helper；**helper 要校验调用方** |
-| 安全取舍 | ad-hoc 签名的 cdhash 每次构建都变 → 无法做强身份校验，只能做「同一 bundle id + root 拥有 + 文件权限」这类弱校验。**这是一个必须显式记录在案的取舍** |
+| 安装（app） | **设置页的「网关」卡片上有安装按钮**：app 用 macOS 的管理员授权对话框要权限，脚本写在自己的签名二进制里（`ProxiRoute/GatewayInstaller.swift`）。已装时按钮标灰，只给卸载按钮 |
+| 启停 | app 通过 unix socket（`/var/run/com.sdpong.proxiroute.helper.sock`）问 helper；**helper 要校验调用方** |
+| 安全取舍 | ad-hoc 签名的 cdhash 每次构建都变 → 无法做强身份校验，只能做「root 或 `/dev/console` 属主」这类弱校验。**这是一个必须显式记录在案的取舍**（已写进 `helper/GatewaySocket.swift` 的注释） |
+| 脚本的位置 | 安装/卸载脚本**写进签名的二进制**，不作为文件躺在 app 旁边：能被改的文件以 root 跑就是 root |
 | CI | macOS workflow（`.github/workflows/build-mac.yml`）的 pkg 步骤要跟着改；helper 若独立于 app bundle，要单独 notarize + staple |
 
 ## 六、统计与 UI：第三种来源
@@ -201,11 +206,11 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 | 阶段 | 内容 | 判定完成的标准 |
 |---|---|---|
 | **0 · 可行性实测**（**最要紧的一步，需要 sudo**） | 跑 `MacOS/ProxiRoute/tools/gateway-spike.sh`：PF 的 `rdr` 把一段连接重定向到本机端口，内核用 `DIOCNATLOOK` 说出它本来要去哪 | ✅ **已过**：脚本打印 `PASS`，`rdport` 就是原目的端口 |
-| **1 · 规则引擎的无程序分支** | App 侧规则引擎：跳过点名程序的规则（已有）、补协议维度（`protocolMode` 现在是死字段）、chain 的行为定死（`chain:<id>` 现在会静默直连）、域名匹配的来源定死 | 一条「不给程序、只给域名」的规则能让网关的流量按它走 |
-| **2 · root helper** | helper 二进制 + pkg postinstall 安装 + LaunchDaemon + PF anchor 的装载/卸载 + `sysctl` 转发开关 | app 点一下就能把 helper 装上并启停，卸载时清理干净 |
-| **3 · 透明代理的数据面** | app 侧的透明代理入口：接住重定向的连接 → 取原目的 → 按规则选上游 → 另开连接 → 双向倒 | 另一台机器把网关指过来，TCP 流量按规则走了代理 |
+| **1 · 规则引擎的无程序分支** | App 侧规则引擎：跳过点名程序的规则（已有）、补协议维度（`protocolMode` 现在是死字段）、chain 的行为定死（`chain:<id>` 现在会静默直连）、域名匹配的来源定死 | ✅ **已过**：规则引擎拆成独立文件 `ProxyRuleEngine.swift`，三端读法一致 |
+| **2 · root helper** | helper 二进制 + pkg postinstall 安装 + LaunchDaemon + PF anchor 的装载/卸载 + `sysctl` 转发开关 | ⏳ **代码已完**（helper / unix socket / PF 规则 / app 内安装与卸载按钮 / 卸载脚本都写好并测过）：**还差一次 sudo 实测**（装 → 看规则与转发 → 关 → 卸载复原） |
+| **3 · 透明代理的数据面** | app 侧的透明代理入口：接住重定向的连接 → 取原目的 → 按规则选上游 → 另开连接 → 双向倒 | ⏳ **代码已完，本机端到端跑通**（`tools/gateway-data-plane` 用的是同一个源文件编出来的程序，直连与 SOCKS5 上游都通）：**还差跨机实测**（另一台机器把网关指过来） |
 | **4 · UDP/QUIC 与 DNS** | 封 UDP 443 逼回落 + DNS 劫持（若要按域名分流） | 客户端的 QUIC 被挡、回落 TCP 后仍按规则走代理 |
-| **5 · UI 收口** | 第三种来源在统计/活动连接里的显示、终止权限、网关状态卡片那句橙字改成真话 | 设置页不再写「转发还没有实现」 |
+| **5 · UI 收口** | 第三种来源在统计/活动连接里的显示、终止权限、网关状态卡片那句橙字改成真话 | 设置页不再写「转发还没有实现」 ✅（已改成真的网关卡片） |
 
 ### 阶段 1 已经定下来的四件事（代码在 `ProxiRoute/ProxyRuleEngine.swift`）
 
