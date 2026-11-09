@@ -23,18 +23,52 @@ import Foundation
 // The four menus of the menu bar itself (Edit, View, Window, Help) are drawn
 // by SwiftUI and not out of the menu, so they cannot be renamed here.
 //
-// Measured: a title written into one of them is gone a moment later. SwiftUI
-// draws the menu bar again and writes its own titles into it, and the title
-// that the system writes is the one of the bundle. So renaming them is not
-// only useless - it is a change of the menu bar, and SwiftUI answers a change
-// of the menu bar by drawing it again. The menus of the system speak the
-// language of the bundle, the bundle keeps the language the app was started
-// with, and a language that is picked in the app asks for a restart (see
-// ProxiRouteGUI.swift).
+// ---------------------------------------------------------------- the window menu
 //
-// Two of them go away anyway: the view menu (everything in it was about a
-// sidebar or a toolbar, and this app has none) and the edit menu (it is a list
-// of the editing keys, and the keys keep working without it - see
+// The window menu is left to macOS entirely. It is not changed here, not one
+// item at a time and not as a whole.
+//
+// What was tried, and what it did:
+//
+//   - The items that macOS puts into the window menu - the ones that move and
+//     resize the window, the ones of the tabs and of the window sets - were
+//     taken out while the menu was drawn. macOS put them in again a moment
+//     later, the menu of a person who was looking at it changed its height
+//     again and again, and the shadow of the menu that was taller stayed on
+//     the screen for a moment. That was the ghost that grew and then shrank.
+//
+//   - The window menu of macOS was put aside and a menu of the app took its
+//     place. The menu bar of SwiftUI is drawn by SwiftUI, and it did not take
+//     the item of the app: the menu bar showed no window menu at all, and the
+//     app wrote the menu bar again every half a second, because writing the
+//     menu bar is what made SwiftUI write it again. The ghost was not gone
+//     and the window menu was gone.
+//
+// So the items of the window menu are not touched at all. The menu is drawn by
+// macOS, it settles down after a moment, and it stays as it is while it is
+// open.
+//
+// The items that do not belong to this app are taken out at the source, where
+// nothing puts them back:
+//
+//   - the ones that move and resize the window are out of the commands of the
+//     app - see CommandGroup(replacing: .windowArrangement) in ProxiRouteGUI,
+//   - the ones of the tabs and of the window sets are not there, because the
+//     window of the app is not a tab and is not in a window set - see
+//     WindowAccessor and NSWindow.allowsAutomaticWindowTabbing.
+//
+// What is left in the window menu is what macOS puts there and what belongs
+// to the app: the items that open the windows of the app, and the ones that
+// minimize, zoom and bring the windows to the front.
+//
+// The shape of the menu is looked at from time to time, and what does not
+// belong to the app is written into the log. The log is the place where the
+// answer is to be found: when the menu of a person is full of items that
+// nobody put there, the log says which ones they were.
+//
+// Two of the menus go away anyway: the view menu (everything in it was about
+// a sidebar or a toolbar, and this app has none) and the edit menu (it is a
+// list of the editing keys, and the keys keep working without it - see
 // installEditShortcuts). What is left of the menu bar is the app, the
 // profiles, the window and the help.
 enum StandardMenuLocalizer {
@@ -75,79 +109,14 @@ enum StandardMenuLocalizer {
         ]
     }
 
-    // The titles of the items of the window and edit menus.
+    // The titles of the items that macOS puts into the window menu and that
+    // this app does not want in it.
     //
-    // The list is the one of the items that macOS puts into those two menus.
-    // An item that is not there is simply not found, so the list does not have
-    // to be exact - but everything that is there has to be in it, or that one
-    // stays in the language of the system.
-    private static var itemTitles: [Title] {
-        return [
-            Title(english: "Minimize", chinese: "最小化", text: L10n.t("Minimize")),
-            Title(english: "Zoom", chinese: "缩放", text: L10n.t("Zoom")),
-            Title(english: "Bring All to Front", chinese: "前置全部窗口", text: L10n.t("Bring All to Front")),
-            Title(english: "Undo", chinese: "撤销", text: L10n.t("Undo")),
-            Title(english: "Redo", chinese: "重做", text: L10n.t("Redo")),
-            Title(english: "Cut", chinese: "剪切", text: L10n.t("Cut")),
-            Title(english: "Copy", chinese: "拷贝", text: L10n.t("Copy")),
-            Title(english: "Paste", chinese: "粘贴", text: L10n.t("Paste")),
-            Title(english: "Delete", chinese: "删除", text: L10n.t("Delete")),
-            Title(english: "Select All", chinese: "全选", text: L10n.t("Select All")),
-            // the items macOS 26 puts into the window menu
-            //
-            // The chinese words in them are the ones macOS itself uses, so
-            // that an item that the system has already translated is left
-            // alone and one that comes in english is renamed.
-            Title(english: "Close", chinese: "关闭", text: L10n.t("Close")),
-            Title(english: "Close All", chinese: "全部关闭", text: L10n.t("Close All")),
-            Title(english: "Minimize All", chinese: "全部最小化", text: L10n.t("Minimize All")),
-            Title(english: "Zoom All", chinese: "全部缩放", text: L10n.t("Zoom All")),
-            Title(english: "Fill", chinese: "填充", text: L10n.t("Fill")),
-            Title(english: "Center", chinese: "居中", text: L10n.t("Center")),
-            Title(english: "Move & Resize", chinese: "移动与调整大小", text: L10n.t("Move & Resize")),
-            Title(english: "Full Screen Tile", chinese: "全屏幕平铺", text: L10n.t("Full Screen Tile")),
-            Title(english: "Exit Full Screen", chinese: "退出全屏", text: L10n.t("Exit Full Screen")),
-            Title(english: "Move to Left of Screen", chinese: "移到屏幕左侧", text: L10n.t("Move to Left of Screen")),
-            Title(english: "Move to Right of Screen", chinese: "移到屏幕右侧", text: L10n.t("Move to Right of Screen")),
-            Title(english: "Move to Top of Screen", chinese: "移到屏幕顶部", text: L10n.t("Move to Top of Screen")),
-            Title(english: "Move to Bottom of Screen", chinese: "移到屏幕底部", text: L10n.t("Move to Bottom of Screen")),
-            Title(english: "Tile Window to Left of Screen", chinese: "窗口平铺到屏幕左侧", text: L10n.t("Tile Window to Left of Screen")),
-            Title(english: "Tile Window to Right of Screen", chinese: "窗口平铺到屏幕右侧", text: L10n.t("Tile Window to Right of Screen")),
-            Title(english: "Tile Window to Top of Screen", chinese: "窗口平铺到屏幕顶部", text: L10n.t("Tile Window to Top of Screen")),
-            Title(english: "Tile Window to Bottom of Screen", chinese: "窗口平铺到屏幕底部", text: L10n.t("Tile Window to Bottom of Screen"))
-        ]
-    }
-
-    // The items of macOS 26 that belong to the tabs and to the window sets,
-    // and the items that close, shrink and move the window.
-    //
-    // The app has one window and no row of tabs, so the items about a set of
-    // windows or a tab to move are always grey: they are about a set of
-    // windows or a tab bar that does not exist here. A grey item is a promise
-    // that is never kept, so they are taken out instead of being renamed.
-    //
-    // The items that close, shrink, fill and center the window are taken out
-    // for a different reason: they are the ones that change the size of the
-    // window, and macOS remembers the sizes the window had. A menu with
-    // "Fill" and "Center" in it is a menu where a click moves the window, and
-    // the window of this app has a size of its own that its content decides.
-    // The way to the window is here: "Open ProxiRoute" and "Enter Full
-    // Screen". The rest is noise.
-    // The items of macOS 26 that belong to the tabs and to the window sets,
-    // and the items that close, shrink and move the window.
-    //
-    // The app has one window and no row of tabs, so the items about a set of
-    // windows or a tab to move are always grey: they are about a set of
-    // windows or a tab bar that does not exist here. A grey item is a promise
-    // that is never kept, so they are taken out instead of being renamed.
-    //
-    // The items that close, shrink, fill and center the window are taken out
-    // for a different reason: they are the ones that change the size of the
-    // window, and macOS remembers the sizes the window had. A menu with
-    // "Fill" and "Center" in it is a menu where a click moves the window, and
-    // the window of this app has a size of its own that its content decides.
-    // The way to the window is here: "Open ProxiRoute" and "Enter Full
-    // Screen". The rest is noise.
+    // They are the items of macOS 26 and 27 that change the size or the place
+    // of the window - close, minimize, zoom, fill, center, move and resize,
+    // the tiles - and the items of the tabs and of the window sets. They are
+    // grey in this app: the app has a single window and no row of tabs, and
+    // a grey item is a promise that is never kept.
     //
     // The titles are in a file of their own, so that the tests can look at
     // them without the whole app around it.
@@ -160,22 +129,17 @@ enum StandardMenuLocalizer {
         }
     }
 
-    // The items that macOS 26 put into the edit menu and that have nothing to
-    // do with editing: the contact card, the passwords, the credit card,
-    // dictation and the emoji picker. A proxy that shows a log has no use for
-    // any of them.
+    // Renames the titles of the menus of the app.
     //
-    // They are removed and not renamed, because a menu that says "the credit
-    // card" in a proxy is a menu that says something wrong.
-    private static var editNoiseTitles: [Title] {
-        return [
-            Title(english: "AutoFill", chinese: "自动填充", text: ""),
-            Title(english: "Contact…", chinese: "通讯录…", text: ""),
-            Title(english: "Passwords…", chinese: "密码…", text: ""),
-            Title(english: "Credit Card…", chinese: "信用卡…", text: ""),
-            Title(english: "Start Dictation…", chinese: "开始听写…", text: ""),
-            Title(english: "Emoji & Symbols", chinese: "表情与符号", text: "")
-        ]
+    // The window menu is not touched here: see the note at the top.
+    private static func renameMenus() {
+        guard let menu = NSApp.mainMenu else { return }
+        // the application menu is the first one, its items are about the app
+        if let appMenu = menu.items.first?.submenu {
+            rename(appMenu, with: appMenuTitles)
+        }
+        hideViewMenu(menu)
+        hideEditMenu(menu)
     }
 
     // Renames the system menus in the menu bar of the app.
@@ -183,6 +147,25 @@ enum StandardMenuLocalizer {
     // It is safe to call it more than once: a title that is already the one
     // that is wanted is left alone.
     static func apply() {
+        // A menu that is being drawn must not be changed.
+        //
+        // A menu that changes while it is drawn is drawn again, and the
+        // picture of it jumps: the shape of the old one stays on the screen
+        // for a moment - the shadow of a menu that was taller - and the menu
+        // shrinks into the new one. That is the ghost that was seen under the
+        // dropdown of the window menu, and the shiver that went with it.
+        //
+        // So the menus are left alone while one of them is drawn, and the
+        // work is done as soon as the menu is closed.
+        guard tracking == 0 else {
+            pending = true
+            return
+        }
+        applyNow()
+    }
+
+    // Renames the titles of the menus.
+    private static func applyNow() {
         // the renaming writes titles, and a written title is a change of an
         // item, and a change of an item is what brings the renaming here.
         // without this the two would call each other without end.
@@ -198,38 +181,40 @@ enum StandardMenuLocalizer {
         // whenever something in it changes - and it writes its own titles
         // into it again. A title written here is therefore gone a moment
         // later, and the writing of it is a change of the menu bar, which is
-        // what makes SwiftUI draw it again. The language of those menus is
-        // the language of the bundle, and the bundle keeps the language the
-        // app was started with.
+        // what makes SwiftUI draw it again. The language of those menus is the
+        // language of the bundle, and the bundle keeps the language the app
+        // was started with.
 
         // the application menu is the first one, its items are about the app
         if let appMenu = menu.items.first?.submenu {
             rename(appMenu, with: appMenuTitles)
         }
 
-        // the items of the window and edit menus, and of the menus in them
-        for item in menu.items {
-            let isWindow = item.title == L10n.t("Window") || item.title == "Window" || item.title == "窗口"
-            let isEdit = item.title == L10n.t("Edit") || item.title == "Edit" || item.title == "编辑"
-            guard isWindow || isEdit, let submenu = item.submenu else { continue }
-            rename(submenu, with: itemTitles)
-        }
-
-        // the items of macOS 26 that have nothing to do with editing
-        pruneEditMenu(menu)
-
-        // the grey items of macOS 26 that belong to the tabs and the window
-        // sets. this app has neither, so they are taken out.
-        pruneWindowMenu(menu)
-
-        // the view menu goes, and what is in it comes to the window menu
+        // the view menu goes, and the edit menu goes as well. the keys are
+        // still there - see installEditShortcuts - but a menu that is a list
+        // of keys is a menu nobody opens.
         hideViewMenu(menu)
-        putWindowItems(menu)
-
-        // the edit menu goes as well. the keys are still there - see
-        // installEditShortcuts - but a menu that is a list of keys is a menu
-        // nobody opens.
         hideEditMenu(menu)
+
+        // The window menu goes.
+        //
+        // It is drawn by macOS, and the items of macOS 26 and 27 that change
+        // the size or the place of the window - fill, center, move and
+        // resize, the tiles - and the items of the tabs and of the window sets
+        // are in it every time it is drawn. They are grey in this app: the
+        // app has one window and no row of tabs, and a grey item is a promise
+        // that is never kept.
+        //
+        // They cannot be taken out of it: the menu that macOS paints is its
+        // own, and what is taken out of the menu of the menu bar is put back
+        // into it a moment later. So the menu itself goes, and the menu of
+        // the app takes its place.
+        //
+        // It is hidden and not taken out, for the same reason as the view
+        // menu and the edit menu: taking a menu out is a change of the menu
+        // bar, and SwiftUI answers a change of the menu bar by building the
+        // menu bar again - with the menu in it again.
+        hideWindowMenu(menu)
 
         // What the menu bar looks like right now. It is written only when it
         // changed, because the names of the menus are different on every
@@ -240,40 +225,67 @@ enum StandardMenuLocalizer {
             NSLog("[ProxiRoute] the menu bar: %@", titles)
         }
 
-        // and what is in the menus that were worked on
-        for item in menu.items where !item.isHidden && (isEditMenu(item) || isWindowMenu(item)) {
-            guard let submenu = item.submenu else { continue }
-            let entries = submenu.items.map { $0.title }.joined(separator: " | ")
-            let line = "\(item.title): \(entries)"
-            if lastEntries[line] == nil {
-                lastEntries[line] = true
-                NSLog("[ProxiRoute] the %@ menu: %@", item.title, entries)
-            }
+        // And what the window menu holds at the moment. It is only looked
+        // at, never changed - see the note at the top.
+        reportWindowMenu(menu)
+    }
+
+    // Writes what does not belong to the window menu of the app into the log.
+    //
+    // The menu of the app holds the windows of the app and nothing else, and
+    // this is the check that it stays that way. It changes nothing: it reads
+    // the menu and writes a line into the log when there is something in it
+    // that does not belong there.
+    private static func reportWindowMenu(_ menu: NSMenu) {
+        guard let item = menu.items.first(where: { isWindowMenuOfTheApp($0) }),
+              let submenu = item.submenu else { return }
+        let noise = submenu.items
+            .map { $0.title }
+            .filter { title in windowNoiseTitles.contains(where: { $0.matches(title) }) }
+        guard !noise.isEmpty else { return }
+        let line = "the window menu holds \(noise.count) item(s) that do not belong to this app: \(noise.joined(separator: " | "))"
+        if lastNoise != line {
+            lastNoise = line
+            NSLog("[ProxiRoute] %@", line)
+            log(line)
         }
     }
 
-    // Removes the items of macOS 26 that have nothing to do with editing.
+    // Hides the window menu of macOS.
     //
-    // They are in the edit menu of every app, and a proxy that shows a log
-    // has no use for a credit card or an emoji picker.
-    private static func pruneEditMenu(_ menu: NSMenu) {
-        guard let edit = menu.items.first(where: { isEditMenu($0) }),
-              let submenu = edit.submenu else { return }
-        // from the back, so that the index of the item that is not removed
-        // does not move
-        for index in stride(from: submenu.numberOfItems - 1, through: 0, by: -1) {
-            guard let item = submenu.item(at: index) else { continue }
-            guard editNoiseTitles.contains(where: { $0.matches(item.title) }) else { continue }
-            submenu.removeItem(at: index)
+    // The menu of the app takes its place - see CommandMenu(L10n.t("Window"))
+    // in ProxiRouteGUI. Both are called "window", so they are told apart by
+    // what is in them: the menu of macOS holds the items that move and
+    // resize the window, and the menu of the app holds the windows of the
+    // app.
+    //
+    // The menu is hidden and not taken out, for the same reason as the view
+    // menu and the edit menu: taking a menu out is a change of the menu bar,
+    // and SwiftUI answers a change of the menu bar by building the menu bar
+    // again - with the menu in it again.
+    private static func hideWindowMenu(_ menu: NSMenu) {
+        for item in menu.items where isWindowMenu(item) {
+            // the menu of the app is the one that opens the windows of the
+            // app. the menu of macOS is the other one.
+            guard !isWindowMenuOfTheApp(item) else { continue }
+            item.isHidden = true
         }
+    }
+
+    // Whether a menu of the menu bar is the window menu of the app.
+    //
+    // The menu of the app holds the windows of the app and nothing else, so
+    // it is the one that has "Open ProxiRoute" in it.
+    private static func isWindowMenuOfTheApp(_ item: NSMenuItem) -> Bool {
+        guard let submenu = item.submenu else { return false }
+        return submenu.items.contains { $0.title == L10n.t("Open ProxiRoute") }
     }
 
     // Hides the view menu.
     //
     // Everything in it was about a sidebar, a toolbar or a tab bar, and this
-    // app has none of them. The one thing that was of use - the full screen -
-    // is put into the window menu, so that there is one menu for the window
-    // and not two.
+    // app has none of them. The things that were of use - the settings and
+    // the full screen - are in the menu of the app.
     //
     // The menu is hidden and not taken out, and the reason is that SwiftUI
     // watches the menu bar. A menu item that is taken out is a change of the
@@ -288,53 +300,6 @@ enum StandardMenuLocalizer {
         for item in menu.items {
             guard item.title == "View" || item.title == L10n.t("View") || item.title == "显示" else { continue }
             item.isHidden = true
-        }
-    }
-
-    // Removes the items of the window menu that are about the tabs and the
-    // window sets.
-    //
-    // macOS 26 puts them into the window menu of every app, and they are
-    // always grey in this one: the app has a single window and no row of
-    // tabs, so there is no set of windows and no tab to move. A grey item is
-    // a promise that is never kept, so it is taken out.
-    private static func pruneWindowMenu(_ menu: NSMenu) {
-        guard let window = menu.items.first(where: { isWindowMenu($0) }),
-              let submenu = window.submenu else { return }
-        // from the back, so that the index of the item that is not removed
-        // does not move
-        for index in stride(from: submenu.numberOfItems - 1, through: 0, by: -1) {
-            guard let item = submenu.item(at: index) else { continue }
-            guard windowNoiseTitles.contains(where: { $0.matches(item.title) }) else { continue }
-            submenu.removeItem(at: index)
-        }
-        // the items that went took their separators with them, and what is
-        // left is a row of empty lines
-        collapseSeparators(submenu)
-    }
-
-    // Removes the lines that are empty twice in a row, and the one at the end.
-    //
-    // The items of macOS 26 stand between lines, and taking one of them out
-    // leaves two lines where there was one.
-    private static func collapseSeparators(_ menu: NSMenu) {
-        // whether the item that comes after the one that is looked at is a
-        // line. Nothing comes after the last item, so the last line is a
-        // line at the end of the menu.
-        var nextIsSeparator = true
-        for index in stride(from: menu.numberOfItems - 1, through: 0, by: -1) {
-            guard let item = menu.item(at: index) else { continue }
-            if item.isSeparatorItem {
-                // two lines in a row are one line too many, and a line at the
-                // end of the menu has nothing after it
-                if nextIsSeparator {
-                    menu.removeItem(at: index)
-                    continue
-                }
-                nextIsSeparator = true
-            } else {
-                nextIsSeparator = false
-            }
         }
     }
 
@@ -406,38 +371,6 @@ enum StandardMenuLocalizer {
         }
     }
 
-    // Puts the items of the window menu at the top of it.
-    //
-    // The window menu of SwiftUI lists the windows of the app. What is missing
-    // is the way to the main window, and that is the one thing a person reaches
-    // for.
-    //
-    // The full screen is not here, and that is the point of this change.
-    //
-    // macOS draws a ghost of the window next to the item that goes full
-    // screen, and the ghost grows while the mouse stays on the item. A person
-    // who opened the window menu saw that ghost spread and the picture of it
-    // shiver - and the cursor lands on that item by itself, because it is the
-    // second one in the menu, so the ghost was drawn every single time the
-    // menu was opened.
-    //
-    // The full screen went into the menu of the app instead. macOS draws no
-    // ghost there, and the item is still one click away (and on the keys of
-    // macOS for it: control-command-f).
-    private static func putWindowItems(_ menu: NSMenu) {
-        guard let delegate = AppDelegate.shared,
-              let window = menu.items.first(where: { isWindowMenu($0) }),
-              let submenu = window.submenu else { return }
-        // it is already there when the menus are built again
-        guard !submenu.items.contains(where: { $0.representedObject as? String == "windowItems" }) else { return }
-
-        let open = NSMenuItem(title: L10n.t("Open ProxiRoute"), action: #selector(AppDelegate.showMainWindow), keyEquivalent: "")
-        open.target = delegate
-        open.representedObject = "windowItems"
-        submenu.insertItem(open, at: 0)
-        submenu.insertItem(.separator(), at: 1)
-    }
-
     // whether a menu of the menu bar is the edit menu
     private static func isEditMenu(_ item: NSMenuItem) -> Bool {
         return item.title == L10n.t("Edit") || item.title == "Edit" || item.title == "编辑"
@@ -457,6 +390,45 @@ enum StandardMenuLocalizer {
     static func applySoon() {
         for delay in [0.05, 0.2, 0.5, 1.0, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { apply() }
+        }
+    }
+
+    // Runs the renaming a moment later, and only once.
+    //
+    // SwiftUI writes the titles of its menus again and again, and every one
+    // of those writes is a change of an item. A renaming for every change
+    // would be a renaming nine times a second, and every one of them would
+    // touch the menus of a person who is looking at one of them.
+    private static func scheduleApply(after delay: TimeInterval = 0.15) {
+        guard !scheduled else { return }
+        scheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            scheduled = false
+            apply()
+        }
+    }
+
+    // What happened to the menus, and when.
+    //
+    // The menus of macOS are watched because SwiftUI builds them again, and
+    // the app has to put them back into the wanted shape. When that goes
+    // wrong - and it did: the dropdown of the window menu jumped while it
+    // was open - the log is the only thing that says what was changed and
+    // when.
+    //
+    // The file is small on purpose: the last lines are the ones that matter.
+    static func log(_ line: String) {
+        let folder = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/ProxiRoute")
+        let file = folder.appendingPathComponent("menu.log")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stamp = String(format: "%.3f", Date().timeIntervalSince1970)
+        if let handle = try? FileHandle(forWritingTo: file) {
+            handle.seekToEndOfFile()
+            handle.write("\(stamp) \(line)\n".data(using: .utf8) ?? Data())
+            try? handle.close()
+        } else {
+            try? ("\(stamp) \(line)\n").write(to: file, atomically: true, encoding: .utf8)
         }
     }
 
@@ -482,6 +454,7 @@ enum StandardMenuLocalizer {
         if menuBarObservation == nil {
             menuBarObservation = NSApp.observe(\.mainMenu, options: [.new]) { _, _ in
                 NSLog("[ProxiRoute] the menu bar was built again")
+                log("the menu bar was built again")
                 applySoon()
             }
         }
@@ -499,7 +472,22 @@ enum StandardMenuLocalizer {
             object: nil,
             queue: .main
         ) { _ in
-            DispatchQueue.main.async { apply() }
+            // The window menu is not touched here.
+            //
+            // macOS puts its own items into the window menu again every time
+            // it builds the menu, and taking them out again is a change of
+            // the menu, which makes macOS build it again. That is a round
+            // that never ends, and the menu of a person who is looking at it
+            // changed its height in every round of it.
+            //
+            // So the window menu is not touched at all. The titles of the
+            // menus are renamed here, because a title that is wrong is worse
+            // than a title that is in the language of the system.
+            if tracking == 0 {
+                renameMenus()
+            } else {
+                pending = true
+            }
         }
 
         NotificationCenter.default.addObserver(
@@ -508,6 +496,46 @@ enum StandardMenuLocalizer {
             queue: .main
         ) { _ in
             DispatchQueue.main.async { apply() }
+        }
+
+        // When a menu is being drawn, it must not be changed.
+        //
+        // A menu that is changed while it is drawn is drawn again, and the
+        // dropdown of the window menu jumped while it was open. These two
+        // notifications say when a menu is being drawn.
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            tracking += 1
+            log("a menu is being drawn")
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            tracking = max(0, tracking - 1)
+            log("the menu is closed")
+            // Something wanted the menus to be changed while the menu was
+            // drawn. It is done now, with the menu closed.
+            if pending {
+                pending = false
+                scheduleApply(after: 0.05)
+            }
+        }
+
+        // A menu can be left open when the app loses the focus, and then the
+        // end of the tracking never comes. The flag is cleared here, so that
+        // the app does not go on believing that a menu is open.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            tracking = 0
+            pending = false
         }
 
         // The window that gets the keyboard brings the view menu with it:
@@ -540,6 +568,22 @@ enum StandardMenuLocalizer {
     private static var installed = false
     // whether a renaming is going on
     private static var applying = false
+    // how many menus of the app are being drawn at the moment
+    private static var tracking = 0
+
+    // Whether a menu of the app is being drawn at the moment.
+    //
+    // The app stops refreshing its lists while a menu is drawn. A refresh
+    // makes SwiftUI build the menu bar again, and the menu that is open is
+    // built again with fewer items: the menu was tall for a moment and then
+    // it was short, and the shadow of the tall one stayed on the screen for
+    // a moment. That is the ghost that was seen under the dropdown of the
+    // window menu, and the shiver that went with it.
+    static var isDrawing: Bool { return tracking > 0 }
+    // whether something wanted the menus to be changed while a menu was drawn
+    private static var pending = false
+    // whether a renaming is already on its way
+    private static var scheduled = false
     // the watch on the menu bar itself
     private static var menuBarObservation: NSKeyValueObservation?
     // the watch on the editing keys
@@ -548,8 +592,8 @@ enum StandardMenuLocalizer {
     private static var menuTimer: Timer?
     // the titles the menu bar had the last time it was looked at
     private static var lastTitles = ""
-    // the menus that were already written into the log
-    private static var lastEntries: [String: Bool] = [:]
+    // the last line about the items that do not belong to the window menu
+    private static var lastNoise = ""
 
     // Renames the items of one menu, and of the menus in it.
     private static func rename(_ menu: NSMenu, with titles: [Title]) {

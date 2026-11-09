@@ -742,6 +742,8 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
 
     private func pollServerTraffic() {
+        // the lists are not refreshed while a menu is drawn - see pollFlows
+        guard !StandardMenuLocalizer.isDrawing else { return }
         let snapshot = localProxyServer.trafficSnapshot()
         serverFlows = snapshot.flows
         serverTotals = snapshot.totals
@@ -1419,9 +1421,17 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // Only the proxies that a rule really uses are looked at: a proxy that is
     // in the list but in no rule carries no traffic, and waiting for it would
     // hold the start of the proxy for nothing.
+    //
+    // The list is in the order of how much each one of them carries. The
+    // start of the proxy waits for the first one - the one that the most
+    // rules use - and not for all of them: a proxy that carries three rules
+    // out of twenty-six must not hold up the whole proxy because it is not up
+    // yet. That is what makes the proxy come up right behind the upstream
+    // that carries the traffic, instead of behind the slowest one of them.
     func localUpstreamEndpoints() -> [UpstreamEndpoint] {
         let saved = UserDefaults.standard.array(forKey: "proxyRules") as? [[String: Any]] ?? []
-        var used = Set<String>()
+        // how many rules use every proxy
+        var counts: [String: Int] = [:]
         for rule in saved {
             guard (rule["enabled"] as? Bool) ?? true else { continue }
             let action = rule["action"] as? String ?? ""
@@ -1430,24 +1440,26 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             if action.hasPrefix(ProxyChain.actionPrefix) {
                 let chainId = String(action.dropFirst(ProxyChain.actionPrefix.count))
                 if let chain = chains.first(where: { $0.id == chainId }) {
-                    used.formUnion(chain.proxyIds)
+                    for id in chain.proxyIds { counts[id, default: 0] += 1 }
                 }
                 continue
             }
-            used.insert(action)
+            counts[action, default: 0] += 1
         }
+        let used = Set(counts.keys)
 
-        var endpoints: [UpstreamEndpoint] = []
+        var usage: [(endpoint: UpstreamEndpoint, rules: Int)] = []
         for config in proxyConfigs where used.contains(config.id) {
-            endpoints.append(UpstreamEndpoint(host: config.host, port: config.port))
+            usage.append((endpoint: UpstreamEndpoint(host: config.host, port: config.port),
+                          rules: counts[config.id] ?? 0))
         }
         // no rule at all: every proxy of the list is a candidate
         if used.isEmpty {
             for config in proxyConfigs {
-                endpoints.append(UpstreamEndpoint(host: config.host, port: config.port))
+                usage.append((endpoint: UpstreamEndpoint(host: config.host, port: config.port), rules: 0))
             }
         }
-        return UpstreamWait.localEndpoints(endpoints)
+        return UpstreamWait.orderedLocalEndpoints(usage)
     }
 
     // Writes down what the launch agent has to wait for.
@@ -1937,6 +1949,8 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
     
     private func pollLogs() {
+        // the lists are not refreshed while a menu is drawn - see pollFlows
+        guard !StandardMenuLocalizer.isDrawing else { return }
         guard let session = tunnelSession else { return }
 
         // The message channel is one way to read the log. It only works for a
@@ -2112,6 +2126,14 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
 
     // Builds the table: one row for every proxy the traffic went through.
     private func publishTraffic() {
+        // The window is not redrawn while a menu is drawn.
+        //
+        // A redraw makes SwiftUI build the menu bar again, and macOS puts its
+        // own items into the window menu again, and the menu of a person who
+        // is looking at it changes its height. That is the ghost under the
+        // dropdown of the window menu. The numbers go out with the next
+        // round, a moment later.
+        guard !StandardMenuLocalizer.isDrawing else { return }
         // The window is redrawn from what is published, and the log brings several
         // lines a second. Putting them out as they come would redraw the window
         // for every line of them.
@@ -2399,6 +2421,14 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // Asks the extension which flows are proxied right now. The list is replaced, not merged:
     // a flow that is gone from the extension is gone.
     private func pollFlows() {
+        // The lists are not refreshed while a menu is drawn.
+        //
+        // A refresh makes SwiftUI build the menu bar again, and the menu that
+        // is open is built again with fewer items - the menu was tall for a
+        // moment and then it was short. The shadow of the tall one stayed on
+        // the screen for a moment, and that is what was seen as a ghost under
+        // the dropdown of the window menu.
+        guard !StandardMenuLocalizer.isDrawing else { return }
         // The list comes over the message channel, and the system checks that
         // channel against the app's signature. A build that is not signed by a
         // developer gets no answer - and asking costs a signature check every
@@ -2499,6 +2529,11 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             guard let self = self else { return }
             self.connectionFlushScheduled = false
             guard !self.pendingConnections.isEmpty else { return }
+            // the lines wait while a menu is drawn - see publishTraffic
+            guard !StandardMenuLocalizer.isDrawing else {
+                self.scheduleConnectionFlush()
+                return
+            }
             let items = self.pendingConnections
             self.pendingConnections.removeAll(keepingCapacity: true)
             self.appendConnections(items)
@@ -2537,6 +2572,11 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             guard let self = self else { return }
             self.activityFlushScheduled = false
             guard !self.pendingActivity.isEmpty else { return }
+            // the lines wait while a menu is drawn - see publishTraffic
+            guard !StandardMenuLocalizer.isDrawing else {
+                self.scheduleActivityFlush()
+                return
+            }
             let items = self.pendingActivity
             self.pendingActivity.removeAll(keepingCapacity: true)
             self.appendActivity(items)

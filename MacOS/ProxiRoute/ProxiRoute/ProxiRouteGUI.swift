@@ -176,6 +176,9 @@ struct ProxiRouteGUIApp: App {
             // the one the proxy settings had before: the settings are what
             // a person opens the app for most of the time.
             CommandGroup(replacing: .appInfo) {
+                // The way to the window is in the window menu of the app, and
+                // in the item of the menu bar of the app itself. Here are the
+                // settings and the full screen.
                 Button(L10n.t("Settings...")) {
                     AppDelegate.shared?.openSettingsTab()
                 }
@@ -193,6 +196,50 @@ struct ProxiRouteGUIApp: App {
                     AppDelegate.shared?.toggleWindowFullScreen()
                 }
                 .keyboardShortcut("f", modifiers: [.control, .command])
+            }
+
+            // The window menu of the app.
+            //
+            // The window menu of macOS is drawn by macOS, and macOS puts its
+            // own items into it every time it builds the menu: the ones that
+            // move and resize the window, the ones of the tabs and of the
+            // window sets. They are grey in this app - the app has one
+            // window and no row of tabs - and they cannot be taken out: the
+            // menu that macOS paints is its own, and what is taken out of
+            // the menu of the menu bar is put back into it a moment later.
+            //
+            // So the menu of macOS is hidden, and this one takes its place.
+            // It is drawn by the app, so it holds the windows of the app and
+            // nothing else, and it never changes its shape under the eyes of
+            // a person who is looking at it.
+            CommandMenu(L10n.t("Window")) {
+                Button(L10n.t("Open ProxiRoute")) {
+                    AppDelegate.shared?.showMainWindow()
+                }
+
+                Divider()
+
+                Button(L10n.t("Proxy Settings")) {
+                    AppDelegate.shared?.openProxySettings()
+                }
+                Button(L10n.t("Proxy Rules")) {
+                    AppDelegate.shared?.openProxyRules()
+                }
+                Button(L10n.t("Gateway")) {
+                    AppDelegate.shared?.openGateway()
+                }
+                Button(L10n.t("Proxy Server")) {
+                    AppDelegate.shared?.openLocalProxyServer()
+                }
+
+                Divider()
+
+                Button(L10n.t("About ProxiRoute")) {
+                    openAboutWindow()
+                }
+                Button(L10n.t("Check for Updates")) {
+                    openUpdateCheckWindow()
+                }
             }
 
             CommandMenu(L10n.t("Profile")) {
@@ -472,6 +519,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // window can be hidden in the menu bar, and the menus are there even
         // then.
         StandardMenuLocalizer.install()
+        // The windows of the app are not put into a tab and not into a window
+        // set. macOS puts the items of the tabs and of the window sets into
+        // the window menu of every app, and they are grey in this one: the
+        // app has a single window and no row of tabs. See WindowAccessor.
+        NSWindow.allowsAutomaticWindowTabbing = false
         // The launch agent is the launcher of the app when the person wants
         // the app to come up behind the proxy on this machine. It is put in
         // place here, so that it is there for the next login even when the app
@@ -800,6 +852,19 @@ struct WindowAccessor: NSViewRepresentable {
             // then shrink.
             window.contentMinSize = NSSize(width: 800, height: 600)
             window.contentMaxSize = NSSize(width: 4000, height: 4000)
+            // The window is not a tab and it is not in a window set.
+            //
+            // macOS puts the items of the tabs and of the window sets into
+            // the window menu of every app, and they are grey in this one:
+            // the app has a single window and no row of tabs. A grey item is
+            // a promise that is never kept.
+            //
+            // macOS adds them when the menu is opened and takes them away a
+            // moment later, and the menu changes its height while it is
+            // open - the menu was tall for a moment and then it was short,
+            // and the shadow of the tall one stayed on the screen. That was
+            // the ghost under the dropdown of the window menu.
+            window.tabbingMode = .disallowed
             // launched at login, keep it hidden in the menu bar
             if AppDelegate.startHidden {
                 AppDelegate.startHidden = false

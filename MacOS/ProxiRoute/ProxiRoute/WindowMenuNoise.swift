@@ -1,62 +1,34 @@
 import Foundation
 
-// The titles of the items that are taken out of the window menu of macOS.
+// The titles of the items that must not be in the window menu.
 //
 // The window menu of macOS is drawn by the system, and the system puts a row
-// of items in it that change the size of the window: close, minimize, zoom,
-// fill, center, and the place and the size the window had. They are noise
-// for this app, and one of them is the reason a person saw the window of the
-// app change its size behind their back.
+// of items in it that change the size or the place of the window: fill,
+// center, move and resize, the tiles. It puts the items of the tabs and of
+// the window sets in it as well. They are grey in this app: the app has a
+// single window and no row of tabs, and a grey item is a promise that is
+// never kept.
 //
 // The list is a piece of code of its own, and not a part of the menu code,
 // so that the tests can look at it without the whole app around it: the menu
 // code needs the app delegate, and the app delegate needs the whole app.
 //
-// The way to the window is not in the list: without "Open ProxiRoute" and
-// "Enter Full Screen" the menu is a list of things that are not there.
+// The way to the window is not in the list, and neither are the items that
+// belong to the window menu: close, minimize, zoom and bring all to front
+// work in this app, and the items that open the windows of the app are the
+// ones a person is there for.
 //
 // The titles are written twice, in the words of macOS in english and in
 // chinese, because the system writes the menu in the language of the
 // machine.
 let windowMenuNoiseTitles: Set<String> = [
-    "Remove Window from Set",
-    "从组中移除窗口",
-    "Add Tab to Window Set",
-    "将标签页添加到窗口组",
-    "Move Tab to New Window",
-    "将标签页移到新窗口",
-    "Merge All Windows",
-    "合并所有窗口",
-    "Show Previous Tab",
-    "显示上一个标签页",
-    "Show Next Tab",
-    "显示下一个标签页",
-    "Select Previous Tab",
-    "选择上一个标签页",
-    "Select Next Tab",
-    "选择下一个标签页",
-    "New Tab",
-    "新建标签页",
-    "Close Tab",
-    "关闭标签页",
-    "Duplicate Tab",
-    "复制标签页",
-    "Move Window to New Set",
-    "将窗口移到新组",
-    "Rename Window Set",
-    "重命名窗口组",
-    "Close",
-    "关闭",
-    "Close All",
-    "全部关闭",
-    "Minimize",
-    "最小化",
-    "Minimize All",
-    "全部最小化",
-    "Zoom",
-    "缩放",
-    "Zoom All",
-    "全部缩放",
+    // The items that move and resize the window.
+    //
+    // They are taken out at the source: the command group that holds them is
+    // out of the commands of the app - see
+    // CommandGroup(replacing: .windowArrangement) in ProxiRouteGUI. The list
+    // is here so that the tests can see that the items of that group are
+    // the ones of this list.
     "Fill",
     "填充",
     "Center",
@@ -65,8 +37,6 @@ let windowMenuNoiseTitles: Set<String> = [
     "移动与调整大小",
     "Full Screen Tile",
     "全屏幕平铺",
-    "Exit Full Screen",
-    "退出全屏",
     "Move to Left of Screen",
     "移到屏幕左侧",
     "Move to Right of Screen",
@@ -83,95 +53,41 @@ let windowMenuNoiseTitles: Set<String> = [
     "窗口平铺到屏幕顶部",
     "Tile Window to Bottom of Screen",
     "窗口平铺到屏幕底部",
-    "Bring All to Front",
-    "Arrange in Front",
-    "前置全部窗口",
-    "Cycle Through Windows",
-    "在窗口间循环",
-    "Bring Window to Front",
-    "排在前面",
-    "Move Window to Front",
-    "移到前面",
-    "从组中移除窗口",
-    "从组中移除窗口",
-    "将标签页添加到窗口组",
-    "将标签页添加到窗口组",
-    "将标签页移到新窗口",
-    "将标签页移到新窗口",
-    "合并所有窗口",
-    "合并所有窗口",
-    "显示上一个标签页",
-    "显示上一个标签页",
-    "显示下一个标签页",
-    "显示下一个标签页",
-    "选择上一个标签页",
-    "选择上一个标签页",
-    "选择下一个标签页",
-    "选择下一个标签页",
-    "新建标签页",
-    "新建标签页",
-    "关闭标签页",
-    "关闭标签页",
-    "复制标签页",
-    "复制标签页",
-    "关闭",
-    "关闭",
-    "全部关闭",
-    "全部关闭",
-    "最小化",
-    "最小化",
-    "全部最小化",
-    "全部最小化",
-    "缩放",
-    "缩放",
-    "全部缩放",
-    "全部缩放",
-    "填充",
-    "填充",
-    "居中",
-    "居中",
-    "移动与调整大小",
-    "移动与调整大小",
-    "全屏幕平铺",
-    "全屏幕平铺",
+    "Exit Full Screen",
     "退出全屏",
-    "退出全屏",
-    "移到屏幕左侧",
-    "移到屏幕左侧",
-    "移到屏幕右侧",
-    "移到屏幕右侧",
-    "移到屏幕顶部",
-    "移到屏幕顶部",
-    "移到屏幕底部",
-    "移到屏幕底部",
-    "窗口平铺到屏幕左侧",
-    "窗口平铺到屏幕左侧",
-    "窗口平铺到屏幕右侧",
-    "窗口平铺到屏幕右侧",
-    "窗口平铺到屏幕顶部",
-    "窗口平铺到屏幕顶部",
-    "窗口平铺到屏幕底部",
-    "窗口平铺到屏幕底部",
-    "前置全部窗口",
-    "前置全部窗口",
-    "在窗口间循环",
-    "在窗口间循环",
-    "排在前面",
-    "排在前面",
-    "移到前面",
-    "移到前面",
-    // The item that goes full screen.
-    //
-    // macOS draws a ghost of the window next to it, and the ghost grows while
-    // the mouse stays on the item. The ghost was drawn every time the window
-    // menu was opened, because the cursor lands on the second item of the menu
-    // by itself.
-    //
-    // The full screen is in the menu of the app instead - see
-    // StandardMenuLocalizer.putWindowItems - and these titles are here so that
-    // the item of macOS itself is taken out of the window menu as well, and
-    // not only the one this app puts there.
     "Enter Full Screen",
     "进入全屏",
     "进入全屏幕",
+
+    // The items of the tabs and of the window sets.
+    //
+    // They are not there either, because the window of the app is not a tab
+    // and is not in a window set - see WindowAccessor and
+    // NSWindow.allowsAutomaticWindowTabbing.
+    "Show Previous Tab",
+    "显示上一个标签页",
+    "Show Next Tab",
+    "显示下一个标签页",
+    "Select Previous Tab",
+    "选择上一个标签页",
+    "Select Next Tab",
+    "选择下一个标签页",
+    "New Tab",
+    "新建标签页",
+    "Close Tab",
+    "关闭标签页",
+    "Duplicate Tab",
+    "复制标签页",
+    "Move Tab to New Window",
+    "将标签页移到新窗口",
+    "Add Tab to Window Set",
+    "将标签页添加到窗口组",
+    "Merge All Windows",
+    "合并所有窗口",
+    "Move Window to New Set",
+    "将窗口移到新组",
+    "Rename Window Set",
+    "重命名窗口组",
+    "Remove Window from Set",
+    "从组中移除窗口",
 ]
