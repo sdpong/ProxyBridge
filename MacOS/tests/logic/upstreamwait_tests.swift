@@ -166,6 +166,15 @@ check(agentFile.contains("func install() throws"), "the agent can be put in plac
 check(agentFile.contains("func uninstall()"), "the agent can be taken out")
 check(agentFile.contains("bootstrap"), "the agent is told to launchd")
 check(agentFile.contains("func writeStartFlag"), "the file that says whether to start at the login is written")
+
+// The login item follows the switch right away.
+//
+// The agent is the launcher of the app while it is in place, so the app must
+// not be a login item as well. And when the agent is taken out, the app has
+// to become a login item again - otherwise a person who quits it and
+// restarts the machine finds no proxy, and the app is only started by hand.
+check(agentFile.contains("LoginItem.applyToSystem(LoginItem.isEnabled)"),
+      "the login item follows the switch right away")
 check(agentFile.contains("func writeWaitFile"), "the file that says what to wait for is written")
 
 print("upstream wait tests: ALL PASS")

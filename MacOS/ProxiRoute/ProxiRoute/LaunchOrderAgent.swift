@@ -44,13 +44,26 @@ enum LaunchOrderAgent {
         if enabled {
             do {
                 try install()
+                // The agent is the launcher now, so the app must not be a login
+                // item as well. It is taken out right away and not at the next
+                // start of the app: the app is started by hand most of the
+                // time, and the next login would come before that.
+                LoginItem.applyToSystem(LoginItem.isEnabled)
                 return L10n.t("ProxiRoute will be started by macOS when the upstream proxy is ready.")
             } catch {
                 UserDefaults.standard.set(false, forKey: enabledKey)
+                // The agent could not be put in place, so the app has to be a
+                // login item again, or the proxy would not come up at all.
+                LoginItem.applyToSystem(LoginItem.isEnabled)
                 return L10n.f("The launch agent could not be installed: %@", error.localizedDescription)
             }
         }
         uninstall()
+        // The agent is gone, so the app goes back to being a login item - if
+        // the person wants it to be one. Without this the app would stay out
+        // of the login items until it is started by hand once, and a person
+        // who quits it and restarts the machine would find no proxy.
+        LoginItem.applyToSystem(LoginItem.isEnabled)
         return L10n.t("ProxiRoute will be started by macOS at the same time as the other login items again.")
     }
 
