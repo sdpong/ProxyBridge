@@ -2155,3 +2155,129 @@ Sealed Resources=none          ← 应该是有的
   换成正常的提示「macOS has to approve ProxiRoute once…」✓
 - 本地 `build.sh` 跑通，pkg 载荷里的 app 签名校验通过 ✓
 - **CI 已发布的 app.zip（stage29）解包后签名校验通过** → 之前发的产物没坏 ✓
+
+## stage30：窗口是最费电的地方 —— 内存和 CPU 的实测与修法
+
+### 一、实测到的现象
+
+ProxiRoute 的 app 进程跑久了会涨到 **800MB 内存**、**十几 % 的 CPU**，而机器并没有做什么特别的事。
+
+```
+pid=3888 rss=617MB cpu=10.6%
+```
+
+`vmmap` 看内存的构成：
+
+```
+Malloc Small                             683.4M    647.6M    644.6M      401
+DefaultMallocZone_0x101974000            712.4M    649.3M    645.6M   480971
+```
+
+**48 万个小对象，645MB** —— 不是几个大块，是几十万个小东西。
+
+`sample` 看 CPU 在哪儿：
+
+```
++ 3605 main
+  + 3605 NSApplicationMain
+    + 3605 [NSApplication run]
+      + 3600 _DPSNextEvent
+        + 2626 __CFRunLoopRun
+          + 283 CA::Transaction::flush          ← SwiftUI 在重画
+            + 202 CA::Transaction::commit
+              + 201 NSDisplayCycleFlush
+                + 94 __NSWindowGetDisplayCycleObserverForLayout_block_invoke
+                  + 93 -[NSWindow layoutIfNeeded]
+                    + 56 @objc NSHostingView.layout()
+                      + 43 ViewGraphRootValueUpdater.render()
+                        + 28 ViewGraph.updateOutputs(at:)
+                          + 27 PlatformItemListViewGraph.needsUpdate(graph:)
+                            + 11 ResolvedTextFilter.updateValue()   ← 列表的文本又解析了一遍
+```
+
+**只有主线程在跑**，别的线程都空着。CPU 全花在 SwiftUI 重画上，而重画的原因是
+**列表里的文本被反复重新解析**。
+
+### 二、根因（实测，四个地方）
+
+**根因 0：扩展每秒写几百行日志。**
+
+```
+$ log show --last 60s --predicate 'subsystem == "com.sdpong.proxiroute.extension"'
+extension log lines in last 60s: 826
+```
+
+每条连接一行，每条流一行。826 行/秒。
+
+**根因 1：每一行日志都让窗口重画一次。**
+
+`append(_ lines:)` 把一行一行地塞进 `activityLogs` / `connections`，
+两个都是 `@Published` —— 每塞一行，SwiftUI 就重画一次整个窗口。
+826 行/秒 = 826 次重画/秒。
+
+**根因 2：日志视图在 body 里重建整个带格式的文本。**
+
+```swift
+private var logsText: NSAttributedString {   // ← body 里每次都跑
+    let out = NSMutableAttributedString()
+    for log in logs {
+        out.append(LogText.seg("[\(log.timestamp)] ", .secondaryLabelColor))   // 4 段
+        out.append(LogText.seg("[\(log.level)] ", ...))
+        out.append(LogText.seg(log.message, .labelColor))
+        out.append(LogText.seg("\n", .labelColor))
+    }
+    return out
+}
+```
+
+日志最多 500 行 × 4 段 = **一次 2000 个小对象**，而 body 每来一行就跑一次。
+而且重建的是**全部**，不是新增的那几行。
+
+**根因 3：每个单元格都新建一个重量级的格式化器。**
+
+```swift
+static func bytes(_ count: Int64) -> String {
+    let f = ByteCountFormatter()    // ← 每格一个
+    f.countStyle = .file
+    return f.string(fromByteCount: count)
+}
+```
+
+`ByteCountFormatter` 内部要建数字格式化器和单位表，不轻。
+连接表每行 3 个数字格，流量表每行 3 个 —— 表每秒重画一次，就是每秒几百个。
+
+**根因 4：轮询拿到的是新数组，即使内容一模一样。**
+
+`liveFlows = machineFlows` 每次都发布新数组。SwiftUI 分不出「新数组」和
+「装着同样内容的旧数组」—— 它看到新值就重建表格，每格重新解析文本。
+
+### 三、修法
+
+| 地方 | 改法 |
+|---|---|
+| 数字格式化 | 全局一个 `ByteCountFormatter`（表格都在主线程画，够用） |
+| 日志文本 | 从 body 里挪进 `LogTextView`，只往末尾追加新行；被裁剪时整体重写 |
+| 日志行/连接行 | 先进 `pendingActivity` / `pendingConnections`，每 0.25 秒一起上屏 |
+| 流量表/连接表 | 加 `sameAs` 比较，内容没变就不发布数组 |
+
+### 四、实测（同一台机器，同一个扩展状态）
+
+| | 未优化 | 优化后 |
+|---|---|---|
+| 启动 20 秒后 | 138MB / CPU 4.1% | 145MB / CPU 0.0% |
+| 跑 5 分钟后 | **163MB**（涨 25MB） | **145.5MB**（不涨） |
+| 5 分钟内 CPU | 3.5% ~ 4.8% | **0.0%** |
+
+原来约 **5MB/分钟**地涨，一小时后就是 800MB。优化后这条曲线是平的。
+
+### 五、为什么「内容没变就不发布」是对的
+
+连接的「空闲时间」每秒都在长，所以比较的时候按秒取整
+（`Int(age) == Int(other.age)`）：一秒内没动的连接，画出来的是同一行，
+表格就不用重建。
+
+### 六、测试
+
+新增 `MacOS/tests/logic/windowdrawing_tests.swift`（22 条断言），盯住这四件事不被以后改没：
+数字格式化器只有一个、日志文本不在 body 里造、日志行不是一行一行上屏的、
+流量表走的是比较而不是直接发布。

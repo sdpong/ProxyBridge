@@ -468,13 +468,28 @@ struct ProxyTrafficView: View {
 
 // The numbers in the tables, the way the system writes them.
 enum TrafficFormat {
+    // One formatter, used by every cell of every table.
+    //
+    // A ByteCountFormatter is a heavy object: it builds a number formatter and a
+    // unit table inside itself. Making one per cell is not noticed in a table
+    // with a few rows, but the tables are redrawn every second and the
+    // connections table has a row per open connection with three number cells
+    // in it. That was hundreds of formatters a second, and they are the bulk
+    // of what the window throws away.
+    //
+    // The formatter is not thread safe, and the tables are drawn on the main
+    // thread, so one is enough.
+    private static let byteFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
+
     static func bytes(_ count: Int64) -> String {
         // The formatter writes "Zero KB" for nothing, which reads like a fault.
         // A connection that has not moved a byte has moved no bytes.
         if count <= 0 { return "0 B" }
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        return f.string(fromByteCount: count)
+        return byteFormatter.string(fromByteCount: count)
     }
 
     // m:ss, or h:mm:ss once it runs past an hour
@@ -599,7 +614,7 @@ struct ActivityLogsView: View {    let logs: [ProxiRouteViewModel.ActivityLog]
         VStack(spacing: 0) {
             searchBar
             Divider()
-            LogTextView(text: logsText)
+            LogTextView(logs: logs)
         }
     }
 
@@ -615,17 +630,6 @@ struct ActivityLogsView: View {    let logs: [ProxiRouteViewModel.ActivityLog]
         .padding()
         .background(Color(NSColor.controlBackgroundColor))
     }
-
-    private var logsText: NSAttributedString {
-        let out = NSMutableAttributedString()
-        for log in logs {
-            out.append(LogText.seg("[\(log.timestamp)] ", .secondaryLabelColor))
-            out.append(LogText.seg("[\(log.level)] ", log.level == "ERROR" ? .systemRed : .systemBlue))
-            out.append(LogText.seg(log.message, .labelColor))
-            out.append(LogText.seg("\n", .labelColor))
-        }
-        return out
-    }
 }
 
 // builds the colored, monospaced segments shared by both log views
@@ -635,12 +639,36 @@ enum LogText {
     static func seg(_ string: String, _ color: NSColor) -> NSAttributedString {
         NSAttributedString(string: string, attributes: [.foregroundColor: color, .font: font])
     }
+
+    // The text of a list of lines of the log.
+    static func make(_ logs: [ProxiRouteViewModel.ActivityLog]) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        for log in logs {
+            out.append(seg("[\(log.timestamp)] ", .secondaryLabelColor))
+            out.append(seg("[\(log.level)] ", log.level == "ERROR" ? .systemRed : .systemBlue))
+            out.append(seg(log.message, .labelColor))
+            out.append(seg("\n", .labelColor))
+        }
+        return out
+    }
 }
 
 // read-only NSTextView so the whole log behaves like a text area, multi-row
 // drag select, select all and copy all work like any text box
+//
+// The log is given as the lines it holds, not as a text that was made out of
+// them. The text is built here, where the text view is, and only the part
+// that is new is added to it.
+//
+// It was built in the body of the view before, and that cost a lot: the body
+// is run again every time the log grows, and each run built the whole text
+// again - a colored segment for the time, one for the level, one for the
+// message and one for the line break of every line in the log. With five
+// hundred lines in the log that is two thousand little objects, thrown away
+// and made again, every time a line arrived.
 struct LogTextView: NSViewRepresentable {
-    let text: NSAttributedString
+    // The lines the log holds.
+    let logs: [ProxiRouteViewModel.ActivityLog]
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -654,39 +682,75 @@ struct LogTextView: NSViewRepresentable {
             textView.textContainerInset = NSSize(width: 8, height: 8)
             textView.font = LogText.font
         }
+        context.coordinator.install(text: scrollView, logs: logs)
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView,
-              let storage = textView.textStorage else { return }
-
-        // nothing changed, leave the current selection and scroll position alone
-        if storage.string == text.string { return }
-
-        // keep the user's selection if it still fits (holds while not trimming),
-        // otherwise stick to the bottom so new lines stay in view
-        let previousSelection = textView.selectedRanges
-        let wasAtBottom = isScrolledToBottom(scrollView)
-
-        storage.setAttributedString(text)
-
-        let length = (text.string as NSString).length
-        let validSelection = previousSelection.filter { value in
-            let r = value.rangeValue
-            return r.location + r.length <= length
-        }
-
-        if let sel = validSelection.first, sel.rangeValue.length > 0 {
-            textView.selectedRanges = validSelection
-        } else if wasAtBottom {
-            textView.scrollToEndOfDocument(nil)
-        }
+        context.coordinator.install(text: scrollView, logs: logs)
     }
 
-    private func isScrolledToBottom(_ scrollView: NSScrollView) -> Bool {
-        let docHeight = scrollView.documentView?.bounds.height ?? 0
-        let visible = scrollView.contentView.bounds
-        return visible.maxY >= docHeight - 24
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    // Keeps the text of the text view in step with the lines of the log.
+    //
+    // The lines are compared with the ones that are already in the view. When
+    // the log only grew, the new lines are added at the end and the text that
+    // is already there is left alone - which keeps the selection and the
+    // scroll position of the person who is reading it.
+    final class Coordinator {
+        // the lines the text view holds
+        private var shown: [ProxiRouteViewModel.ActivityLog] = []
+        // whether the text view is built yet
+        private var built = false
+
+        func install(text scrollView: NSScrollView, logs: [ProxiRouteViewModel.ActivityLog]) {
+            guard let textView = scrollView.documentView as? NSTextView,
+                  let storage = textView.textStorage else { return }
+
+            // the first time: the whole log is written
+            if !built {
+                built = true
+                storage.setAttributedString(LogText.make(logs))
+                shown = logs
+                return
+            }
+
+            // nothing changed, leave the current selection and scroll position alone
+            if shown.count == logs.count { return }
+
+            // the log only grew: the new lines are added at the end
+            if shown.count < logs.count, logs.prefix(shown.count).map(\.id) == shown.map(\.id) {
+                let previousSelection = textView.selectedRanges
+                let wasAtBottom = isScrolledToBottom(scrollView)
+
+                storage.append(LogText.make(Array(logs[shown.count...])))
+
+                let length = (storage.string as NSString).length
+                let validSelection = previousSelection.filter { value in
+                    let r = value.rangeValue
+                    return r.location + r.length <= length
+                }
+                if let sel = validSelection.first, sel.rangeValue.length > 0 {
+                    textView.selectedRanges = validSelection
+                } else if wasAtBottom {
+                    textView.scrollToEndOfDocument(nil)
+                }
+                shown = logs
+                return
+            }
+
+            // the log was trimmed or rewritten: it is written again
+            storage.setAttributedString(LogText.make(logs))
+            shown = logs
+        }
+
+        private func isScrolledToBottom(_ scrollView: NSScrollView) -> Bool {
+            let docHeight = scrollView.documentView?.bounds.height ?? 0
+            let visible = scrollView.contentView.bounds
+            return visible.maxY >= docHeight - 24
+        }
     }
 }

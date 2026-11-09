@@ -237,6 +237,26 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         static func clientTableId(_ id: UInt64) -> UInt64 {
             return id | 0x8000_0000_0000_0000
         }
+
+        // Whether this flow and another one would draw the same row.
+        //
+        // The age and the idle time of a flow grow every second, so they are
+        // compared with a resolution of a second: a connection that has not
+        // moved for a second draws the same row as the one before, and the
+        // table does not have to be built again for it.
+        func sameAs(_ other: LiveFlow) -> Bool {
+            return id == other.id
+                && origin == other.origin
+                && protocolName == other.protocolName
+                && process == other.process
+                && destination == other.destination
+                && port == other.port
+                && proxy == other.proxy
+                && bytesUp == other.bytesUp
+                && bytesDown == other.bytesDown
+                && Int(age) == Int(other.age)
+                && Int(idle) == Int(other.idle)
+        }
     }
 
     // What one proxy carried: how many connections went through it and how many bytes it carried.
@@ -253,6 +273,16 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // Whether the bytes are known at all. The bytes of a direct connection are not: macOS
         // hands those flows straight back to the system, so the extension never sees them.
         let bytesKnown: Bool
+
+        // Whether this row and another one would draw the same line.
+        func sameAs(_ other: ProxyTraffic) -> Bool {
+            return id == other.id
+                && proxy == other.proxy
+                && connections == other.connections
+                && bytesUp == other.bytesUp
+                && bytesDown == other.bytesDown
+                && bytesKnown == other.bytesKnown
+        }
     }
 
     // A flow the extension reported in the unified log.
@@ -1806,8 +1836,17 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 if let a = makeActivityLog(line) { newActivity.append(a) }
             }
         }
-        appendConnections(newConnections)
-        appendActivity(newActivity)
+        // The lines of the log are gathered before they go on the screen: a
+        // busy machine writes hundreds of them a second, and every one of them
+        // used to rebuild the window.
+        if !newConnections.isEmpty {
+            pendingConnections.append(contentsOf: newConnections)
+            scheduleConnectionFlush()
+        }
+        if !newActivity.isEmpty {
+            pendingActivity.append(contentsOf: newActivity)
+            scheduleActivityFlush()
+        }
         if trafficChanged { publishTraffic() }
     }
 
@@ -1959,8 +1998,28 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             if leftBytes != rightBytes { return leftBytes > rightBytes }
             return lhs.proxy < rhs.proxy
         }
-        proxyTraffic = rows
+        setProxyTraffic(rows)
         publishLiveFlows()
+    }
+
+    // Publishes the traffic rows, but only when they really changed.
+    //
+    // The traffic is counted every second, and a second in which nothing moved
+    // hands over the same numbers as the second before. SwiftUI cannot tell
+    // that a new array holds the same values as the old one, so it rebuilds the
+    // table of the traffic - and every cell of it resolves its text again.
+    // The rows are compared here instead, and the table is only touched when a
+    // number really moved.
+    private func setProxyTraffic(_ rows: [ProxyTraffic]) {
+        if proxyTraffic.count == rows.count {
+            var same = true
+            for (old, new) in zip(proxyTraffic, rows) where !old.sameAs(new) {
+                same = false
+                break
+            }
+            if same { return }
+        }
+        proxyTraffic = rows
     }
 
     // The rows of the traffic when the proxy server runs: the traffic of this
@@ -2065,10 +2124,35 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                     idle: now.timeIntervalSince(flow.lastActivity)
                 )
             }
-            liveFlows = (machineFlows + clients).sorted { $0.id > $1.id }
+            setLiveFlows((machineFlows + clients).sorted { $0.id > $1.id })
             return
         }
-        liveFlows = machineFlows
+        setLiveFlows(machineFlows)
+    }
+
+    // Publishes the connections, but only when they really changed.
+    //
+    // The table of the connections is polled every second, and a poll that
+    // finds nothing new still hands over a new array. SwiftUI cannot tell that
+    // array from the old one: it sees a new value and rebuilds the table, and
+    // every cell of it resolves its text again. With a few connections open
+    // that is a redraw a second that nobody asked for.
+    //
+    // So the new list is compared with the one that is on the screen, and the
+    // table is only touched when something in it really moved. The idle time
+    // of a connection grows every second, so it is compared with a resolution
+    // of a second: a connection that has not been touched for a second is
+    // counted as the same as the one before.
+    private func setLiveFlows(_ flows: [LiveFlow]) {
+        if liveFlows.count == flows.count {
+            var same = true
+            for (old, new) in zip(liveFlows, flows) where !old.sameAs(new) {
+                same = false
+                break
+            }
+            if same { return }
+        }
+        liveFlows = flows
     }
 
     // The flows that the unified log told about. It is the way out when the
@@ -2194,11 +2278,66 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         }
     }
 
+    // The connections that have not been put on the screen yet.
+    //
+    // The extension writes a line for every connection it decides, so a busy
+    // machine produces hundreds of them a second. They are gathered here and
+    // go on the screen together, a few times a second - the table of the
+    // connections is drawn from them, and drawing it for every single line
+    // was the work that the window spent most of its time on.
+    private var pendingConnections: [ConnectionLog] = []
+    private var connectionFlushScheduled = false
+
+    private static let connectionFlushInterval: TimeInterval = 0.25
+
+    private func scheduleConnectionFlush() {
+        guard !connectionFlushScheduled else { return }
+        connectionFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.connectionFlushInterval) { [weak self] in
+            guard let self = self else { return }
+            self.connectionFlushScheduled = false
+            guard !self.pendingConnections.isEmpty else { return }
+            let items = self.pendingConnections
+            self.pendingConnections.removeAll(keepingCapacity: true)
+            self.appendConnections(items)
+        }
+    }
+
     private func appendActivity(_ items: [ActivityLog]) {
         guard !items.isEmpty else { return }
         activityLogs.append(contentsOf: items)
         if activityLogs.count > maxLogEntries {
             activityLogs.removeFirst(activityLogs.count - trimToEntries)
+        }
+    }
+
+    // The lines of the log that have not been put on the screen yet.
+    //
+    // The extension writes a line for every connection it decides and a line
+    // for every flow, and a busy machine produces hundreds of them a second.
+    // Putting every one of them on the screen as it comes meant that the
+    // window was rebuilt hundreds of times a second, and that the log of the
+    // window was rebuilt with it.
+    //
+    // The lines are gathered here instead, and they go on the screen together,
+    // a few times a second. The person reading the log sees the same lines in
+    // the same order - only the drawing of them is gathered.
+    private var pendingActivity: [ActivityLog] = []
+    private var activityFlushScheduled = false
+
+    // How often the lines of the log go on the screen.
+    private static let activityFlushInterval: TimeInterval = 0.25
+
+    private func scheduleActivityFlush() {
+        guard !activityFlushScheduled else { return }
+        activityFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.activityFlushInterval) { [weak self] in
+            guard let self = self else { return }
+            self.activityFlushScheduled = false
+            guard !self.pendingActivity.isEmpty else { return }
+            let items = self.pendingActivity
+            self.pendingActivity.removeAll(keepingCapacity: true)
+            self.appendActivity(items)
         }
     }
 
@@ -2384,6 +2523,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     
     func clearActivityLogs() {
         activityLogs.removeAll()
+        // the lines that are waiting to be put on the screen go with them: they
+        // were written before the log was cleared, and putting them on the
+        // screen now would bring them back
+        pendingActivity.removeAll()
     }
     
     private func addLog(_ level: String, _ message: String) {
