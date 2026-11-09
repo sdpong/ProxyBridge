@@ -175,6 +175,9 @@ check(agentFile.contains("func writeStartFlag"), "the file that says whether to 
 // restarts the machine finds no proxy, and the app is only started by hand.
 check(agentFile.contains("LoginItem.applyToSystem(LoginItem.isEnabled)"),
       "the login item follows the switch right away")
+check(agentFile.contains("func sync()"), "the machine is made to match the switch")
+check(read("ProxiRouteGUI.swift").contains("LaunchOrderAgent.sync()"),
+      "the machine is made to match the switch at every start")
 check(agentFile.contains("func writeWaitFile"), "the file that says what to wait for is written")
 
 print("upstream wait tests: ALL PASS")

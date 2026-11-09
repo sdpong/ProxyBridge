@@ -477,9 +477,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // place here, so that it is there for the next login even when the app
         // was started by hand. When it cannot be put in place, the switch
         // turns itself off and the app stays a login item.
-        if LaunchOrderAgent.isEnabled && !LaunchOrderAgent.isInstalled {
-            _ = LaunchOrderAgent.setEnabled(true)
-        }
+        //
+        // And when the switch is off, the agent goes away: the switch is the
+        // truth, and a machine that keeps an agent nobody asked for is a
+        // machine that starts an app at the login that should stay closed.
+        LaunchOrderAgent.sync()
         // keep the real login item in sync with the active profile's setting
         LaunchOrderAgent.writeStartFlag(LoginItem.isEnabled)
         LoginItem.applyToSystem(LoginItem.isEnabled)

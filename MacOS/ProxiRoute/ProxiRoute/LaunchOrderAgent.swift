@@ -67,6 +67,33 @@ enum LaunchOrderAgent {
         return L10n.t("ProxiRoute will be started by macOS at the same time as the other login items again.")
     }
 
+    /// Makes the machine match the switch.
+    ///
+    /// The switch is the truth: the agent is in place when it is on, and gone
+    /// when it is off. And the app is a login item when there is no agent to
+    /// start it - the two are never both there, or the app would be started
+    /// twice at the login.
+    ///
+    /// This is done at every start of the app, so that a switch that was
+    /// turned somewhere else - by hand, or by an older version of the app -
+    /// does not leave a machine in a state that nobody asked for.
+    static func sync() {
+        if isEnabled {
+            if !isInstalled {
+                // the switch says yes and the agent is not there: put it in
+                // place. When that does not work, the switch turns itself off
+                // and the app goes back to being a login item.
+                _ = setEnabled(true)
+            }
+            return
+        }
+        // the switch says no: the agent goes away
+        if isInstalled {
+            uninstall()
+        }
+        LoginItem.applyToSystem(LoginItem.isEnabled)
+    }
+
     /// Whether the agent is in place.
     static var isInstalled: Bool {
         let manager = FileManager.default
