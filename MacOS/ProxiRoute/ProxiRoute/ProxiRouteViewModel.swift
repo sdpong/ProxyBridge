@@ -24,6 +24,9 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     private var approvalWatchAttempts = 0
     private let approvalWatchInterval = 20.0
     private let approvalWatchLimit = 45
+    // the timer that waits for the network extension APIs of macOS to answer
+    private var networkConfigurationWatch: Timer?
+    private let networkConfigurationTimeout = 12.0
     
     var tunnelSession: NETunnelProviderSession?
     private var logTimer: Timer?
@@ -74,7 +77,14 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // for good; an event can not.
     private var extensionProblemIsStanding = false
     // where a pushed-away standing notice is remembered
+    //
+    // Every standing notice has a key of its own: they are different
+    // conditions, and pushing one of them away is not a reason to hide the
+    // others.
     private static let standingNoticeDismissedKey = "standingExtensionNoticeDismissed"
+    private static let unsignedBuildNoticeDismissedKey = "standingExtensionNoticeDismissed.unsignedBuild"
+    // the key of the standing notice that is on the screen, if there is one
+    private var standingNoticeKey: String?
     // what the notice in the window offers. Not every problem has a command:
     // the one that says the extension does not answer at all is fixed by a
     // signature, not by a command in a terminal.
@@ -1153,6 +1163,22 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
     
     private func installAndStartProxy() {
+        // A build without a team id cannot run a network extension: macOS does
+        // not validate the restricted entitlements of an ad-hoc signature, so
+        // the extension registers and is then refused, and the network
+        // extension APIs of the app do not answer at all.
+        //
+        // Asking the system to install it anyway has a price. The system keeps
+        // a record of every install it is asked for, and it cannot tell that
+        // the copy it already has is the copy it is being asked for, so every
+        // start of the app leaves another record behind - all of them the same
+        // extension, and all of them waiting to be taken out at the next
+        // restart. The question is asked only when the answer can be yes.
+        let team = ExtensionDiagnosis.teamIdentifier()
+        guard ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: team) else {
+            reportUnsignedBuild()
+            return
+        }
         // Stop our own tunnel first so macOS replaces the running extension binary with
         // the newly installed one instead of reusing the old cached process. Only the
         // configurations this app wrote are touched: another app's tunnel (the upstream
@@ -1195,8 +1221,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     // ProxiRoute and to other proxy apps; taking them over would switch the user's
     // own proxy off.
     private func ensureNetworkConfiguration(completion: ((NETransparentProxyManager) -> Void)? = nil) {
+        startNetworkConfigurationWatch()
         NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
+            self.stopNetworkConfigurationWatch()
 
             if let error = error {
                 self.addLog("ERROR", L10n.f("Failed to load managers: %@", error.localizedDescription))
@@ -1219,6 +1247,48 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             }
             self.writeNetworkConfiguration(managers: ours, completion: completion)
         }
+    }
+
+    // The network extension APIs of macOS answer an app that is signed by a
+    // developer. An ad-hoc build gets no answer at all: the call is made, the
+    // callback is never called, and the window sits there looking ready while
+    // nothing is proxied and nothing says why.
+    //
+    // So the answer is waited for. When it does not come, the reason is said
+    // out loud instead of leaving the person with a window that looks fine.
+    private func startNetworkConfigurationWatch() {
+        stopNetworkConfigurationWatch()
+        networkConfigurationWatch = Timer.scheduledTimer(
+            withTimeInterval: networkConfigurationTimeout,
+            repeats: false
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            self.networkConfigurationWatch = nil
+            self.reportSilentNetworkExtension()
+        }
+    }
+
+    private func stopNetworkConfigurationWatch() {
+        networkConfigurationWatch?.invalidate()
+        networkConfigurationWatch = nil
+    }
+
+    // macOS did not answer at all.
+    //
+    // The usual reason is the signature: the network extension APIs of macOS
+    // only answer an app that has a team id, and an ad-hoc build has none.
+    // The app says which one it is, because the two need different things.
+    private func reportSilentNetworkExtension() {
+        let team = ExtensionDiagnosis.teamIdentifier()
+        if !ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier: team) {
+            reportUnsignedBuild()
+            return
+        }
+        extensionProblem = L10n.t("macOS did not answer when the tunnel configuration was read. Nothing is proxied until it does. The tunnel is usually started again by opening the app once more.")
+        extensionProblemDetails = L10n.t("This is not the ordinary case: the app is signed by a developer, so macOS answers the network extension APIs of such an app. If it keeps happening, the system is busy, or another build of ProxiRoute is bound to the tunnel - the activity log says which one answered.")
+        extensionProblemAction = .none
+        extensionProblemIsStanding = false
+        addLog("ERROR", L10n.t("macOS did not answer the request for the tunnel configuration within 12 seconds. The tunnel was not started, and no traffic is proxied."))
     }
 
     private func writeNetworkConfiguration(managers: [NETransparentProxyManager] = [], completion: ((NETransparentProxyManager) -> Void)? = nil) {
@@ -1688,6 +1758,33 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         addLog("ERROR", L10n.f("The extension that answered is not this build%@. The rules and the proxies never reach it, so no connection is proxied. Take the older extension out and approve this one.", detail))
     }
 
+    // This build cannot run a network extension at all.
+    //
+    // The build is signed ad hoc, so it has no team id, and macOS does not
+    // answer the network extension APIs of such an app and does not validate
+    // the restricted entitlements it needs to run one. Nothing is proxied, and
+    // nothing would say so: the window would look ready and the list of the
+    // connections would stay empty.
+    //
+    // The condition is standing - it is true from the first launch of the
+    // build until the build is signed - so the notice says what it is in one
+    // line, keeps the long form one click away, and is remembered as pushed
+    // away. Otherwise it is back on every launch and the person learns to
+    // read past it.
+    private func reportUnsignedBuild() {
+        extensionProblemDetails = ExtensionDiagnosis.unsignedBuildExplanation().joined(separator: " ")
+        extensionProblemAction = .none
+        extensionProblemIsStanding = true
+        standingNoticeKey = Self.unsignedBuildNoticeDismissedKey
+        if UserDefaults.standard.bool(forKey: Self.unsignedBuildNoticeDismissedKey) {
+            extensionProblem = nil
+            extensionProblemDetails = nil
+        } else {
+            extensionProblem = ExtensionDiagnosis.unsignedBuildSummary()
+        }
+        addLog("ERROR", L10n.t("This build is signed ad hoc, so it has no team id. macOS does not answer the network extension APIs of such an app and does not validate the restricted entitlements it needs, so no tunnel is written and no traffic is proxied. The proxy server of the app still works."))
+    }
+
     // The extension did not answer at all. The traffic is proxied, but the window
     // cannot show it, and the reason is the signature - not an extension that has
     // to be deleted. There is no command for that, so the notice has no button.
@@ -1710,6 +1807,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             // read past it.
             extensionProblemAction = .none
             extensionProblemIsStanding = true
+            standingNoticeKey = Self.standingNoticeDismissedKey
             if UserDefaults.standard.bool(forKey: Self.standingNoticeDismissedKey) {
                 extensionProblem = nil
                 extensionProblemDetails = nil
@@ -2507,13 +2605,16 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // A standing condition is remembered as pushed away: it is true from
         // the first launch until the app is signed, and a notice that comes
         // back on every launch is a notice the person learns to read past.
-        if extensionProblemIsStanding {
-            UserDefaults.standard.set(true, forKey: Self.standingNoticeDismissedKey)
+        // Every standing notice is remembered under a key of its own, so
+        // pushing one of them away does not hide the others.
+        if extensionProblemIsStanding, let key = standingNoticeKey {
+            UserDefaults.standard.set(true, forKey: key)
         }
         extensionProblem = nil
         extensionProblemDetails = nil
         extensionProblemAction = .none
         extensionProblemIsStanding = false
+        standingNoticeKey = nil
         needsExtensionApproval = false
     }
     

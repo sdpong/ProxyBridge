@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 // Recognising the failure macOS reports when the tunnel is bound to an extension
 // whose app is no longer installed.
@@ -79,6 +80,55 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
         return Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") != nil
     }
 
+    // ---- can this build run a network extension at all? ----
+    //
+    // A build signed by a developer carries a team id. An ad-hoc signature
+    // carries none, and that is what decides everything:
+    //
+    //   - the network extension APIs of macOS only answer an app that has a
+    //     team id. An ad-hoc build calls NETransparentProxyManager and the
+    //     callback is never called - not an error, nothing at all - so the
+    //     tunnel configuration is never written and no traffic is proxied.
+    //   - the restricted entitlements of the build - the ones that install a
+    //     system extension and that run a network extension - are not
+    //     validated without a provisioning profile, so the extension
+    //     registers and is then refused.
+    //
+    // The team id is read from the running code, so it says what macOS sees
+    // and not what the build script hoped for.
+    static func teamIdentifier() -> String? {
+        var code: SecCode?
+        guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess,
+              let code = code else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode = staticCode else { return nil }
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
+              let dictionary = information as? [String: Any] else { return nil }
+        guard let team = dictionary[kSecCodeInfoTeamIdentifier as String] as? String,
+              !team.isEmpty else { return nil }
+        return team
+    }
+
+    // Whether the system should be asked to install the system extension.
+    //
+    // The question is asked once per start, and the system keeps a record of
+    // every install it is asked for. A build that has a team id asks for the
+    // extension every time and the system recognises the copy it already has,
+    // so nothing is left behind. A build that has no team id is asked for it
+    // too, and every one of those asks leaves another record behind: the
+    // records pile up with every start of the app, all of them the same
+    // extension, and the system takes them out only at the next restart.
+    //
+    // A build without a team id cannot run the extension anyway, so asking
+    // for it buys nothing and costs a record per start.
+    static func shouldInstallSystemExtension(teamIdentifier: String?) -> Bool {
+        guard let team = teamIdentifier else { return false }
+        return !team.isEmpty
+    }
+
     // The one line that says what the notice is about.
     //
     // The explanation itself is three paragraphs, and it is true from the first
@@ -125,6 +175,27 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
             L10n.t("The extension does not answer over the provider channel. macOS checks that channel against the app's signature, and a build that is not signed by a developer gets no message through it."),
             L10n.t("What that costs: the switches the extension reads while it runs, and closing a connection by hand. Everything else is read from the unified log instead: the extension writes every decision it made there, and it writes the traffic of the open flows there as well, so the connections, their traffic and the activity log are all there. The traffic itself is proxied either way: the rules, the proxies and the passwords went with the start of the tunnel."),
             L10n.t("Sign the app with a Developer ID certificate to get the running switches and the hand-made disconnects as well.")
+        ]
+    }
+
+    // ---- this build cannot run a network extension at all ----
+    //
+    // The one line that says what the notice is about, and the long form that
+    // says what is lost and what is not.
+    //
+    // The condition is standing: it is true from the first launch of the build
+    // until the build is signed. A window that looks ready and proxies nothing
+    // is the worst of the three, so the app says this out loud instead of
+    // waiting for an approval that is never asked for.
+    static func unsignedBuildSummary() -> String {
+        return L10n.t("This build is not signed by a developer, so macOS will not run its network extension. Nothing is proxied through the tunnel.")
+    }
+
+    static func unsignedBuildExplanation() -> [String] {
+        return [
+            L10n.t("macOS validates the restricted entitlements of a build that is signed by a developer and carries a provisioning profile. This build is signed ad hoc, so its system extension registers and is then refused, and the network extension APIs of the app do not answer at all."),
+            L10n.t("What still works: the rules, the proxies and the chains are all here, and the proxy server of the app serves the clients of the network. What does not: the tunnel, the dns proxy, and the rules that go with the traffic of this machine."),
+            L10n.t("To get the tunnel, the build has to be signed with a Developer ID certificate and a provisioning profile that carries the network extension entitlement. That needs a paid developer membership: the free Personal Team supports neither network extensions nor system extensions.")
         ]
     }
 }

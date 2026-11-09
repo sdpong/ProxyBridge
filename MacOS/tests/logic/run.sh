@@ -58,3 +58,4 @@ run_test gateway_installer_tests.swift "$APP/GatewayInstaller.swift" "$APP/Gatew
 run_test menu_tests.swift "$APP/WindowMenuNoise.swift"
 run_test signature_tests.swift "$APP/WindowMenuNoise.swift"
 run_test windowdrawing_tests.swift "$APP/WindowMenuNoise.swift"
+run_test extensioninstall_tests.swift "$APP/ExtensionDiagnosis.swift" "$APP/L10n.swift"

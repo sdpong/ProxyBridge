@@ -2339,3 +2339,114 @@ entitlements 里虽然写着 `com.apple.developer.networking.networkextension`�
 **顺带**：`remove-old-extensions.sh` 这个脚本确实管用，
 但它会把**当前这个扩展也一起移除**（脚本的意思就是「只留一份」），
 移除后需要重新打开 app、再去系统设置里授权一次。
+
+## stage31：app 认不出自己签不出名 —— 三处查实与改法
+
+### 一、现象
+
+窗口开着，一切正常：五个标签页都在，规则、代理、代理链都在，
+连接列表空着（因为没有流量被代理），右上角写着「本地 · 未接管」。
+
+但系统扩展在 `systemextensionsctl list` 里是 `activated enabled`，
+「网络 → VPN 与过滤器」里**没有 ProxiRoute 的条目**，
+`/Library/Preferences/com.apple.networkextension.plist` 里透明代理配置 **0 条**。
+
+也就是说：**app 自己以为扩展装好了，隧道也「启动」了，
+而系统里根本没有那份配置，也没有任何东西被代理。**
+窗口上没有一个字说这件事。
+
+### 二、查实的三件事
+
+**（1）每启动一次 app，系统就多登记一条扩展记录。**
+
+同机实测（`systemextensionsctl list | grep -c proxiroute.extension`）：
+
+| 时刻 | 记录数 |
+|---|---|
+| 第一次数 | 4（3 条待卸载 + 1 条在用） |
+| 重装一次 app 再启动 | 5 |
+| 再启动一次 | 6 |
+
+每一条都是 `com.sdpong.proxiroute.extension (4.1.2/8)`，
+**版本号一模一样**，只是签名团队那一栏是 `-`（空）。
+系统按「版本 + 签名团队」认扩展，ad-hoc 没有团队，
+于是它认不出这次要装的和已经装的是同一个。
+
+后果：
+
+- 「系统设置 → 通用 → 登录项与扩展 → 网络扩展」里是一排一模一样的条目；
+- 每条记录都要**等到下次重启**才被系统清掉；
+- 系统可能把隧道绑到其中**旧的那条**上（这正是 `remove-old-extensions.sh`
+  存在的理由）。
+
+**（2）macOS 根本不回应这类 app 的网络扩展 API。**
+
+`NETransparentProxyManager.loadAllFromPreferences` 的回调**永远不来**
+（不是返回错误，是什么都不发生），所以
+`ensureNetworkConfiguration()` 的 completion 不会执行，
+`startProxy()` 也就不会走到 `reloadAndStartTunnel()`。
+**隧道配置写不进去，隧道从来没起来过** —— 而窗口上一点迹象都没有。
+
+**（3）忽略掉一条常驻提示，会把另一条也一起盖住。**
+
+`standingExtensionNoticeDismissed` 是**所有常驻提示共用的一把钥匙**。
+用户忽略过一次「扩展不回应」之后，
+后面再出现的别的常驻提示（包括新加的这条）也一并被藏起来了。
+本轮实测：改了代码、装上新版，窗口上依然什么都不显示，
+`defaults read com.sdpong.ProxiRoute standingExtensionNoticeDismissed` = 1。
+
+### 三、改法
+
+**（1）app 自己读出签名里的 Team ID。**
+
+`ExtensionDiagnosis.teamIdentifier()` 用 `SecCodeCopySelf` +
+`SecCodeCopySigningInformation` 读运行中代码的
+`kSecCodeInfoTeamIdentifier`：**读的是 macOS 看到的东西，
+不是构建脚本希望的样子**。
+
+**（2）没有 Team ID 就不去装扩展。**
+
+`ExtensionDiagnosis.shouldInstallSystemExtension(teamIdentifier:)` 是纯函数，
+两种情况各测一遍。没有 Team ID 的构建**本来也跑不了网络扩展**
+（受限 entitlement 没有描述文件放行，AMFI 直接拒），
+去装它只会**每次启动留下一条记录**，所以问题只在答案可能为「是」的时候才问。
+
+**（3）窗口明说原因。**
+
+新提示条（常驻，可忽略，忽略后记住）：
+「当前版本没有开发者签名，所以 macOS 不会运行它的网络扩展。隧道不会代理任何流量。」
+「详情」里三段说清楚：macOS 只对「有开发者签名 + 带描述文件」的版本校验受限 entitlement；
+**仍然可用**的是规则、代理、代理链和代理服务器；
+**不可用**的是隧道、DNS 代理和跟随本机流量的规则。
+
+**（4）网络配置回调加超时兜底（12 秒）。**
+
+不只针对 ad-hoc：任何原因导致 macOS 不回应，
+窗口都要说出来，而不是永远等着。超时后按「有没有 Team ID」分别报两种原因。
+
+**（5）每条常驻提示各用各的钥匙。**
+
+`standingNoticeDismissedKey` 拆成每条提示一个 key，
+忽略一条不再牵连别的。
+
+### 四、实测
+
+| 项目 | 改之前 | 改之后 |
+|---|---|---|
+| 启动一次后的扩展记录数 | 6 → 7（每次 +1） | **6 → 6（不再增加）** |
+| 窗口上的提示 | 无 | 「当前版本没有开发者签名…」+「详情」 |
+| 逻辑测试 | 420 条断言 | **438 条断言全绿**（新增 `extensioninstall_tests.swift` 16 条） |
+
+新构建装上后连启两次，扩展记录稳定在 6 条，
+窗口顶部出现上面那条提示（截图已核对）。
+
+### 五、要用户做的一件事
+
+系统里那 6 条记录里有 5 条等着「下次重启时卸载」。
+**机器重启一次**它们就没了；重启后再启动一次 app，
+系统里就只剩一条记录。
+
+不过要说清楚：**这台机器上的 ad-hoc 构建，无论怎么清都代理不了流量**。
+FORK-NOTES 前面那节已经查实过 —— 受限 entitlement 必须由描述文件放行，
+这需要**付费开发者账号**（免费的 Personal Team 不支持网络扩展与系统扩展）。
+本轮做的是让 app **别再假装自己能用**，并且**别再往系统里堆记录**。
