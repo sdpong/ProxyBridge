@@ -141,6 +141,57 @@ struct SettingsTabView: View {
     private var gatewayCard: some View {
         SettingsCard(icon: "network", title: L10n.t("Gateway")) {
             Form {
+                // The helper of the gateway mode is a program of root, and
+                // putting it in place needs the password of an administrator.
+                // The app asks macOS for that privilege, the way every other
+                // installer does, so that the person does not have to type a
+                // command in a terminal.
+                //
+                // It is the first thing in the card, because it is the thing a
+                // person looks for: without the helper the gateway mode does
+                // nothing at all, and the buttons that put it in place were
+                // below the fold, where a person does not find them.
+                Section {
+                    HStack {
+                        Text(L10n.t("Helper of the Gateway Mode"))
+                        Spacer()
+                        Text(helperStateText)
+                            .foregroundColor(helperIsInstalled ? .green : .secondary)
+                    }
+
+                    HStack {
+                        Button(L10n.t("Install")) {
+                            viewModel.gateway.installHelper()
+                        }
+                        // the helper is already there: there is nothing to
+                        // install, and the button says so
+                        .disabled(helperIsInstalled || viewModel.gateway.isInstalling)
+
+                        if helperIsInstalled {
+                            Button(L10n.t("Uninstall")) {
+                                viewModel.gateway.uninstallHelper()
+                            }
+                        }
+                    }
+                    .disabled(viewModel.gateway.isInstalling)
+
+                    if viewModel.gateway.isInstalling {
+                        Text(L10n.t("The password of an administrator is asked for. The installation waits for it."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if !viewModel.gateway.helperMessage.isEmpty {
+                        Text(viewModel.gateway.helperMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } footer: {
+                    Text(L10n.t("The helper is a program of root: it loads the rules of the packet filter, turns the forwarding of the machine on, and asks the kernel where a redirected connection was going. Installing it needs the password of an administrator; taking it out puts the machine back the way it was."))
+                }
+
                 Section {
                     Toggle(L10n.t("Turn the gateway on"), isOn: Binding(
                         get: { viewModel.gateway.isEnabled },
@@ -182,52 +233,6 @@ struct SettingsTabView: View {
                     }
                 } footer: {
                     Text(L10n.t("The other terminals of the network point at this machine as their gateway. Their traffic goes out by the rules of the app, the same rules as the traffic of this machine, except that a rule naming a program does not apply to them: they have no program."))
-                }
-
-                // The helper of the gateway mode is a program of root, and
-                // putting it in place needs the password of an administrator.
-                // The app asks macOS for that privilege, the way every other
-                // installer does, so that the person does not have to type a
-                // command in a terminal.
-                Section {
-                    HStack {
-                        Text(L10n.t("Helper of the Gateway Mode"))
-                        Spacer()
-                        Text(helperStateText)
-                            .foregroundColor(helperIsInstalled ? .green : .secondary)
-                    }
-
-                    HStack {
-                        Button(L10n.t("Install")) {
-                            viewModel.gateway.installHelper()
-                        }
-                        // the helper is already there: there is nothing to
-                        // install, and the button says so
-                        .disabled(helperIsInstalled || viewModel.gateway.isInstalling)
-
-                        if helperIsInstalled {
-                            Button(L10n.t("Uninstall")) {
-                                viewModel.gateway.uninstallHelper()
-                            }
-                        }
-                    }
-                    .disabled(viewModel.gateway.isInstalling)
-
-                    if viewModel.gateway.isInstalling {
-                        Text(L10n.t("The password of an administrator is asked for. The installation waits for it."))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    if !viewModel.gateway.helperMessage.isEmpty {
-                        Text(viewModel.gateway.helperMessage)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } footer: {
-                    Text(L10n.t("The helper is a program of root: it loads the rules of the packet filter, turns the forwarding of the machine on, and asks the kernel where a redirected connection was going. Installing it needs the password of an administrator; taking it out puts the machine back the way it was."))
                 }
 
                 // The routing options: they say where the traffic goes when

@@ -35,7 +35,16 @@ struct ProxiRouteGUIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        // The window has an id of its own.
+        //
+        // Why: a WindowGroup without an id makes a new window every time the
+        // app is opened again. The window of the app was in the menu bar, and
+        // coming back from the menu bar went through the reopen of the app,
+        // so every time the window came back there was one more of it: they
+        // were stacked on the screen, and the one that was not the main window
+        // was never closed. With an id there is one window, and it is the same
+        // one every time.
+        WindowGroup(id: "main") {
             ContentView(viewModel: viewModel)
                 // The window needs a title bar of its own, otherwise there is
                 // nothing to take hold of: the window cannot be moved. A strip
@@ -406,9 +415,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // window: it runs as an accessory (no dock icon) once the window was
     // closed, and AppKit does nothing on a reopen when there is no dock icon
     // to click. the window is still there, it only has to be shown again.
+    //
+    // The answer is false, and that is the important part: the window is
+    // brought back here, and saying "yes" to the system would let it make a
+    // window of its own as well. Two windows of the app, stacked on the
+    // screen, one of them never closed and one of them the wrong size - that
+    // is what a person saw when they came back from the menu bar.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showMainWindow()
-        return true
+        return false
     }
 
     // close-to-menu-bar off: the window closes. whether the app quits with it
@@ -661,6 +676,18 @@ struct WindowAccessor: NSViewRepresentable {
             guard let window = view.window else { return }
             AppDelegate.mainWindow = window
             window.delegate = AppDelegate.shared
+            // The size of the window is the size of the window, not the size of
+            // what is in it.
+            //
+            // Without this the window follows the height of its content: the
+            // pages of the settings are a scroll view, and a scroll view that
+            // is given the whole height asks for all the height it needs. The
+            // window was then taller than the screen, and it came back shorter
+            // a moment later, when the system put it back into the screen.
+            // A person opening the window from the menu bar saw it stretch and
+            // then shrink.
+            window.contentMinSize = NSSize(width: 800, height: 600)
+            window.contentMaxSize = NSSize(width: 4000, height: 4000)
             // launched at login, keep it hidden in the menu bar
             if AppDelegate.startHidden {
                 AppDelegate.startHidden = false

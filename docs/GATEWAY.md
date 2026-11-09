@@ -172,8 +172,9 @@ ProxiRoute 的规则主体是**按程序**的（`ProxyRule.processNames`、`Prox
 | 环节 | 做法 |
 |---|---|
 | helper 二进制 | **独立 Mach-O**（`MacOS/ProxiRoute/helper/`），不进 Xcode target、不带 app 的签名：`scripts/build-helper.sh` 用 swiftc 交叉编译成 universal，签名交给 `scripts/adhoc-sign.sh` 一起做 |
-| 安装（包） | `pkgbuild --root build/component` 直接放 `/Library/LaunchDaemons`（`MacOS/ProxiRoute/build.sh:82-89` 现在就是这么放 app 的） |
-| postinstall | `MacOS/ProxiRoute/scripts/postinstall` 已是 root 上下文 → 加「装 helper + bootstrap LaunchDaemon」 |
+| 安装（包） | `pkgbuild --root build/component` 直接放 `/Library/PrivilegedHelperTools` 和 `/Library/LaunchDaemons`——**这两个文件在 pkg 的文件清单里**，所以卸载 pkg 时这两个位置会被一并清掉（`MacOS/ProxiRoute/build.sh` 里 `cp` 到 `build/component/Library/...`） |
+| postinstall | `MacOS/ProxiRoute/scripts/postinstall` 已是 root 上下文 → 「还原机器 + bootstrap LaunchDaemon」，**不再从 app bundle 里复制文件**（文件已由 pkg 放在指定位置；老版本 pkg 才回退到 bundle） |
+| 唯一位置 | helper 只在两处：`/Library/PrivilegedHelperTools/com.sdpong.proxiroute.helper` 与 `/Library/LaunchDaemons/com.sdpong.proxiroute.helper.plist`。app 内安装按钮、pkg postinstall、`scripts/remove-gateway-helper.sh` 三条路径用的是**同一对路径**，由 `MacOS/tests/logic/gateway_installer_tests.swift` 钉死 |
 | 安装（app） | **设置页的「网关」卡片上有安装按钮**：app 用 macOS 的管理员授权对话框要权限，脚本写在自己的签名二进制里（`ProxiRoute/GatewayInstaller.swift`）。已装时按钮标灰，只给卸载按钮 |
 | 启停 | app 通过 unix socket（`/var/run/com.sdpong.proxiroute.helper.sock`）问 helper；**helper 要校验调用方** |
 | 安全取舍 | ad-hoc 签名的 cdhash 每次构建都变 → 无法做强身份校验，只能做「root 或 `/dev/console` 属主」这类弱校验。**这是一个必须显式记录在案的取舍**（已写进 `helper/GatewaySocket.swift` 的注释） |
