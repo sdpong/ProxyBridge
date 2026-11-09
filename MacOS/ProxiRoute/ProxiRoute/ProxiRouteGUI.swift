@@ -472,6 +472,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // window can be hidden in the menu bar, and the menus are there even
         // then.
         StandardMenuLocalizer.install()
+        // The launch agent is the launcher of the app when the person wants
+        // the app to come up behind the proxy on this machine. It is put in
+        // place here, so that it is there for the next login even when the app
+        // was started by hand. When it cannot be put in place, the switch
+        // turns itself off and the app stays a login item.
+        if LaunchOrderAgent.isEnabled && !LaunchOrderAgent.isInstalled {
+            _ = LaunchOrderAgent.setEnabled(true)
+        }
         // keep the real login item in sync with the active profile's setting
         LaunchOrderAgent.writeStartFlag(LoginItem.isEnabled)
         LoginItem.applyToSystem(LoginItem.isEnabled)

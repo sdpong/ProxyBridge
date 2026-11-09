@@ -23,7 +23,14 @@ enum LaunchOrderAgent {
     static let enabledKey = "startAfterUpstream"
 
     /// whether the agent is wanted
+    ///
+    /// The agent is wanted from the start: the order of the start is the thing
+    /// a proxy on this machine needs, and a person who wants a proxy does not
+    /// want to look for a switch for it. When the agent cannot be put in
+    /// place, the switch turns itself off and the app stays a login item, so
+    /// that the proxy still comes up at the login.
     static var isEnabled: Bool {
+        UserDefaults.standard.register(defaults: [enabledKey: true])
         return UserDefaults.standard.bool(forKey: enabledKey)
     }
 
