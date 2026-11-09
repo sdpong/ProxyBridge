@@ -2313,10 +2313,21 @@ swiftc -O bench3.swift -o bench3   # 见下
 - 于是「网络 → VPN 与过滤器」里**根本没有 ProxiRoute 这个条目**，也就没有开关可开
 - app 界面显示的是：「macOS 把隧道绑定到了一个应用已被删除的扩展上」
 
-**为什么**：
-`NETransparentProxyManager.saveToPreferences` 要写系统的网络配置，
-而**写网络配置的 app 必须有有效的 Team ID**。这个 fork 是 ad-hoc 签名
-（`TeamIdentifier=not set`），拿不到这个权限。
+**为什么**（实测，不是推断）：
+写一个最小程序，ad-hoc 签名，调 `NETransparentProxyManager.loadAllFromPreferences`：
+
+```
+calling loadAllFromPreferences ...
+NO CALLBACK within 10s
+```
+
+**回调根本不会被调用** —— 不是返回错误，是什么都不发生。
+这个 API 要 app 带着网络扩展的 entitlement 才会回应；
+这个 fork 是 ad-hoc 签名（`TeamIdentifier=not set`），
+entitlements 里虽然写着 `com.apple.developer.networking.networkextension`，
+但没有 Team ID，macOS 不认。
+
+`saveToPreferences` 那一路也一样：写不进去，系统的配置列表里就是没有条目。
 
 所以：**ad-hoc 签名的 build 在这台机器上写不进隧道配置**。
 上游的正式版有 Developer ID，没这个问题。

@@ -132,4 +132,27 @@ check(viewModel.contains("setLiveFlows(machineFlows)"),
 check(viewModel.contains("pendingActivity.removeAll()"),
       "clearing the log clears the lines that are waiting as well")
 
+// ---------------------------------------------------------------- the tunnel
+
+// The transparent proxy configuration is what the tunnel is, and the app
+// writes it into the system. That needs a team id: without one the system
+// does not even answer the call.
+//
+// Measured on this machine, with a build that is signed ad-hoc:
+//
+//     calling loadAllFromPreferences ...
+//     NO CALLBACK within 10s
+//
+// Not an error - nothing happens at all. So the configuration is never
+// written, the tunnel never shows up in System Settings, and there is no
+// switch to turn on.
+//
+// The app has to say that, instead of showing an empty list with no reason
+// given. These assertions keep the wording in place.
+let viewModelSource = viewModel
+check(viewModelSource.contains("extensionProblem"),
+      "the app has something to say when the extension does not answer")
+check(viewModelSource.contains("bound the tunnel to another, older ProxiRoute extension"),
+      "the app says what happened when the tunnel is bound to an old extension")
+
 print("window drawing tests: ok")
