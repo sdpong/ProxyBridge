@@ -21,9 +21,16 @@ import Foundation
 // looked at, and not only at the moment the app started.
 //
 // The four menus of the menu bar itself (Edit, View, Window, Help) are drawn
-// by SwiftUI and not out of the menu, so they cannot be renamed here. They are
-// in the language of the bundle, and the bundle is put in the language of the
-// app when the app starts (see main.swift).
+// by SwiftUI and not out of the menu, so they cannot be renamed here.
+//
+// Measured: a title written into one of them is gone a moment later. SwiftUI
+// draws the menu bar again and writes its own titles into it, and the title
+// that the system writes is the one of the bundle. So renaming them is not
+// only useless - it is a change of the menu bar, and SwiftUI answers a change
+// of the menu bar by drawing it again. The menus of the system speak the
+// language of the bundle, the bundle keeps the language the app was started
+// with, and a language that is picked in the app asks for a restart (see
+// ProxiRouteGUI.swift).
 //
 // Two of them go away anyway: the view menu (everything in it was about a
 // sidebar or a toolbar, and this app has none) and the edit menu (it is a list
@@ -53,18 +60,6 @@ enum StandardMenuLocalizer {
         func matches(_ title: String) -> Bool {
             return title == english || title == chinese
         }
-    }
-
-    // The titles of the menus that are always there.
-    private static var topLevelTitles: [Title] {
-        return [
-            Title(english: "Edit", chinese: "编辑", text: L10n.t("Edit")),
-            Title(english: "View", chinese: "显示", text: L10n.t("View")),
-            Title(english: "Window", chinese: "窗口", text: L10n.t("Window")),
-            Title(english: "Help", chinese: "帮助", text: L10n.t("Help")),
-            Title(english: "File", chinese: "文件", text: L10n.t("File")),
-            Title(english: "Format", chinese: "格式", text: L10n.t("Format"))
-        ]
     }
 
     // The titles of the items of the application menu.
@@ -197,16 +192,15 @@ enum StandardMenuLocalizer {
 
         guard let menu = NSApp.mainMenu else { return }
 
-        // the menus of the menu bar
+        // The titles of the menus of the menu bar itself are left alone.
         //
-        // The menus that are hidden are left alone: nobody sees them, and a
-        // change of them is a change of the menu bar that SwiftUI answers by
-        // building the menu bar again.
-        for item in menu.items where !item.isHidden {
-            if let title = topLevelTitles.first(where: { $0.matches(item.title) }) {
-                setTitle(item, title.text)
-            }
-        }
+        // They are drawn by SwiftUI, and SwiftUI draws the menu bar again
+        // whenever something in it changes - and it writes its own titles
+        // into it again. A title written here is therefore gone a moment
+        // later, and the writing of it is a change of the menu bar, which is
+        // what makes SwiftUI draw it again. The language of those menus is
+        // the language of the bundle, and the bundle keeps the language the
+        // app was started with.
 
         // the application menu is the first one, its items are about the app
         if let appMenu = menu.items.first?.submenu {

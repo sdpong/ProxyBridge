@@ -84,6 +84,7 @@ let windowMenuNoiseTitles: Set<String> = [
     "Tile Window to Bottom of Screen",
     "窗口平铺到屏幕底部",
     "Bring All to Front",
+    "Arrange in Front",
     "前置全部窗口",
     "Cycle Through Windows",
     "在窗口间循环",

@@ -2006,3 +2006,86 @@ helper 没装也能点，点了必然失败（app 连不上 helper 的 socket）
 实测：先把 `defaults write com.sdpong.ProxiRoute gatewayEnabled -bool true` 写进去，
 再启动 app → `defaults read` 已经是 `0`；AX 树里「打开网关」`enabled=0`，
 底下出现「要先安装网关模式的 helper，才能打开网关。」，网卡选择器也是灰的。
+
+## 菜单栏：查实的两件事（跳闪 + 语言）
+
+用户报「窗口菜单下拉框跳闪」和「改成英文了菜单栏还是中文」。两件都查到了根因。
+
+### 一、跳闪：菜单开着的时候，我们在改菜单
+
+**实测数据**（加计数器后）：菜单打开的 2 秒里，`apply()` 被调了 **382 次**，
+删了 20 项、插了 3 项。AppKit 同时在报：
+
+```
+[com.apple.AppKit:Menu_Tracking] didChangeSubmenuContents: rep returned item view with wrong item
+[com.apple.AppKit:Menu_Tracking] didChangeImage: rep returned item view with wrong item
+  expected item = <SwiftUI.SwiftUIMenuItem ... action: performMiniaturize:>
+  actual item = <NSMenuItem ... action: showMainWindow>
+```
+
+**因果链**（死循环）：
+
+1. SwiftUI 画窗口菜单时会把系统的那些项加进去（最小化 / 缩放 / 填充 / 居中 /
+   移动与调整大小 / 平铺…）；
+2. 我们的 `StandardMenuLocalizer` 看到它们就把它们**删掉**；
+3. 删掉是「菜单变了」，SwiftUI 就**把菜单重画一遍**，那些项又回来了；
+4. 回到第 2 步。
+
+菜单开着的时候 AppKit 正在跟踪它，菜单项被删了又插 → **下拉框一直在跳**。
+
+**试过但不管用的**：
+
+- 改成**隐藏**（`isHidden = true`）而不是删除：还是循环（2 秒里隐藏了 5011 次）；
+- **菜单开着时不动它**：菜单里就会露出那些项（SwiftUI 是在打开的时候加的）。
+
+**修法**：**从源头不画它们**。SwiftUI 的命令里加
+
+```swift
+CommandGroup(replacing: .windowArrangement) { }
+```
+
+那一组里的项（移动与调整大小 / 平铺到屏幕… / 移到屏幕边缘…）就再也不会进菜单，
+运行时**一个项都不用删**，也就没有循环。
+
+实测（同一个测量方法）：
+
+| | AppKit 菜单错误 |
+|---|---|
+| 改之前 | 15 次/秒（2 分钟 1874 条） |
+| 改之后 | **0** |
+
+窗口菜单现在的内容：`打开 ProxiRoute / 进入全屏 / — / 代理设置 / 代理规则 /
+网关 / 代理服务器 / 关于 ProxiRoute / 检查更新 / — / ProxiRoute`。
+
+**还剩两个**：`移到"内建视网膜显示器"` 和 `全部移到内建视网膜显示器`——
+macOS 27 新加的，标题里带**显示器名字**，所以固定清单对不上；它们不改窗口大小，
+单显示器时什么也不做。
+
+**顺带**：`StandardMenuLocalizer` 里那段「给菜单栏的四个菜单改名字」的代码删了。
+实测：写进去的名字一会儿就没了（SwiftUI 重画菜单栏时写回自己的标题），
+而写标题本身是「菜单栏变了」，又会让 SwiftUI 重画 → 白忙一场，还制造抖动。
+
+### 二、语言：bundle 的语言在启动时就定死了
+
+**实测**（切换语言后读 bundle）：
+
+```
+preferredLocalizations=["en"] appleLanguages=["zh-Hans"]
+```
+
+`AppleLanguages` 在运行中改了，**bundle 的语言没有跟着变**——bundle 的语言是
+进程启动时读进去的（`main.swift` 里的那句 `AppleLanguages` 对**下一次**启动有效）。
+
+而 macOS 自己画的「窗口 / 帮助」两个菜单，标题来自 bundle 的语言 → **运行中改语言，
+这两个菜单不变**（app 自己的菜单是 `L10n.t()` 画的，会变 ✓）。
+
+试过在运行中改 bundle 的语言：`Bundle.main.setValue(_:forKey:"preferredLocalizations")`
+会抛 `NSUnknownKeyException` 直接崩，**不能用**。
+
+**修法**：改语言之后，app **问一句要不要重启**：
+
+- 「窗口 / 帮助」是 macOS 画的，用的是 app 启动时的语言；
+- 重启一次，它们就是刚选的那种语言。
+
+实测：切到中文 → 弹窗 → 点「现在重启」→ app 重启（pid 变了）→ 菜单栏变成
+`ProxiRoute / 配置 / 窗口 / 帮助`；切到英文 → 重启 → `ProxiRoute / Profile / Window / Help` ✓

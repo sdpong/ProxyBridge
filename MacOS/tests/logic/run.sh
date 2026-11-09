@@ -13,6 +13,8 @@ trap 'rm -rf "$TMP"' EXIT
 # the test files are copied into a temporary folder before they are compiled,
 # so a path derived from the place of the test file would point nowhere.
 export PROXIRoute_SCRIPTS="$HERE/../../ProxiRoute/scripts"
+# the sources of the app, for the tests that read them.
+export PROXIRoute_APP="$HERE/../../ProxiRoute/ProxiRoute"
 
 run_test() {   # <test file> <extension sources...>
     local test="$1"; shift

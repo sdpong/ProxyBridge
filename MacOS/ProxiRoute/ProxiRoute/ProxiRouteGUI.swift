@@ -33,6 +33,9 @@ struct ProxiRouteGUIApp: App {
     // language can be picked without restarting the app
     @StateObject private var localization = LocalizationManager.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    // whether the app has to be started again for the menus of macOS to be
+    // in the language that was picked
+    @State private var languageRestartNeeded = false
 
     var body: some Scene {
         // The window has an id of its own.
@@ -61,9 +64,24 @@ struct ProxiRouteGUIApp: App {
                     checkForUpdatesOnStartup()
                 }
                 .onChange(of: localization.language) { _ in
+                    // The menus that macOS draws itself - the window menu and
+                    // the help menu - are drawn in the language of the bundle.
+                    // The bundle is told which language it is in here, the
+                    // same way main.swift tells it at the start, so that a
+                    // language that is picked in the app is followed by the
+                    // menus as well and not only by the window.
+                    UserDefaults.standard.set([localization.language.rawValue], forKey: "AppleLanguages")
+                    languageRestartNeeded = true
+
                     // the menus are built again when the language changes, and
                     // the system writes its own titles into them
                     StandardMenuLocalizer.applySoon()
+                }
+                .alert(L10n.t("The menus of macOS speak the language of the start"), isPresented: $languageRestartNeeded) {
+                    Button(L10n.t("Restart Now")) { restartForLanguage() }
+                    Button(L10n.t("Later"), role: .cancel) { }
+                } message: {
+                    Text(L10n.t("The window menu and the help menu are drawn by macOS itself, and they are in the language the app was started in. The app has to start again for them to be in the language that was just picked."))
                 }
                 .onChange(of: viewModel.needsExtensionApproval) { needsApproval in
                     // The first time this happens it deserves a dialog, so it is not
@@ -94,6 +112,22 @@ struct ProxiRouteGUIApp: App {
             // a moment later.
             CommandGroup(replacing: .toolbar) { }
             CommandGroup(replacing: .sidebar) { }
+
+            // The window arrangement is taken out at the source.
+            //
+            // The window menu of macOS is drawn by SwiftUI, and it holds the
+            // items that change the size and the place of the window: close,
+            // minimize, zoom, fill, center, move and resize, tile, and the
+            // windows that were there before. They are noise for this app,
+            // and one of them is the reason a person saw the window change
+            // its size behind their back.
+            //
+            // They are taken out here, and not in the menu afterwards: an
+            // item that is taken out of a menu that is being drawn is a
+            // change of the menu, and SwiftUI answers a change of the menu
+            // by drawing the menu again - with the items in it. The two kept
+            // at it until the dropdown of the menu jumped.
+            CommandGroup(replacing: .windowArrangement) { }
 
             // The edit menu is left to macOS.
             //
@@ -232,6 +266,24 @@ struct ProxiRouteGUIApp: App {
 
     private func openUpdateCheckWindow() {
         NSApp.sendAction(#selector(AppDelegate.openUpdateCheck), to: nil, from: nil)
+    }
+
+    // Starts the app again.
+    //
+    // The menus that macOS draws itself - the window menu and the help menu -
+    // are drawn in the language of the bundle, and the bundle keeps the
+    // language it was started with: it is read before the app can write
+    // anything down. So the app is started again, and the language that was
+    // written down is the one the menus are drawn in.
+    private func restartForLanguage() {
+        let url = Bundle.main.bundleURL
+        // the app is opened a moment after this one is gone, so that the two
+        // of them do not hold the same port at the same time
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 1; open \"\(url.path)\""]
+        try? process.run()
+        NSApp.terminate(nil)
     }
 
     private func exportActiveProfile() {
