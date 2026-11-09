@@ -72,14 +72,30 @@ final class EchoServer {
         while true {
             let client = Darwin.accept(fd, nil, nil)
             if client < 0 { return }
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            let n = Darwin.recv(client, &buffer, buffer.count, 0)
-            if n > 0 {
-                _ = buffer[0..<n].withUnsafeBytes { raw in
-                    Darwin.send(client, raw.baseAddress, raw.count, 0)
-                }
-            }
+            serve(client)
             Darwin.close(client)
+        }
+    }
+
+    // The connection is served until it is over.
+    //
+    // A request for "/open" is a request for a connection that stays open: the
+    // server reads it, sends it back and waits for more instead of hanging up.
+    // The connection of a test that asks for one has to stay open, or the proxy
+    // closes the flow it is about and there is nothing left to look at.
+    //
+    // Every other request is served the way it was: read once, send it back,
+    // hang up.
+    private func serve(_ client: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let n = Darwin.recv(client, &buffer, buffer.count, 0)
+            if n <= 0 { return }
+            _ = buffer[0..<n].withUnsafeBytes { raw in
+                Darwin.send(client, raw.baseAddress, raw.count, 0)
+            }
+            let text = String(decoding: buffer[0..<n], as: UTF8.self)
+            if !text.contains("/open") { return }
         }
     }
 
