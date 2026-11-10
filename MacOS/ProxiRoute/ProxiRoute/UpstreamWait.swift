@@ -295,6 +295,34 @@ enum UpstreamWait {
         return consoleSession()
     }
 
+    /// Whether the app was already started in this session.
+    ///
+    /// The marker says it: the app writes down the session it was started in,
+    /// and the session is the time the console was logged in. A launch in a
+    /// session that has no marker yet is the first launch of that session -
+    /// and that is the launch of the login, because the login item of macOS
+    /// starts the app in the wave of the login.
+    ///
+    /// The marker of a closed app carries the quit suffix, and that is the
+    /// same session: a person who closed the app and opens it again wants to
+    /// see it.
+    ///
+    /// The agent does not write the marker before it starts the app, so a
+    /// launch by the agent does not make the next launch look like the first
+    /// one of the session.
+    static func startedInThisSession(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+        let session = currentSession()
+        guard !session.isEmpty else { return false }
+        guard let text = try? String(contentsOf: sessionMarkerURL(home: home), encoding: .utf8) else {
+            return false
+        }
+        var written = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if written.hasSuffix(quitSuffix) {
+            written = String(written.dropLast(quitSuffix.count))
+        }
+        return written == session
+    }
+
     /// The time the console was logged in, as the system writes it.
     ///
     /// The line of the console user of "who" is the one that is wanted: it

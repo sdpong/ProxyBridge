@@ -63,4 +63,5 @@ run_test extensioninstall_tests.swift "$APP/ExtensionDiagnosis.swift" "$APP/L10n
 run_test installedextension_tests.swift "$APP/InstalledExtension.swift"
 run_test extensioncleanup_tests.swift "$APP/ExtensionCleanup.swift"
 run_test upstreamwait_tests.swift "$APP/UpstreamWait.swift" "$APP/UpstreamReadiness.swift"
-run_test loginstart_tests.swift "$APP/UpstreamWait.swift" "$APP/InstanceLock.swift" "$APP/NetworkReadiness.swift"
+run_test loginstart_tests.swift "$APP/UpstreamWait.swift" "$APP/InstanceLock.swift" "$APP/NetworkReadiness.swift" "$APP/LaunchOrigin.swift"
+run_test profilesafety_tests.swift

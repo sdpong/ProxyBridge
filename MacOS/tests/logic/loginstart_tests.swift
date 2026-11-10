@@ -172,6 +172,83 @@ check(viewModel.contains("startProxyWhenTheNetworkIsThere()"),
 check(viewModel.contains("NetworkReadiness.isUp()"),
       "the network is asked about, and not guessed")
 
+// ---------------------------------------------------------------- how the app was started
+
+// How the app was started is decided by the app itself.
+//
+// The key of macOS that says whether a launch is the default one is not of
+// use: it says the opposite of what it should on this machine, and a build
+// that asks it hides the app when the person opened it and puts a dock icon
+// on it when macOS started it at the login. It was measured three ways on
+// the 10th of November 2026:
+//   - the login item of macOS started the app (loginwindow, "perform
+//     Autolaunch") and the key said TRUE
+//   - the app was opened with "open -a" and the key said FALSE
+//   - the binary was run from a terminal and the key said FALSE
+check(!gui.contains("NSApplication.launchIsDefaultUserInfoKey"),
+      "the app does not ask macOS which launch it was")
+let origin = readAppFile("LaunchOrigin.swift")
+check(origin.contains("UpstreamWait.startedInThisSession()"),
+      "the launch of the login is told apart by the session of the login")
+check(origin.contains("UpstreamWait.startHiddenVariable"),
+      "the launch of the agent is told apart by its environment variable")
+check(origin.contains("comesUpInTheMenuBar"),
+      "a launch that is made for the proxy comes up in the menu bar")
+check(gui.contains("origin.comesUpInTheMenuBar"),
+      "the app comes up in the menu bar when it was not opened by hand")
+
+// The marker of the session says whether the app was already started in it.
+let markerHome = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("proxiroute-session-test")
+try? FileManager.default.createDirectory(at: UpstreamWait.supportFolderURL(home: markerHome),
+                                        withIntermediateDirectories: true)
+setenv(UpstreamWait.sessionVariable, "Nov 10 14:59", 1)
+check(!UpstreamWait.startedInThisSession(home: markerHome),
+      "a session without a marker is a session the app was not started in")
+UpstreamWait.writeSessionMarker(session: "Nov 10 14:59", home: markerHome)
+check(UpstreamWait.startedInThisSession(home: markerHome),
+      "the marker of the session says that the app was started in it")
+UpstreamWait.writeSessionMarker(session: "Nov 10 14:59", quit: true, home: markerHome)
+check(UpstreamWait.startedInThisSession(home: markerHome),
+      "a closed app is the same session: the person wants to see it again")
+UpstreamWait.writeSessionMarker(session: "Nov 10 09:00", home: markerHome)
+check(!UpstreamWait.startedInThisSession(home: markerHome),
+      "the marker of another session is not this session")
+try? FileManager.default.removeItem(at: markerHome)
+
+// An "open" event that comes while the app is starting is not answered
+// while it is starting.
+//
+// The login items of macOS are opened by loginwindow, and that comes with
+// such an event. Answering it in the middle of the start changes the
+// activation policy of the app while it is starting, and the window of
+// swiftui is never made: the app comes up with no window at all, and there
+// is nothing to bring it back with. That is what a person saw on the 10th
+// of November 2026.
+check(gui.contains("AppDelegate.launchIsOver"),
+      "the app knows whether it is done starting")
+check(gui.contains("AppDelegate.windowWantedAfterLaunch"),
+      "an open event that comes during the start is remembered")
+
+// The DNS proxy is written when the extension of this build is already in
+// the system.
+//
+// It was not, and that is why the entry of ProxiRoute DNS was not in the
+// settings of the system: the switch of the DNS proxy opens only in the
+// branch where macOS was asked to install the extension, and that branch is
+// not taken when the extension is already there - which is the case of
+// every start after the first one. The traffic was proxied and the names
+// were not known.
+let alreadyThere = viewModel.range(of: "The system extension of this build is already installed.")
+check(alreadyThere != nil, "the app asks the system about the extension")
+if let alreadyThere = alreadyThere {
+    let after = viewModel[alreadyThere.upperBound...].prefix(1500)
+    check(after.contains("extensionReady = true"),
+          "the app knows that the extension of this build is in the system")
+    check(after.contains("applyDNSProxy()"),
+          "the DNS proxy is written when the extension is already there")
+}
+
 try? FileManager.default.removeItem(at: lockHome)
 
 print("login start tests: ALL PASS")

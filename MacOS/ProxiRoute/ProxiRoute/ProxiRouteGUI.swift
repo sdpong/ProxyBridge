@@ -624,6 +624,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     static var openMainWindow: (() -> Void)?
     // set at launch, tells WindowAccessor to keep the first window hidden
     static var startHidden = false
+    // whether the app is done starting
+    //
+    // The login items of macOS are opened by loginwindow, and that comes
+    // with an "open" event: the app is asked to come to the front while it
+    // is still starting. Acting on it there changes the activation policy of
+    // the app in the middle of its own start, and the window of swiftui is
+    // never made - the app comes up with no window at all, and nothing can
+    // bring it back afterwards.
+    //
+    // So the event is remembered while the app is starting, and the window is
+    // asked for when the app is up.
+    static var launchIsOver = false
+    // the app was asked to come to the front while it was still starting
+    static var windowWantedAfterLaunch = false
+    // how the app was started
+    //
+    // It is decided before the window of swiftui is made, because the window
+    // is made when the app comes up, and an app that comes up for the proxy
+    // of the machine must not show a window at the login.
+    static var origin: LaunchOrigin = .byHand
 
     private var statusItem: NSStatusItem?
 
@@ -634,6 +654,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // closed is a proxy that stops in the middle of something.
     private var keepProxyRunningInBackground: Bool {
         UserDefaults.standard.object(forKey: "keepProxyRunningInBackground") as? Bool ?? true
+    }
+
+    // The app is told that it is going to start, before the window of
+    // swiftui is made.
+    //
+    // The decision of how the app was started is made here and not in
+    // applicationDidFinishLaunching: the scene of swiftui comes up before
+    // the delegate is told that the app has finished launching, and a
+    // decision that comes after the window was made is a decision that comes
+    // too late - the window of an app that comes up for the proxy of the
+    // machine was on the screen, and the dock icon of the app was there
+    // before it was taken away.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        AppDelegate.origin = LaunchOrigin.detect()
+        if AppDelegate.origin.comesUpInTheMenuBar {
+            AppDelegate.startHidden = true
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -671,16 +709,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         // a login-item / resume launch is not a "default" launch. if we got here
         // that way and startup is enabled, come up in the menu bar with no window
-        let isDefaultLaunch = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool ?? true
-        // The launch agent starts the app when the upstream is ready, and it
-        // says so with an environment variable. The window stays out of the way
-        // then too: the point of the agent is that the proxy is up early, not
-        // that a window pops up in the middle of the login.
-        let startedByAgent = ProcessInfo.processInfo.environment[UpstreamWait.startHiddenVariable] == "1"
-        if startedByAgent || (!isDefaultLaunch && LoginItem.isEnabled) {
-            AppDelegate.startHidden = true
-            NSApp.setActivationPolicy(.accessory)
-        }
+        //
+        // How the app was started is decided by LaunchOrigin and not by the
+        // key of macOS that says whether a launch is the default one: that
+        // key says the opposite of what it should on this machine, and a
+        // build that asks it hides the app when the person opened it and
+        // puts a dock icon on it when macOS started it at the login.
+        //
+        // The decision was made in applicationWillFinishLaunching, before the
+        // window of swiftui was made.
+        let origin = AppDelegate.origin
         // The agent comes back every 20 seconds until the app is there, and
         // the person may close the app afterwards. The marker says that the
         // app was already started in this session, so that a closed app is
@@ -702,9 +740,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // The app writes into the log of the login itself and not only
         // through the agent: the app can be started by the login item of
         // macOS as well, and then the agent does not know anything about it.
-        let how = startedByAgent ? "by the agent" : (isDefaultLaunch ? "by hand" : "at the login")
+        let how = origin.description
         NSLog("[ProxiRoute] the app is starting (\(how))")
         UpstreamWait.appendLoginLog("the app is starting (\(how))")
+        // The app is up now. An "open" event that came in the middle of the
+        // start is answered now, and not before: the window of swiftui has to
+        // be made first, and a window that is asked for too early is a window
+        // that is never made.
+        AppDelegate.launchIsOver = true
+        if AppDelegate.windowWantedAfterLaunch {
+            AppDelegate.windowWantedAfterLaunch = false
+            // A launch of the login comes with an open event too, and the
+            // window stays closed there: the launch of the login is made for
+            // the proxy of the machine and not for a person.
+            if !origin.comesUpInTheMenuBar {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.showMainWindow()
+                }
+            }
+        }
     }
 
     // never let AppKit decide this. it counts every window, including the one
@@ -729,6 +783,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // screen, one of them never closed and one of them the wrong size - that
     // is what a person saw when they came back from the menu bar.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // An "open" event that comes while the app is still starting is
+        // remembered and not answered.
+        //
+        // The login items of macOS are opened by loginwindow, and that comes
+        // with such an event. Answering it in the middle of the start
+        // changes the activation policy of the app while it is starting, and
+        // the window of swiftui is never made: the app comes up with no
+        // window at all, and there is nothing to bring it back with.
+        if !AppDelegate.launchIsOver {
+            AppDelegate.windowWantedAfterLaunch = true
+            return false
+        }
         showMainWindow()
         return false
     }
@@ -852,17 +918,75 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     @objc func showMainWindow() {
-        NSApp.setActivationPolicy(.regular)
-        // SwiftUI is asked for the window first.
+        // The activation policy is only changed when it has to be changed.
         //
-        // It is the one that knows how to open the window of its group: a
-        // window that was never shown - the app can come up without one - is
-        // not brought back by asking AppKit to order it in front.
-        AppDelegate.openMainWindow?()
-        // and the window that is there is brought back as well, for the case
-        // where it was closed and not never shown
-        AppDelegate.mainWindow?.makeKeyAndOrderFront(nil)
+        // Setting it while the app is starting disturbs the start: the
+        // window of swiftui is not made then, and the app comes up with no
+        // window at all.
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        // The window that is there is brought back.
+        //
+        // SwiftUI is asked for a window only when there is none: openWindow
+        // of a group makes a new window every time it is called, and they
+        // pile up on the screen - three windows with the same title, all of
+        // them the same app.
+        if let window = AppDelegate.mainWindow {
+            window.makeKeyAndOrderFront(nil)
+            bringOnScreen(window)
+        } else if AppDelegate.openMainWindow != nil {
+            AppDelegate.openMainWindow?()
+        } else {
+            // The scene of swiftui did not come up at all. The window is made
+            // here then, a moment later, so that a person who opens the app
+            // from the menu bar is not left with nothing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self = self else { return }
+                if AppDelegate.mainWindow == nil && AppDelegate.openMainWindow == nil {
+                    self.makeMainWindowIfThereIsNone()
+                }
+            }
+        }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // The window of the app, made here.
+    //
+    // The window of swiftui comes with the scene of swiftui, and the scene
+    // does not always come up: an app that macOS starts at the login can
+    // come up without a scene, and then there is no window and no way to ask
+    // for one. The window is made here out of the same view, and it is the
+    // window of the app from then on.
+    private func makeMainWindowIfThereIsNone() {
+        guard AppDelegate.mainWindow == nil else { return }
+        guard let viewModel = AppDelegate.viewModel else { return }
+        let controller = NSHostingController(rootView: ContentView(viewModel: viewModel))
+        let window = NSWindow(contentViewController: controller)
+        window.title = "ProxiRoute"
+        window.styleMask = [.titled, .closable, .resizable]
+        window.setContentSize(NSSize(width: 900, height: 652))
+        window.contentMinSize = NSSize(width: 800, height: 600)
+        window.tabbingMode = .disallowed
+        window.delegate = self
+        window.center()
+        AppDelegate.mainWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSLog("[ProxiRoute] the window of the app was made here: the scene of swiftui did not come up")
+    }
+
+    // A window that is not on the screen is put in the middle of the screen.
+    //
+    // A window that was made while the login was going on can be given a
+    // place that is not a place a person can look at - above the screen, or
+    // below it. The window is there and the app is working, and a person who
+    // opens it from the menu bar sees nothing at all.
+    private func bringOnScreen(_ window: NSWindow) {
+        let frame = window.frame
+        let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(frame) }
+        guard !onScreen else { return }
+        window.center()
+        window.makeKeyAndOrderFront(nil)
     }
 
     @objc private func quitApp() {
@@ -1062,6 +1186,15 @@ struct WindowAccessor: NSViewRepresentable {
                 }
                 return
             }
+            // The app has one window and not two.
+            //
+            // The window that the app delegate made - the one that is made
+            // when the scene of swiftui did not come up - is the window of
+            // the app then, and the window of swiftui is closed.
+            if let existing = AppDelegate.mainWindow, existing !== window {
+                window.orderOut(nil)
+                return
+            }
             AppDelegate.mainWindow = window
             window.delegate = AppDelegate.shared
             // The size of the window is the size of the window, not the size of
@@ -1090,8 +1223,29 @@ struct WindowAccessor: NSViewRepresentable {
             // the ghost under the dropdown of the window menu.
             window.tabbingMode = .disallowed
             // launched at login, keep it hidden in the menu bar
+            //
+            // The window is ordered out again and again for a moment, and not
+            // only once: swiftui shows the window of its group when the scene
+            // comes up, and that can happen after the first order out. The
+            // window of an app that came up for the proxy has to stay closed:
+            // a window in the middle of the login is a window in the way of
+            // the person who is logging in.
             if AppDelegate.startHidden {
                 AppDelegate.startHidden = false
+                window.orderOut(nil)
+                keepHidden(window)
+            }
+        }
+    }
+
+    // Keeps a window closed for a moment.
+    //
+    // The order out that comes with the window is not the last one: swiftui
+    // shows the window of its group when its scene comes up, and the scene
+    // can come up after the window was found.
+    private func keepHidden(_ window: NSWindow) {
+        for delay in [0.3, 1.0, 2.0, 4.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 window.orderOut(nil)
             }
         }
