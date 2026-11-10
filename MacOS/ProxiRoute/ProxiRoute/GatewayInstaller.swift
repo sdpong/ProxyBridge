@@ -142,6 +142,22 @@ enum GatewayInstaller {
             i=$((i + 1))
         done
 
+        # A helper that the system does not know about may still be running,
+        # and it still holds the socket.
+        #
+        # The command above takes the daemon out of the system, and a daemon
+        # that is not in the system is not found: a helper that something
+        # started outside of the system keeps running, and the socket with
+        # it. A new daemon cannot bind a socket that is taken, so it comes up
+        # and falls over again, and the app talks to the old helper - which
+        # is a helper of an earlier version, or a helper that cannot do what
+        # it is asked to do. It is taken away, and the socket with it.
+        if [ -S "/var/run/$NAME.sock" ]; then
+            /usr/bin/pkill -f "$TOOLS" >/dev/null 2>&1 || true
+            sleep 0.5
+            rm -f "/var/run/$NAME.sock"
+        fi
+
         mkdir -p /Library/PrivilegedHelperTools /Library/LaunchDaemons
         cp -f "$SRC_TOOLS" "$TOOLS" || { echo "The helper could not be copied."; exit 1; }
         chown root:wheel "$TOOLS" || { echo "The ownership of the helper could not be set."; exit 1; }
@@ -200,6 +216,12 @@ enum GatewayInstaller {
         # The daemon goes out of the system first, so that it does not put the
         # rules back while they are being taken away.
         /bin/launchctl bootout "system/$NAME" >/dev/null 2>&1 || /bin/launchctl unload "$DAEMON" >/dev/null 2>&1 || true
+
+        # A helper that the system does not know about is still running, and
+        # it is still holding the socket. It is taken away as well: a helper
+        # that is left behind answers the app while it is not there any more.
+        /usr/bin/pkill -f "$TOOLS" >/dev/null 2>&1 || true
+        sleep 0.5
 
         # The machine goes back the way it was: the rules of /etc/pf.conf are
         # the rules the system itself reads, and the forwarding goes off,

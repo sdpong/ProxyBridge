@@ -198,9 +198,7 @@ final class GatewayController: ObservableObject {
         // The addresses of the proxies go with it: the traffic to a proxy
         // does not go through a proxy, or the proxy would be talking to
         // itself.
-        let proxyHosts = proxies.map { $0.host }
-        let result = GatewayHelperClient.enable(interface: name, redirectPort: GatewayDataPlane.redirectPort,
-                                                redirectAddress: redirectAddress, proxyHosts: proxyHosts)
+        let result = enableHelper(redirectAddress: redirectAddress)
         if result.ok {
             isRunning = true
             helperInstalled = true
@@ -229,6 +227,19 @@ final class GatewayController: ObservableObject {
             }
         }
         startPolling()
+    }
+
+    // The rules of the filter are put in place and the forwarding of the
+    // machine is turned on.
+    //
+    // The helper is asked, because the device of the filter is for root
+    // alone. The addresses of the proxies go with it: the traffic to a proxy
+    // does not go through a proxy, or the proxy would be talking to itself.
+    private func enableHelper(redirectAddress: String) -> GatewayHelperClient.Result {
+        let name = interface.trimmingCharacters(in: .whitespaces)
+        let proxyHosts = proxies.map { $0.host }
+        return GatewayHelperClient.enable(interface: name, redirectPort: GatewayDataPlane.redirectPort,
+                                          redirectAddress: redirectAddress, proxyHosts: proxyHosts)
     }
 
     // Turns the gateway off.
@@ -278,8 +289,47 @@ final class GatewayController: ObservableObject {
                 ? L10n.t("The gateway mode is on.")
                 : L10n.t("The gateway mode is off.")
         }
+        // The rules of the filter belong to the machine, and the machine may
+        // put its own rules over them: the filter is then off, or on with
+        // the rules of the machine alone. The traffic of the network is not
+        // redirected any more, while the helper still says that the gateway
+        // is on - it remembers that it put the rules in place, and it does
+        // not know that the machine took them away.
+        //
+        // The rules are put in place again. Only the rules of the filter are
+        // loaded again: the program that carries the traffic keeps carrying
+        // it, and the connections that are open are not dropped.
+        let filterOn = result.response.filterEnabled ?? true
+        let forwardingOn = result.response.forwardingEnabled ?? true
+        if isEnabled, enabled, !filterOn || !forwardingOn {
+            reapplyRules()
+        }
         // what the traffic of the network has carried so far
         carriedConnections = dataPlane.statistics.connections
+    }
+
+    // The rules of the filter are put in place again.
+    //
+    // The question is asked every few seconds, and a helper that refuses
+    // would say so in the log every few seconds. The rules are therefore
+    // put in place again now and then, and not on every question.
+    private var lastReapply = Date.distantPast
+
+    private func reapplyRules() {
+        let now = Date()
+        guard now.timeIntervalSince(lastReapply) > 10 else { return }
+        lastReapply = now
+
+        let name = interface.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        guard let redirectAddress = LocalAddresses.address(ofInterface: name) else { return }
+
+        let result = enableHelper(redirectAddress: redirectAddress)
+        if result.ok {
+            log("The rules of the gateway were put in place again", level: "INFO")
+        } else {
+            log("The rules of the gateway could not be put in place again: \(result.message)", level: "ERROR")
+        }
     }
 
     // How often the helper is asked.
