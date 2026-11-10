@@ -24,6 +24,22 @@ import Foundation
 // filtering part comes before a rule of the translation part. That is why
 // they are put in front of the first filtering rule and not at the end of
 // the file.
+//
+// Nothing else may come after the first filtering rule either. The filter
+// keeps the part of the ruleset it is reading, and it refuses a rule that
+// belongs to an earlier part once it has moved on: an "rdr-anchor" or a
+// "nat-anchor" that is written after the filtering rules is refused with
+// "Rules must be in order: options, normalization, queueing, translation,
+// filtering". That is what the anchor of the gateway used to do, and it
+// stopped the gateway mode from ever coming up on a Mac whose own rules
+// have a filtering rule in them - which is every Mac.
+//
+// The anchor of the gateway is therefore gone. It was written a second time
+// into an anchor of its own because it was not written down anywhere which
+// of the two ways macOS takes the rules of the translation part. macOS
+// takes them where they are written, and the anchor protected nothing: it
+// was declared in the same file as the rules next to it, so it lived exactly
+// as long as they did.
 
 enum GatewayFilter {
 
@@ -84,23 +100,16 @@ enum GatewayFilter {
     // list of rules.
     static let gatewayRulesPath = "/var/run/com.sdpong.proxiroute.pf.rules"
 
-    // The anchor of the gateway.
-    //
-    // The rules are written in two places: straight into the translation part
-    // of the ruleset, and into an anchor of their own that is declared
-    // there. Which of the two macOS actually evaluates is not written down
-    // anywhere, so both are written and the rules say the same thing in both.
-    static let anchorName = "com.sdpong.proxiroute/gateway"
-
-    // The file of the anchor.
-    static let anchorPath = "/var/run/com.sdpong.proxiroute.pf.anchor"
-
     // The rules of the machine with the rules of the gateway put in.
     //
     // The rules of the gateway go in front of the first filtering rule of
     // the machine. If there is no filtering rule, they go at the end: the
     // filter will still take them, and the machine has no rule of its own
     // that they could be in the wrong order with.
+    //
+    // Nothing is added after the rules of the machine. The filter keeps the
+    // part of the ruleset it is reading, and a rule of the translation part
+    // that comes after a rule of the filtering part is refused.
     static func mergedRules(base: String, gateway: Rules) -> String {
         let ours = gateway.text
         var out: [String] = []
@@ -123,13 +132,6 @@ enum GatewayFilter {
             out.append(ours)
         }
 
-        // the anchor of the gateway is declared in the translation part and
-        // loaded at the end of the file
-        out.append("")
-        out.append("rdr-anchor \"\(anchorName)\"")
-        out.append("nat-anchor \"\(anchorName)\"")
-        out.append("load anchor \"\(anchorName)\" from \"\(anchorPath)\"")
-
         return out.joined(separator: "\n") + "\n"
     }
 
@@ -141,6 +143,15 @@ enum GatewayFilter {
         guard let result = run("/sbin/pfctl", ["-s", "info"]) else { return false }
         return result.output.contains("Status: Enabled")
     }
+
+    // Whether the filter was turned on by the gateway mode.
+    //
+    // The filter of the machine is a switch of its own: the machine may have
+    // it on before the gateway mode comes up, and then it is not the gateway
+    // mode that may turn it off again. The gateway mode turns it on only
+    // when it was off, and it turns it off only when it was the one that
+    // turned it on - so that the machine is the way it was.
+    static var filterEnabledByTheGateway = false
 
     // Is the forwarding of the machine on right now?
     //
@@ -175,14 +186,6 @@ enum GatewayFilter {
             return .failure(Failure("The rules of the gateway could not be written: \(error.localizedDescription)"))
         }
 
-        // the same rules go into the anchor, so that the two ways of saying
-        // them say the same thing
-        do {
-            try rules.text.write(toFile: anchorPath, atomically: true, encoding: .utf8)
-        } catch {
-            return .failure(Failure("The anchor of the gateway could not be written: \(error.localizedDescription)"))
-        }
-
         // the file is checked before it is loaded
         let check = run("/sbin/pfctl", ["-n", "-f", gatewayRulesPath])
         if let check, check.wasRefused {
@@ -203,6 +206,9 @@ enum GatewayFilter {
                 // but nothing is going through them
                 return .failure(Failure("The filter could not be turned on: \(enableFilter.output)"))
             }
+            // the gateway mode turned the filter on, so it is the one that has
+            // to turn it off again
+            filterEnabledByTheGateway = true
         }
 
         // and the machine has to forward
@@ -237,7 +243,21 @@ enum GatewayFilter {
 
         // the rules of the gateway are not needed any more
         try? FileManager.default.removeItem(atPath: gatewayRulesPath)
-        try? FileManager.default.removeItem(atPath: anchorPath)
+
+        // the filter goes off as well, if it is the gateway mode that turned
+        // it on: a machine whose filter was off before the gateway mode came
+        // up is a machine whose filter has to be off again when it goes.
+        // The rules of the machine are back by now, so the filter has nothing
+        // of ours left to do.
+        if filterEnabledByTheGateway {
+            filterEnabledByTheGateway = false
+            if filterEnabled() {
+                // "-d" is what turns the filter off. There is no "-X": the
+                // tool says "option requires an argument" and the filter
+                // stays on.
+                _ = run("/sbin/pfctl", ["-d"])
+            }
+        }
 
         return .success("The gateway is off.")
     }

@@ -130,6 +130,18 @@ enum GatewayInstaller {
         # is still running, and it holds the old socket.
         /bin/launchctl bootout "system/$NAME" >/dev/null 2>&1 || /bin/launchctl unload "$DAEMON" >/dev/null 2>&1 || true
 
+        # The daemon is gone only when the system says so. The command that
+        # takes it out returns before the system has finished with it, and a
+        # new one put in at that moment is refused with "Bootstrap failed: 5:
+        # Input/output error" - which is a way of saying that the system is
+        # busy. So the system is asked, and the answer is waited for.
+        i=0
+        while [ $i -lt 30 ]; do
+            if ! /bin/launchctl print "system/$NAME" >/dev/null 2>&1; then break; fi
+            sleep 0.2
+            i=$((i + 1))
+        done
+
         mkdir -p /Library/PrivilegedHelperTools /Library/LaunchDaemons
         cp -f "$SRC_TOOLS" "$TOOLS" || { echo "The helper could not be copied."; exit 1; }
         chown root:wheel "$TOOLS" || { echo "The ownership of the helper could not be set."; exit 1; }
@@ -141,7 +153,19 @@ enum GatewayInstaller {
         # The daemon is registered with the system, and the socket is waited
         # for: the app asks the helper right after the installation, and a
         # helper that is not up yet would say that it is not there.
-        /bin/launchctl bootstrap system "$DAEMON" || { echo "The daemon of the helper could not be started."; exit 1; }
+        # The daemon is registered with the system. The system says "Input
+        # output error" when it is asked twice in a row, so it is asked again
+        # a few times before it is given up on.
+        i=0
+        while [ $i -lt 6 ]; do
+            if /bin/launchctl bootstrap system "$DAEMON" >/dev/null 2>&1; then break; fi
+            sleep 0.5
+            i=$((i + 1))
+        done
+        if ! /bin/launchctl print "system/$NAME" >/dev/null 2>&1; then
+            echo "The daemon of the helper could not be started."
+            exit 1
+        fi
         i=0
         while [ $i -lt 25 ]; do
             if [ -S "/var/run/$NAME.sock" ]; then break; fi

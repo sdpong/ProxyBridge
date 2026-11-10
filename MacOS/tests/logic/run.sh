@@ -15,6 +15,8 @@ trap 'rm -rf "$TMP"' EXIT
 export PROXIRoute_SCRIPTS="$HERE/../../ProxiRoute/scripts"
 # the sources of the app, for the tests that read them.
 export PROXIRoute_APP="$HERE/../../ProxiRoute/ProxiRoute"
+# the sources of the helper of the gateway mode, for the tests that read them.
+export PROXIRoute_HELPER="$HERE/../../ProxiRoute/helper/GatewayFilter.swift"
 
 run_test() {   # <test file> <extension sources...>
     local test="$1"; shift

@@ -68,6 +68,26 @@ if let restore = restore, let register = register {
 // the filter of the machine is never turned off
 check(!install.contains("pfctl -d"), "the installation never turns the filter of the machine off")
 
+// the old daemon is gone before the new one is registered.
+//
+// The command that takes a daemon out returns before the system has finished
+// with it, and a new daemon put in at that moment is refused with "Bootstrap
+// failed: 5: Input/output error" - the system saying that it is busy. So the
+// system is asked whether the old one is gone, and the answer is waited for.
+let bootoutOfTheOld = install.range(of: "launchctl bootout")
+let askAboutTheDaemon = install.range(of: "launchctl print \"system/$NAME\"")
+check(bootoutOfTheOld != nil, "the daemon of an earlier version is taken out")
+check(askAboutTheDaemon != nil, "the installation asks the system whether the daemon is gone")
+if let bootoutOfTheOld = bootoutOfTheOld, let askAboutTheDaemon = askAboutTheDaemon {
+    check(bootoutOfTheOld.lowerBound < askAboutTheDaemon.lowerBound,
+          "the old daemon is taken out before the system is asked about it")
+}
+
+// the system is asked again when it refuses
+check(install.contains("while [ $i -lt 6 ]"), "the installation asks the system again")
+check(install.contains("if ! /bin/launchctl print \"system/$NAME\""),
+      "the installation says so when the daemon did not come up")
+
 // the installation says so when the helper did not come up
 check(install.contains("if [ ! -S \"/var/run/$NAME.sock\" ]"), "the installation checks that the helper came up")
 

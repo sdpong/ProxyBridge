@@ -143,11 +143,41 @@ for line in ["scrub-anchor \"com.apple/*\"", "nat-anchor \"com.apple/*\"",
     check(merged.contains(line), "the rule '\(line)' of the machine is still there")
 }
 
-// the anchor of the gateway is declared and loaded
-check(merged.contains("rdr-anchor \"com.sdpong.proxiroute/gateway\""),
-      "the anchor of the gateway is declared")
-check(merged.contains("load anchor \"com.sdpong.proxiroute/gateway\""),
-      "the anchor of the gateway is loaded")
+// nothing of the translation part comes after the first filtering rule.
+//
+// The filter keeps the part of the ruleset it is reading, and it refuses a
+// rule of the translation part once it has moved on to the filtering part:
+// "Rules must be in order: options, normalization, queueing, translation,
+// filtering". An anchor that is declared after the filtering rules of the
+// machine is refused with exactly that, and the gateway mode never came up.
+let firstFiltering = lines.firstIndex { line in
+    let t = line.trimmingCharacters(in: .whitespaces)
+    return t.hasPrefix("anchor ") || t.hasPrefix("pass ")
+        || t.hasPrefix("block ") || t.hasPrefix("match ")
+}
+check(firstFiltering != nil, "the rules of the machine have a filtering rule")
+if let firstFiltering = firstFiltering {
+    let after = lines[firstFiltering...]
+    let translationAfter = after.filter { line in
+        let t = line.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("rdr ") || t.hasPrefix("nat ") || t.hasPrefix("no rdr ")
+            || t.hasPrefix("no nat ") || t.hasPrefix("rdr-anchor ") || t.hasPrefix("nat-anchor ")
+    }
+    check(translationAfter.isEmpty,
+          "no rule of the translation part comes after the filtering rules")
+    check(!merged.contains("rdr-anchor \"com.sdpong.proxiroute"),
+          "the gateway does not declare an anchor after the filtering rules")
+    check(!merged.contains("load anchor \"com.sdpong.proxiroute"),
+          "the gateway does not load an anchor that is not declared")
+}
+
+// the rules of the machine are the last thing in the file
+let lastBaseLine = base.components(separatedBy: "\n").last { line in
+    let t = line.trimmingCharacters(in: .whitespaces)
+    return !t.isEmpty && !t.hasPrefix("#")
+}
+check(merged.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(lastBaseLine ?? ""),
+      "the rules of the machine are the last thing in the file")
 
 // a machine whose rules have no filtering rule at all still gets them
 let bare = """
@@ -156,6 +186,25 @@ nat-anchor "com.apple/*"
 """
 let bareMerged = GatewayFilter.mergedRules(base: bare, gateway: rules)
 check(bareMerged.contains("rdr pass on en0"), "the rules of the gateway go in even without a filtering rule")
+
+// the filter of the machine goes off again when the gateway mode is the one
+// that turned it on
+//
+// The filter of the machine is a switch of its own: a machine that had it on
+// before the gateway mode came up keeps it on. The gateway mode turns it off
+// only when it was the one that turned it on, so that the machine is the way
+// it was.
+//
+// The option that turns the filter off is "-d". There is no "-X": the tool
+// says "option requires an argument" and the filter stays on.
+let helperSource = (try? String(contentsOfFile: ProcessInfo.processInfo.environment["PROXIRoute_HELPER"] ?? "", encoding: .utf8)) ?? ""
+check(!helperSource.isEmpty, "the source of the helper is there")
+check(helperSource.contains("filterEnabledByTheGateway"),
+      "the helper remembers that it turned the filter on")
+check(helperSource.contains("[\"-d\"]"),
+      "the filter of the machine is turned off with -d")
+check(!helperSource.contains("[\"-X\"]"),
+      "the filter of the machine is not turned off with -X")
 
 // ---------------------------------------------------------------- the network
 
