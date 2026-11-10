@@ -333,6 +333,47 @@ enum UpstreamWait {
         return home.appendingPathComponent("Library/Logs/ProxiRoute/start-at-login.log")
     }
 
+    /// what the agent writes down when it says something that is not the order
+    ///
+    /// The order of the start is in the log of the login, and the errors of
+    /// the agent are here: the log of the login is what a person reads after
+    /// a restart, and it should not be full of the noise of the agent.
+    static func agentLogURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        return home.appendingPathComponent("Library/Logs/ProxiRoute/agent.log")
+    }
+
+    /// Writes a line into the log of the login.
+    ///
+    /// The log of the login is what a person looks at after a restart to see
+    /// whether the proxy came up before the other apps. The app writes into
+    /// it itself and not only through the agent, because the app can be
+    /// started by the login item of macOS as well - and then the agent does
+    /// not know anything about it.
+    ///
+    /// The lines are the ones of the script of the agent, in the same shape:
+    /// the time and then the words.
+    static func appendLoginLog(_ text: String,
+                               home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        let manager = FileManager.default
+        let folder = logURL(home: home).deletingLastPathComponent()
+        try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let line = "\(formatter.string(from: Date())) \(text)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let url = logURL(home: home)
+        // the file is opened for the writing and not created every time, so
+        // that the lines of the agent and the lines of the app do not fight
+        // over it
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+            return
+        }
+        try? data.write(to: url, options: .atomic)
+    }
+
     // MARK: - the script
 
     /// The script that starts the app at the login.
@@ -544,8 +585,10 @@ enum UpstreamWait {
             // the menu bar instead of showing its window right after the login
             "EnvironmentVariables": [startHiddenVariable: "1"],
             "WorkingDirectory": supportFolderURL(home: home).path,
-            "StandardOutPath": logURL(home: home).path,
-            "StandardErrorPath": logURL(home: home).path
+            // the noise of the agent goes into its own log: the log of the
+            // login is the order of the start, and it should be readable
+            "StandardOutPath": agentLogURL(home: home).path,
+            "StandardErrorPath": agentLogURL(home: home).path
         ]
     }
 }

@@ -365,7 +365,36 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             name: NSApplication.didChangeOcclusionStateNotification,
             object: nil
         )
-        installAndStartProxy()
+        startProxyWhenTheNetworkIsThere()
+    }
+
+    // The traffic of the machine is taken over when the network of the
+    // machine is there.
+    //
+    // The app can come up before the network does - the login item of macOS
+    // starts it in the wave of the login, and the wave is before the Wi-Fi
+    // has associated - and a tunnel that is put up on a machine without a
+    // network carries nothing. The proxy waits for the network instead, and
+    // the app itself is there right away.
+    //
+    // The wait is not long: a machine whose network never comes up would
+    // otherwise never start the proxy, and a proxy that is wanted is better
+    // than one that is never there.
+    private func startProxyWhenTheNetworkIsThere() {
+        if NetworkReadiness.isUp() {
+            installAndStartProxy()
+            return
+        }
+        NSLog("[ProxiRoute] the network of the machine is not there yet, the proxy waits for it")
+        let deadline = Date().addingTimeInterval(NetworkReadiness.waitLimit)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            if NetworkReadiness.isUp() || Date() >= deadline {
+                self.installAndStartProxy()
+                return
+            }
+            self.startProxyWhenTheNetworkIsThere()
+        }
     }
 
     @objc private func occlusionChanged() {
@@ -1212,6 +1241,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // person sees in it is when the app was there and when the traffic
         // of the machine was taken over.
         NSLog("[ProxiRoute] the proxy is starting")
+        UpstreamWait.appendLoginLog("the proxy is starting")
         // The extension is asked for on every start, as it always was.
         //
         // An earlier version of this file skipped the request when the build
@@ -1722,6 +1752,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 // login. What the person sees in it is when the app was
                 // there and when the traffic of the machine was taken over.
                 NSLog("[ProxiRoute] the tunnel is up, the traffic of the machine is proxied")
+                UpstreamWait.appendLoginLog("the tunnel is up, the traffic of the machine is proxied")
                 if !self.proxyConfigs.isEmpty {
                     self.sendProxyConfigsToExtension(session: session)
                 }

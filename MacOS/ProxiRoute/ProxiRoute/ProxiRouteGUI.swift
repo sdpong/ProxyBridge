@@ -72,16 +72,31 @@ enum LoginItem {
     @discardableResult
     static func applyToSystem(_ enabled: Bool) -> String {
         if enabled {
-            // The agent is the launcher now, so the app must not be a login
-            // item as well: two launchers would start the app twice.
-            removeSystemLoginItem()
+            // The app is a login item of macOS, and the launch agent is there
+            // as well.
+            //
+            // The login item is what starts the app in the wave of the login,
+            // and that wave is the earliest that an app of a person can be
+            // there: it is the wave of the browsers and of the other apps
+            // that use the network.
+            //
+            // It was measured on this machine: the agent of the app was
+            // spawned at 13:29:46 - in the middle of the wave - and launchd
+            // held it there for 74 seconds, until the identity of the process
+            // was resolved and the agent was let go. The app was up at
+            // 13:31:29, a minute and a half after every other app of the
+            // wave. The login item does not wait for that.
+            //
+            // The agent is the second hand: it waits for the network of the
+            // machine, and it starts the app when the login item did not.
+            // Two launchers that start the app at the same time are no
+            // problem: the app that comes second sees that the first one is
+            // already there and goes away (InstanceLock).
+            addSystemLoginItem()
             do {
                 try LaunchOrderAgent.install()
-                return L10n.t("ProxiRoute will be started by macOS at the login, before the browsers and the other apps that use the network.")
+                return L10n.t("ProxiRoute will be started by macOS at the login, together with the other login items, and the launch agent starts it again when it is not there.")
             } catch {
-                // The agent could not be put in place, so the app has to be a
-                // login item, or the proxy would not come up at all.
-                addSystemLoginItem()
                 return L10n.f("The launch agent could not be installed, so macOS will start ProxiRoute together with the other login items: %@", error.localizedDescription)
             }
         }
@@ -93,18 +108,33 @@ enum LoginItem {
 
     // Puts the app into the login items of macOS.
     //
-    // It is the fallback for the case where the launch agent cannot be put
-    // in place. The registration can fail - an app that is not in
-    // /Applications, for example - and there is nothing to do about that
-    // here.
+    // This is what starts the app in the wave of the login: the wave of the
+    // browsers and of the other apps that use the network.
+    //
+    // The registration can fail - an app that is not in /Applications, for
+    // example - and there is nothing to do about that here. What happened is
+    // written into the log of the login, so that it can be seen afterwards
+    // whether the app is a login item of macOS or not.
     static func addSystemLoginItem() {
         guard #available(macOS 13.0, *) else { return }
         do {
             if SMAppService.mainApp.status != .enabled {
                 try SMAppService.mainApp.register()
             }
+            UpstreamWait.appendLoginLog("the app is a login item of macOS (\(loginItemStatus()))")
         } catch {
-            // registration can fail if the app isn't in /Applications
+            UpstreamWait.appendLoginLog("the app could not become a login item of macOS: \(error.localizedDescription)")
+        }
+    }
+
+    // What macOS says about the login item of the app.
+    private static func loginItemStatus() -> String {
+        guard #available(macOS 13.0, *) else { return "this macOS has no login items" }
+        switch SMAppService.mainApp.status {
+        case .enabled: return "enabled"
+        case .requiresApproval: return "it waits for the approval in the system settings"
+        case .notRegistered: return "not registered"
+        default: return "not found"
         }
     }
 
@@ -113,12 +143,13 @@ enum LoginItem {
         guard #available(macOS 13.0, *) else { return }
         guard SMAppService.mainApp.status == .enabled else { return }
         try? SMAppService.mainApp.unregister()
+        UpstreamWait.appendLoginLog("the app is not a login item of macOS any more")
     }
 }
 
 // no @main here, main.swift starts this for a normal launch (and the command line mode otherwise)
 struct ProxiRouteGUIApp: App {
-    @StateObject private var viewModel = ProxiRouteViewModel()
+    @StateObject private var viewModel: ProxiRouteViewModel
     // the language of the app. the menus are built again when it changes, so a
     // language can be picked without restarting the app
     @StateObject private var localization = LocalizationManager.shared
@@ -126,6 +157,22 @@ struct ProxiRouteGUIApp: App {
     // whether the app has to be started again for the menus of macOS to be
     // in the language that was picked
     @State private var languageRestartNeeded = false
+
+    init() {
+        // The view model belongs to the app from the start, and not to the
+        // window.
+        //
+        // The app can come up without a window: the launch agent starts it
+        // that way, and the login item of macOS does the same. The view model
+        // was given to the app delegate when the window appeared, and a
+        // window that never appears leaves it empty - and a menu item that
+        // unwraps it took the app down with it. That is what happened when a
+        // person opened the settings from the menu bar of an app that had
+        // been started at the login.
+        let model = ProxiRouteViewModel()
+        _viewModel = StateObject(wrappedValue: model)
+        AppDelegate.viewModel = model
+    }
 
     var body: some Scene {
         // The window has an id of its own.
@@ -568,6 +615,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // reference would be gone by then, and swiftui has no way to open the
     // window of a group without an id.
     static var mainWindow: NSWindow?
+    // the way back to the window of swiftui, when there is no window yet
+    //
+    // The app can come up without a window, and then the window has to be
+    // asked for. The action comes from the view that is inside the window, so
+    // it is there as soon as the view is made - and the view is made even
+    // when the window is never shown.
+    static var openMainWindow: (() -> Void)?
     // set at launch, tells WindowAccessor to keep the first window hidden
     static var startHidden = false
 
@@ -590,6 +644,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // window can be hidden in the menu bar, and the menus are there even
         // then.
         StandardMenuLocalizer.install()
+        // the window may be there before the app delegate is: the delegate
+        // of the window is the app delegate, and the close of the window is
+        // what the app has to know about.
+        AppDelegate.mainWindow?.delegate = self
         // The windows of the app are not put into a tab and not into a window
         // set. macOS puts the items of the tabs and of the window sets into
         // the window menu of every app, and they are grey in this one: the
@@ -639,9 +697,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             UpstreamWait.writeSessionMarker(session: UpstreamWait.currentSession())
         }
         // The order of the start is written down, so that it can be seen
-        // afterwards. The log of the agent and the log of the app are the same
-        // file, and the agent starts the app at the login.
-        NSLog("[ProxiRoute] the app is starting (\(startedByAgent ? "by the agent" : "by hand"))")
+        // afterwards.
+        //
+        // The app writes into the log of the login itself and not only
+        // through the agent: the app can be started by the login item of
+        // macOS as well, and then the agent does not know anything about it.
+        let how = startedByAgent ? "by the agent" : (isDefaultLaunch ? "by hand" : "at the login")
+        NSLog("[ProxiRoute] the app is starting (\(how))")
+        UpstreamWait.appendLoginLog("the app is starting (\(how))")
     }
 
     // never let AppKit decide this. it counts every window, including the one
@@ -790,8 +853,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     @objc func showMainWindow() {
         NSApp.setActivationPolicy(.regular)
-        // the window is still there, it was only closed. bringing it back is
-        // enough, swiftui does not make a second one.
+        // SwiftUI is asked for the window first.
+        //
+        // It is the one that knows how to open the window of its group: a
+        // window that was never shown - the app can come up without one - is
+        // not brought back by asking AppKit to order it in front.
+        AppDelegate.openMainWindow?()
+        // and the window that is there is brought back as well, for the case
+        // where it was closed and not never shown
         AppDelegate.mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -856,26 +925,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
     
     @objc func openProxySettings() {
+        // the view model is empty only when the app could not start
+        // at all, and a window that cannot be opened is better than an app
+        // that is taken down by it.
+        guard let viewModel = AppDelegate.viewModel else { return }
         openWindow(title: L10n.t("Proxy Settings"), size: NSSize(width: 600, height: 500)) {
-            ProxySettingsView(viewModel: AppDelegate.viewModel!)
+            ProxySettingsView(viewModel: viewModel)
         }
     }
     
     @objc func openProxyRules() {
+        // the view model is empty only when the app could not start
+        // at all, and a window that cannot be opened is better than an app
+        // that is taken down by it.
+        guard let viewModel = AppDelegate.viewModel else { return }
         openWindow(title: L10n.t("Proxy Rules"), size: NSSize(width: 1200, height: 600), resizable: true) {
-            ProxyRulesView(viewModel: AppDelegate.viewModel!)
+            ProxyRulesView(viewModel: viewModel)
         }
     }
 
     @objc func openProxyChains() {
+        // the view model is empty only when the app could not start
+        // at all, and a window that cannot be opened is better than an app
+        // that is taken down by it.
+        guard let viewModel = AppDelegate.viewModel else { return }
         openWindow(title: L10n.t("Proxy Chains"), size: NSSize(width: 720, height: 460)) {
-            ProxyChainsView(viewModel: AppDelegate.viewModel!)
+            ProxyChainsView(viewModel: viewModel)
         }
     }
 
     @objc func openDNSSettings() {
+        // the view model is empty only when the app could not start
+        // at all, and a window that cannot be opened is better than an app
+        // that is taken down by it.
+        guard let viewModel = AppDelegate.viewModel else { return }
         openWindow(title: L10n.t("DNS Settings"), size: NSSize(width: 660, height: 660)) {
-            DNSSettingsView(viewModel: AppDelegate.viewModel!)
+            DNSSettingsView(viewModel: viewModel)
         }
         // the window is reused, so the view has to be told that it is opened
         // again: it fills itself with the settings that are stored right now
@@ -883,14 +968,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     @objc func openLocalProxyServer() {
+        // the view model is empty only when the app could not start
+        // at all, and a window that cannot be opened is better than an app
+        // that is taken down by it.
+        guard let viewModel = AppDelegate.viewModel else { return }
         openWindow(title: L10n.t("Proxy Server"), size: NSSize(width: 640, height: 540)) {
-            LocalProxyServerView(viewModel: AppDelegate.viewModel!)
+            LocalProxyServerView(viewModel: viewModel)
         }
     }
 
     @objc func openGateway() {
+        // the view model is empty only when the app could not start
+        // at all, and a window that cannot be opened is better than an app
+        // that is taken down by it.
+        guard let viewModel = AppDelegate.viewModel else { return }
         openWindow(title: L10n.t("Gateway"), size: NSSize(width: 620, height: 440)) {
-            RouteSettingsView(viewModel: AppDelegate.viewModel!)
+            RouteSettingsView(viewModel: viewModel)
         }
     }
 
@@ -937,10 +1030,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
 // grabs the main SwiftUI window so the app delegate can intercept its close
 struct WindowAccessor: NSViewRepresentable {
+    // the way back to the window of swiftui
+    //
+    // The app can come up without a window at all - the launch agent starts
+    // it that way, and so does the login item of macOS - and then there is
+    // nothing to bring back. The action of swiftui is the way to ask for a
+    // window that was never made.
+    @Environment(\.openWindow) private var openWindowAction
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
+        AppDelegate.openMainWindow = { [openWindowAction] in
+            openWindowAction(id: "main")
+        }
+        // The view is not in a window when it is made, so the window is
+        // looked for a moment later.
+        //
+        // And a moment later again, when it is still not there: an app that
+        // comes up without a window has one that is only made later, and a
+        // window that is never found is a window that can never be brought
+        // back.
+        attach(to: view, triesLeft: 40)
+        return view
+    }
+
+    private func attach(to view: NSView, triesLeft: Int) {
         DispatchQueue.main.async {
-            guard let window = view.window else { return }
+            guard let window = view.window else {
+                if triesLeft > 0 {
+                    self.attach(to: view, triesLeft: triesLeft - 1)
+                }
+                return
+            }
             AppDelegate.mainWindow = window
             window.delegate = AppDelegate.shared
             // The size of the window is the size of the window, not the size of
@@ -974,7 +1095,6 @@ struct WindowAccessor: NSViewRepresentable {
                 window.orderOut(nil)
             }
         }
-        return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}

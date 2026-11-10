@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // one executable, two modes. started with a command line option (--profile, --version, ...)
 // it runs without a window (CLIRunner.swift). started normally, from Finder or the Dock,
@@ -24,6 +25,17 @@ UserDefaults.standard.set([L10n.language.rawValue], forKey: "AppleLanguages")
 
 if CLIArguments.isCLI(CommandLine.arguments) {
     CLI.run(arguments: CommandLine.arguments)
-} else {
+} else if InstanceLock.acquire() {
     ProxiRouteGUIApp.main()
+} else {
+    // The app is already running: the one that is there is brought to the
+    // front and this one goes away.
+    //
+    // Two launchers can start the app at the same moment - the login item of
+    // macOS and the launch agent that waits for the network - and two apps
+    // would write over each other's settings.
+    if let pid = InstanceLock.otherInstance() {
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
+    }
+    exit(0)
 }

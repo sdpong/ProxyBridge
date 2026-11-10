@@ -96,7 +96,7 @@ struct OptionsTabView: View {
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(L10n.t("Closing the window does not stop the proxy. The app stays in the background and the tunnel keeps running until it is stopped here or the app is quit."))
-                        Text(L10n.t("macOS starts all the login items at the same moment, so the order cannot be set in the system settings. With this switch on, macOS starts ProxiRoute as soon as the login is there - before the browsers and the other apps that use the network - and ProxiRoute takes the traffic over as soon as the proxy on this machine - Clash Meta, for example - answers on its port."))
+                        Text(L10n.t("macOS starts all the login items at the same moment, so the order cannot be set in the system settings. With this switch on, ProxiRoute is one of the login items: macOS starts it in the wave of the login - the wave of the browsers and the other apps that use the network - and the launch agent starts it again when it is not there. The traffic of the machine is taken over as soon as the network of the machine is there and the proxy on this machine - Clash Meta, for example - answers on its port."))
                     }
                 }
             }
