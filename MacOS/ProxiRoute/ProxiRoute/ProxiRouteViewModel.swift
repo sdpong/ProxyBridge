@@ -360,6 +360,19 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         if runtimeMode.runsLocalProxyServer {
             startLocalProxyServer()
         }
+        // The gateway mode comes up with the app, the same way the proxy
+        // server does.
+        //
+        // A machine that was the gateway of its network stays that way when
+        // the app is opened again: the rules of the filter are in the helper,
+        // which comes up with the machine, and the program that carries the
+        // traffic of the network is this app. An app that comes up without
+        // asking the helper would leave the traffic of the clients pointed
+        // at a port that nobody listens on - and a client that is sent there
+        // has no internet at all.
+        if runtimeMode.runsGateway {
+            startGateway()
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(occlusionChanged),
@@ -664,6 +677,16 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     func stopGateway() {
         gateway.isEnabled = false
         gateway.stop()
+    }
+
+    // The app is going away.
+    //
+    // The gateway mode needs the app: the traffic of the network is
+    // redirected to a port that the app listens on, and the port stops
+    // listening when the app goes away. The rules of the filter go with it,
+    // or the clients of the network are sent to a port where nobody listens.
+    func shutDownGateway() {
+        gateway.shutDown()
     }
 
     // The mode is the one switch: the server listens when the mode says so,

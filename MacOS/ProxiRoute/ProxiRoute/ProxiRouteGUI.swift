@@ -1034,6 +1034,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // marker says that the app was closed and not only that it was started.
     func applicationWillTerminate(_ notification: Notification) {
         UpstreamWait.writeSessionMarker(session: UpstreamWait.currentSession(), quit: true)
+        // The gateway mode goes off with the app: the traffic of the network
+        // is redirected to a port that the app listens on, and the port stops
+        // listening when the app goes away. The rules of the filter go with
+        // it, or the clients of the network are sent to a port where nobody
+        // listens.
+        AppDelegate.viewModel?.shutDownGateway()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

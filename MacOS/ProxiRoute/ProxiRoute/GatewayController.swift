@@ -49,7 +49,18 @@ final class GatewayController: ObservableObject {
     //
     // It is empty when the person has not chosen one, and then the helper
     // is asked to find the interface the machine leaves the network by.
-    @Published var interface: String = ""
+    //
+    // The choice is remembered: the gateway mode comes back up when the app
+    // is opened again, and it cannot come up without knowing the card the
+    // traffic comes in through.
+    @Published var interface: String = "" {
+        didSet {
+            guard interface != oldValue else { return }
+            UserDefaults.standard.set(interface, forKey: GatewayController.interfaceStorageKey)
+        }
+    }
+
+    static let interfaceStorageKey = "gatewayInterface"
 
     // Whether the gateway mode is wanted.
     //
@@ -95,6 +106,9 @@ final class GatewayController: ObservableObject {
         // of it can do about it, so such a state is not kept.
         let state = GatewayInstaller.state()
         helperState = state
+        // the card the traffic comes in through is remembered, so that the
+        // gateway can come up by itself when the app is opened again
+        interface = UserDefaults.standard.string(forKey: GatewayController.interfaceStorageKey) ?? ""
         let stored = UserDefaults.standard.bool(forKey: GatewayController.storageKey)
         isEnabled = GatewayInstaller.initialGatewayState(stored: stored, state: state)
         if stored && !state.isInstalled {
@@ -190,6 +204,7 @@ final class GatewayController: ObservableObject {
         if result.ok {
             isRunning = true
             helperInstalled = true
+            stopStartRetry()
             status = L10n.f("The gateway mode is on: the traffic of the network comes in through %@.", name)
             log("The gateway mode was turned on on \(name)", level: "INFO")
         } else {
@@ -206,12 +221,19 @@ final class GatewayController: ObservableObject {
                 ? result.message
                 : L10n.t("The helper of the gateway mode is not installed. Install it with the button in this card.")
             log("The gateway mode could not be turned on: \(result.message)", level: "ERROR")
+            // The helper is on the machine but it did not answer: it comes up
+            // with the machine, and the app may be opened before it is there.
+            // The question is asked again in a moment.
+            if state == .installed {
+                scheduleStartRetry()
+            }
         }
         startPolling()
     }
 
     // Turns the gateway off.
     func stop() {
+        stopStartRetry()
         stopPolling()
         guard helperInstalled else {
             dataPlane.stop()
@@ -264,6 +286,63 @@ final class GatewayController: ObservableObject {
     private let pollInterval: TimeInterval = 3.0
 
     // MARK: - the helper of the gateway mode
+
+    // The app is going away.
+    //
+    // The gateway mode needs the app: the traffic of the network is
+    // redirected to a port that this program listens on, and the port stops
+    // listening when the app goes away. Rules that were left behind would
+    // send the clients of the network to a port where nobody listens, and a
+    // client that is sent there has no internet at all.
+    //
+    // The state that is remembered is not touched: the gateway comes back up
+    // when the app is opened again, and it comes up with the rules of the
+    // filter and the app that carries them.
+    func shutDown() {
+        stopStartRetry()
+        stopPolling()
+        guard isRunning else {
+            dataPlane.stop()
+            return
+        }
+        let result = GatewayHelperClient.disable()
+        dataPlane.stop()
+        isRunning = false
+        if !result.ok {
+            log("The gateway mode could not be turned off when the app went away: \(result.message)", level: "ERROR")
+        }
+    }
+
+    // The gateway is asked to start again in a moment.
+    //
+    // The helper of the gateway mode is a program of root that comes up with
+    // the machine, and the app may be opened before it answers. A gateway
+    // that fails because of that is a gateway that does not come up by
+    // itself, and the person in front of the window has no way of knowing
+    // that the helper was not ready yet.
+    //
+    // The question is asked a few times and not for ever: a helper that
+    // refuses is a helper that is told so in the window.
+    private var startRetry: DispatchWorkItem?
+    private var startAttempts = 0
+    private let maxStartAttempts = 5
+
+    private func scheduleStartRetry() {
+        guard startAttempts < maxStartAttempts else { return }
+        startAttempts += 1
+        startRetry?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.start()
+        }
+        startRetry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func stopStartRetry() {
+        startRetry?.cancel()
+        startRetry = nil
+        startAttempts = 0
+    }
 
     // Asks whether the helper is on the machine.
     //
