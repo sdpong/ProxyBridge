@@ -15,6 +15,13 @@
  * All three of those were confirmed by the test of the gateway mode on this
  * machine: the answer came back with the port the traffic was going to
  * before the filter touched it.
+ *
+ * The same ioctl says where a datagram was going. The kernel keeps the states
+ * of tcp and of udp apart, so the protocol is one of the numbers that go in,
+ * and a state of udp is only found when the variant of the protocol is the
+ * one the filter gives to its own rules. That was measured on this machine as
+ * well: the lookup of a datagram finds its state with the variant at one and
+ * finds nothing with it at zero.
  */
 
 #include "pfnatlook.h"
@@ -104,7 +111,7 @@ static int open_filter_device(void) {
  */
 int proxiroute_natlook(uint32_t client_address, uint16_t client_port,
                        uint32_t destination_address, uint16_t destination_port,
-                       int protocol_number,
+                       int protocol_number, int protocol_variant,
                        struct proxiroute_natlook_result *result) {
     if (result == NULL) {
         errno = EINVAL;
@@ -134,7 +141,9 @@ int proxiroute_natlook(uint32_t client_address, uint16_t client_port,
 
     request.af = AF_INET;
     request.proto = (uint8_t)protocol_number;
-    request.proto_variant = 0;
+    /* the variant of the protocol: the kernel compares it when it looks a
+     * state of udp up, and it does not look at it for tcp */
+    request.proto_variant = (uint8_t)protocol_variant;
     /* the direction has to be PF_OUT: the lookup in the other direction
      * gives back what was asked for */
     request.direction = (uint8_t)PROXIROUTE_PF_OUT;

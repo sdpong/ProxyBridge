@@ -101,8 +101,11 @@ enum GatewayHelperClient {
     }
 
     // Turns the gateway on.
-    static func enable(interface: String, redirectPort: Int) -> Result {
-        return ask(.enable(interface: interface, redirectPort: redirectPort))
+    static func enable(interface: String, redirectPort: Int,
+                       redirectAddress: String? = nil,
+                       proxyHosts: [String] = []) -> Result {
+        return ask(.enable(interface: interface, redirectPort: redirectPort,
+                           redirectAddress: redirectAddress, proxyHosts: proxyHosts))
     }
 
     // Turns the gateway off.
@@ -112,9 +115,11 @@ enum GatewayHelperClient {
 
     // Where was this connection going before it was redirected?
     static func lookup(clientAddress: String, clientPort: Int,
-                       destinationAddress: String, destinationPort: Int) -> Result {
+                       destinationAddress: String, destinationPort: Int,
+                       transport: String = "TCP") -> Result {
         return ask(.lookup(clientAddress: clientAddress, clientPort: clientPort,
-                           destinationAddress: destinationAddress, destinationPort: destinationPort))
+                           destinationAddress: destinationAddress, destinationPort: destinationPort,
+                           transport: transport))
     }
 
     // The words for a helper that is not there.

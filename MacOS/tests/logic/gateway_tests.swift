@@ -42,7 +42,7 @@ check(decoded.redirectPort == 18081, "the port of the question is kept")
 // the question of where a connection was going keeps all four numbers
 let lookup = GatewayProtocol.Request.lookup(clientAddress: "192.168.254.140",
                                              clientPort: 54321,
-                                             destinationAddress: "127.0.0.1",
+                                             destinationAddress: "192.168.254.205",
                                              destinationPort: 18081)
 guard let lookupData = GatewayProtocol.encode(lookup),
       let lookupBack = GatewayProtocol.decodeRequest(lookupData) else {
@@ -51,9 +51,36 @@ guard let lookupData = GatewayProtocol.encode(lookup),
 }
 check(lookupBack.clientAddress == "192.168.254.140", "the address of the client is kept")
 check(lookupBack.clientPort == 54321, "the port of the client is kept")
-check(lookupBack.destinationAddress == "127.0.0.1", "the address of the destination is kept")
+check(lookupBack.destinationAddress == "192.168.254.205", "the address of the destination is kept")
 check(lookupBack.destinationPort == 18081, "the port of the destination is kept")
 check(lookupBack.command == .lookup, "the command of a lookup is kept")
+check(lookupBack.transport == "TCP", "a question about a connection says tcp")
+
+// the question of a datagram says udp
+let datagram = GatewayProtocol.Request.lookup(clientAddress: "192.168.254.140",
+                                               clientPort: 54321,
+                                               destinationAddress: "192.168.254.205",
+                                               destinationPort: 18081,
+                                               transport: "UDP")
+guard let datagramData = GatewayProtocol.encode(datagram),
+      let datagramBack = GatewayProtocol.decodeRequest(datagramData) else {
+    print("  FAIL the question of a datagram could not be written")
+    exit(1)
+}
+check(datagramBack.transport == "UDP", "a question about a datagram says udp")
+
+// the address the traffic is redirected to goes with the question of turning
+// the gateway on
+let withAddress = GatewayProtocol.Request.enable(interface: "en0", redirectPort: 18081,
+                                                  redirectAddress: "192.168.254.205",
+                                                  proxyHosts: ["1.2.3.4", "proxy.example.com"])
+guard let withAddressData = GatewayProtocol.encode(withAddress),
+      let withAddressBack = GatewayProtocol.decodeRequest(withAddressData) else {
+    print("  FAIL the question of turning on could not be written")
+    exit(1)
+}
+check(withAddressBack.redirectAddress == "192.168.254.205", "the address of the redirect is kept")
+check(withAddressBack.proxyHosts?.count == 2, "the addresses of the proxies are kept")
 
 // an answer comes back the way it went out
 let response = GatewayProtocol.Response.success(message: "The gateway is on.", version: "1")
@@ -94,16 +121,32 @@ print("gateway filter tests:")
 let rules = GatewayFilter.Rules(interface: "en0",
                                 address: "192.168.254.205",
                                 subnet: "192.168.254.0/24",
-                                redirectPort: 18081)
+                                redirectPort: 18081,
+                                ownAddresses: ["192.168.254.205", "192.168.254.206"],
+                                proxyAddresses: ["1.2.3.4"])
 let text = rules.text
-check(text.contains("rdr pass on en0 proto tcp from 192.168.254.0/24 to any -> 127.0.0.1 port 18081"),
+check(text.contains("rdr pass on en0 proto tcp from 192.168.254.0/24 to any -> 192.168.254.205 port 18081"),
       "the traffic of the network is redirected to the app")
+check(text.contains("rdr pass on en0 proto udp from 192.168.254.0/24 to any -> 192.168.254.205 port 18081"),
+      "the datagrams of the network are redirected to the app as well")
 check(text.contains("no rdr on en0 from 192.168.254.205 to any"),
       "the traffic of this machine is not redirected")
 check(text.contains("no nat on en0 from 192.168.254.205 to any"),
       "the traffic of this machine is not translated either")
+check(text.contains("no rdr on en0 from 192.168.254.206 to any"),
+      "the traffic of this machine is not redirected from any of its addresses")
+check(text.contains("no rdr on en0 to 192.168.254.205"),
+      "the traffic that is meant for this machine is not redirected")
+check(text.contains("no rdr on en0 from 192.168.254.0/24 to 1.2.3.4"),
+      "the traffic to a proxy does not go through a proxy")
 check(text.contains("nat on en0 from 192.168.254.0/24 to any -> (en0)"),
       "the clients keep their own address on the way out")
+
+// the traffic is redirected to the address of the machine and not to the
+// loopback: the answer of the filter has to come from the same place the
+// traffic was sent to
+check(!text.contains("-> 127.0.0.1 port"),
+      "the traffic is not redirected to the loopback")
 
 // the rule that keeps the traffic of this machine out of the redirect comes
 // before the rule that redirects: the filter takes the first rule that fits
@@ -134,6 +177,23 @@ check(indexOfAnchor != nil, "the filtering rule of the machine is in the merged 
 if let indexOfRdr = indexOfRdr, let indexOfAnchor = indexOfAnchor {
     check(indexOfRdr < indexOfAnchor,
           "the rules of the gateway come before the first filtering rule")
+}
+
+// the options of the filter come in front of everything
+//
+// They belong to the first part of the ruleset, and the filter refuses a
+// file in which they come later: "set timeout" in the middle of the file is
+// refused with "Rules must be in order: options, normalization, queueing,
+// translation, filtering".
+let firstLine = lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+check(firstLine == "set timeout udp.multiple 300",
+      "the options of the filter are the first thing in the file")
+let indexOfOptions = lines.firstIndex { $0.hasPrefix("set timeout") }
+let indexOfScrub = lines.firstIndex { $0.hasPrefix("scrub-anchor") }
+check(indexOfOptions != nil, "the options of the filter are in the merged rules")
+if let indexOfOptions = indexOfOptions, let indexOfScrub = indexOfScrub {
+    check(indexOfOptions < indexOfScrub,
+          "the options of the filter come before the rules of the machine")
 }
 
 // the rules of the machine are all still there

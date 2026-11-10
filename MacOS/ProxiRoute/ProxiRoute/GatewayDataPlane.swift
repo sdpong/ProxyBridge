@@ -73,8 +73,9 @@ final class GatewayDataPlane {
                      proxies: [ProxyEndpoint],
                      chains: [String: [String]],
                      originalAddress: String,
-                     originalPort: Int) -> Plan {
-        let target = FlowTarget(address: originalAddress, port: originalPort, transport: .tcp)
+                     originalPort: Int,
+                     transport: FlowProtocol = .tcp) -> Plan {
+        let target = FlowTarget(address: originalAddress, port: originalPort, transport: transport)
         let decision = ProxyRuleEngine.decide(rules: rules, target: target,
                                               proxies: proxies, chains: chains)
         return Plan(target: target, upstream: decision.upstream, note: decision.note)
@@ -89,9 +90,46 @@ final class GatewayDataPlane {
     private var proxies: [ProxyEndpoint] = []
     private var chains: [String: [String]] = [:]
 
+    // The port the datagrams are taken in on.
+    //
+    // The port may be one the system gave, so it is asked of the socket.
+    var datagramPort: Int {
+        stateLock.lock()
+        let fd = datagramFD
+        stateLock.unlock()
+        guard fd >= 0 else { return 0 }
+        var storage = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let ok = withUnsafeMutablePointer(to: &storage) { pointer -> Int32 in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                Darwin.getsockname(fd, generic, &length)
+            }
+        }
+        guard ok == 0 else { return 0 }
+        return Int(UInt16(bigEndian: storage.sin_port))
+    }
+
     // The socket that waits for the traffic.
     private var listenFD: Int32 = -1
+    // The socket that waits for the datagrams.
+    private var datagramFD: Int32 = -1
     private var running = false
+
+    // The flows of the datagrams, by the client they come from.
+    //
+    // A datagram of the network is one flow of one client: everything a
+    // client sends from one port is one flow.
+    private var udpSessions: [String: GatewayUDPSession] = [:]
+    private let udpLock = NSLock()
+
+    // The address the traffic of the network is redirected to.
+    //
+    // It is the address of this machine on the network of the clients, and
+    // the kernel looks a flow up by it: the answer of the filter has to come
+    // from the same place the traffic was sent to.
+    private var redirectAddress: String = "127.0.0.1"
+    // The port the traffic of the network is redirected to.
+    private var redirectPort: Int = GatewayDataPlane.redirectPort
 
     // What the traffic has carried so far.
     private var connectionCount = 0
@@ -106,7 +144,7 @@ final class GatewayDataPlane {
     // The helper answers it, because the kernel only lets root read the
     // states of the filter. A test can put another answerer here, so that the
     // part of the plane that does not need a machine can be checked.
-    var lookupHandler: ((String, Int, String, Int) -> GatewayProtocol.Response)?
+    var lookupHandler: ((String, Int, String, Int, String) -> GatewayProtocol.Response)?
 
     // MARK: - the rules
 
@@ -147,18 +185,37 @@ final class GatewayDataPlane {
     // The port has to be listened on before the rules of the filter are put
     // in place: a client whose connection is redirected to a port that nobody
     // listens on is a client with no internet at all.
-    func start(port: Int = GatewayDataPlane.redirectPort) -> Result<String, Failure> {
+    //
+    // The address is the address of this machine on the network of the
+    // clients, and not the loopback. The filter sends the traffic of the
+    // network to that address, and the answer of the filter comes back from
+    // it: the answer has to come from the same place the traffic was sent
+    // to, or the kernel does not recognise it as the answer of the traffic
+    // it redirected, and the client sees the answer of somebody else.
+    func start(port: Int = GatewayDataPlane.redirectPort,
+               address: String = "127.0.0.1") -> Result<String, Failure> {
         stop()
 
-        let result = LocalProxySocket.listen(address: "127.0.0.1",
+        let result = LocalProxySocket.listen(address: address,
                                              port: port,
                                              interfaceName: nil)
         guard let fd = result.fd else {
             return .failure(Failure(result.reason ?? "The socket could not be made."))
         }
 
+        // the datagrams come in on a socket of their own: a datagram is not a
+        // connection, and a socket of connections cannot take one
+        let datagrams = LocalProxySocket.listenUDP(address: address, port: port)
+        guard let datagramFD = datagrams.fd else {
+            Darwin.close(fd)
+            return .failure(Failure(datagrams.reason ?? "The socket for the datagrams could not be made."))
+        }
+
         stateLock.lock()
         listenFD = fd
+        self.datagramFD = datagramFD
+        redirectAddress = address
+        redirectPort = port
         running = true
         stateLock.unlock()
 
@@ -168,7 +225,13 @@ final class GatewayDataPlane {
         thread.stackSize = 512 * 1024
         thread.start()
 
-        return .success("The gateway is listening on 127.0.0.1:\(GatewayDataPlane.redirectPort).")
+        let datagramThread = Thread { [weak self] in
+            self?.datagramLoop()
+        }
+        datagramThread.stackSize = 512 * 1024
+        datagramThread.start()
+
+        return .success("The gateway is listening on \(address):\(port).")
     }
 
     // Stops listening. The connections that are open are ended as well.
@@ -177,7 +240,9 @@ final class GatewayDataPlane {
         let wasRunning = running
         running = false
         let fd = listenFD
+        let datagrams = datagramFD
         listenFD = -1
+        datagramFD = -1
         stateLock.unlock()
 
         if wasRunning, fd >= 0 {
@@ -185,6 +250,19 @@ final class GatewayDataPlane {
             // thread ends
             shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
+        }
+        if wasRunning, datagrams >= 0 {
+            shutdown(datagrams, SHUT_RDWR)
+            Darwin.close(datagrams)
+        }
+
+        // the flows of the datagrams go with the socket they came in on
+        udpLock.lock()
+        let sessions = udpSessions.values
+        udpSessions.removeAll()
+        udpLock.unlock()
+        for session in sessions {
+            session.close()
         }
     }
 
@@ -220,6 +298,156 @@ final class GatewayDataPlane {
             }
             thread.stackSize = 512 * 1024
             thread.start()
+        }
+    }
+
+    // MARK: - the datagrams
+
+    // The datagrams of the network come in here.
+    //
+    // A datagram is not a connection: it has no opening and no closing, and
+    // the client says nothing about where it was going. The kernel is the
+    // only one that knows, and it is asked once for every flow.
+    private func datagramLoop() {
+        var buffer = [UInt8](repeating: 0, count: 65535)
+        while isRunning {
+            stateLock.lock()
+            let fd = datagramFD
+            stateLock.unlock()
+            if fd < 0 { break }
+
+            var from = sockaddr_in()
+            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let count = withUnsafeMutablePointer(to: &from) { pointer -> Int in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                    Darwin.recvfrom(fd, &buffer, buffer.count, 0, generic, &length)
+                }
+            }
+            if count < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            if count == 0 { continue }
+
+            handle(datagram: Data(buffer[0..<count]), from: from)
+        }
+    }
+
+    // One datagram of the network.
+    private func handle(datagram: Data, from client: sockaddr_in) {
+        guard let session = session(for: client) else { return }
+        session.enqueue(datagram)
+    }
+
+    // The flow of a client.
+    //
+    // The flow is made when the first datagram of the client comes in, and it
+    // is kept until it has been quiet for a while. The flows that are quiet
+    // are given up from time to time, and there is a cap on how many there
+    // may be.
+    private func session(for client: sockaddr_in) -> GatewayUDPSession? {
+        let key = GatewayUDPSession.key(for: client)
+
+        udpLock.lock()
+        if let existing = udpSessions[key] {
+            udpLock.unlock()
+            return existing
+        }
+        udpLock.unlock()
+
+        stateLock.lock()
+        let fd = datagramFD
+        let address = redirectAddress
+        let port = redirectPort
+        stateLock.unlock()
+        guard fd >= 0 else { return nil }
+
+        let made = GatewayUDPSession(clientAddress: client, listenFD: fd) { [weak self] host, clientPort in
+            guard let self else { return nil }
+            return self.planForDatagram(clientAddress: host, clientPort: clientPort,
+                                        redirectAddress: address, redirectPort: port)
+        }
+
+        udpLock.lock()
+        // two datagrams of the same client may come in at the same moment,
+        // and there is one flow for both of them
+        if let existing = udpSessions[key] {
+            udpLock.unlock()
+            made.close()
+            return existing
+        }
+        let full = udpSessions.count >= GatewayUDPSession.flowLimit
+        udpLock.unlock()
+
+        if full {
+            // the machine that is the gateway of a big network has many
+            // flows, and the quiet ones are given up to make room
+            log("There are already \(GatewayUDPSession.flowLimit) flows of datagrams: the quiet ones are given up",
+                level: "WARN")
+            giveUpQuietFlows()
+        }
+
+        udpLock.lock()
+        if let existing = udpSessions[key] {
+            udpLock.unlock()
+            made.close()
+            return existing
+        }
+        udpSessions[key] = made
+        udpLock.unlock()
+
+        // the flow takes itself out of the place it is kept when it is over
+        made.onEnded = { [weak self] ended in
+            guard let self else { return }
+            self.udpLock.lock()
+            self.udpSessions.removeValue(forKey: ended)
+            self.udpLock.unlock()
+        }
+
+        made.start()
+        return made
+    }
+
+    // Where the datagrams of a flow go.
+    //
+    // The kernel is asked where the datagram was going before the filter
+    // redirected it, and the rules of the app say where it goes now.
+    private func planForDatagram(clientAddress: String, clientPort: Int,
+                                  redirectAddress: String, redirectPort: Int) -> GatewayUDPSession.Plan? {
+        let answer = askWhereItWasGoing(peer: (clientAddress, clientPort),
+                                        local: (redirectAddress, redirectPort),
+                                        transport: "UDP")
+        guard answer.ok,
+              let originalAddress = answer.originalAddress,
+              let originalPort = answer.originalPort else {
+            let reason = answer.message ?? "the kernel did not say where the datagram was going"
+            log("The datagrams of \(clientAddress) were dropped: \(reason)", level: "ERROR")
+            return nil
+        }
+
+        let (allRules, allProxies, allChains) = snapshot()
+        let plan = GatewayDataPlane.plan(rules: allRules, proxies: allProxies, chains: allChains,
+                                         originalAddress: originalAddress, originalPort: originalPort,
+                                         transport: .udp)
+        if let note = plan.note {
+            log(note, level: "WARN")
+        }
+        return GatewayUDPSession.Plan(target: plan.target, upstream: plan.upstream, note: plan.note)
+    }
+
+    // The flows that have been quiet for too long are given up.
+    //
+    // A flow of udp has no closing, so the silence is the only sign that it
+    // is over.
+    func giveUpQuietFlows() {
+        udpLock.lock()
+        let quiet = udpSessions.values.filter { $0.idleTime() > GatewayUDPSession.idleTimeout }
+        for flow in quiet {
+            udpSessions.removeValue(forKey: flow.key)
+        }
+        udpLock.unlock()
+        for flow in quiet {
+            flow.close()
         }
     }
 
@@ -288,12 +516,14 @@ final class GatewayDataPlane {
     // what the plane asks the kernel, and a question that is wrong is a
     // question that is wrong in one place only.
     func askWhereItWasGoing(peer: (address: String, port: Int),
-                             local: (address: String, port: Int)) -> GatewayProtocol.Response {
+                             local: (address: String, port: Int),
+                             transport: String = "TCP") -> GatewayProtocol.Response {
         if let lookupHandler {
-            return lookupHandler(peer.address, peer.port, local.address, local.port)
+            return lookupHandler(peer.address, peer.port, local.address, local.port, transport)
         }
         return GatewayHelperClient.lookup(clientAddress: peer.address, clientPort: peer.port,
-                                          destinationAddress: local.address, destinationPort: local.port).response
+                                          destinationAddress: local.address, destinationPort: local.port,
+                                          transport: transport).response
     }
 
     // The way out.
@@ -435,7 +665,7 @@ final class GatewayDataPlane {
     }
 
     // The text of an address.
-    private static func text(of address: sockaddr_in) -> String {
+    static func text(of address: sockaddr_in) -> String {
         var storage = address.sin_addr
         var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
         guard inet_ntop(AF_INET, &storage, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil else {

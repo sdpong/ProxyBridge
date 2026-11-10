@@ -30,6 +30,17 @@ enum LocalProxyDialer {
     }
 
     private static func socks5(fd: Int32, endpoint: ProxyEndpoint, target: FlowTarget) -> Bool {
+        guard socks5Greeting(fd: fd, endpoint: endpoint) else { return false }
+        return socks5Request(fd: fd, target: target)
+    }
+
+    // The greeting of a socks5 proxy.
+    //
+    // The proxy says which ways of saying who it is it takes, and the way of
+    // the user name and the password is taken when it asks for it. The
+    // greeting of an association of udp is the same as the greeting of a
+    // connection.
+    static func socks5Greeting(fd: Int32, endpoint: ProxyEndpoint) -> Bool {
         let hasAuth = endpoint.username != nil && endpoint.password != nil
         var greeting = Data([0x05, hasAuth ? 0x02 : 0x01])
         greeting.append(hasAuth ? 0x02 : 0x00)
@@ -42,7 +53,7 @@ enum LocalProxyDialer {
         } else if answer[1] != 0x00 {
             return false
         }
-        return socks5Request(fd: fd, target: target)
+        return true
     }
 
     private static func socks5Auth(fd: Int32, endpoint: ProxyEndpoint) -> Bool {
@@ -73,20 +84,166 @@ enum LocalProxyDialer {
         request.append(UInt8((target.port >> 8) & 0xFF))
         request.append(UInt8(target.port & 0xFF))
         guard LocalProxySocket.sendAll(fd, request) else { return false }
+        return socks5Reply(fd: fd) != nil
+    }
 
-        guard let head = LocalProxySocket.recvExact(fd, 4), head.count == 4 else { return false }
-        if head[1] != 0x00 { return false }
-        let addressLength: Int
+    // The answer of a socks5 proxy: the address it says.
+    //
+    // The address may be a number, a name or a number of the sixth version,
+    // and how long it is is only known after the kind of it has been read.
+    // The answer of a proxy that says it did not work says nothing else: the
+    // reason of the refusal is in the second byte, and the caller says it in
+    // its own words.
+    static func socks5Reply(fd: Int32) -> (host: String, port: Int)? {
+        guard let head = LocalProxySocket.recvExact(fd, 4), head.count == 4 else { return nil }
+        guard head[1] == 0x00 else { return nil }
         switch head[3] {
-        case 0x01: addressLength = 4
-        case 0x04: addressLength = 16
+        case 0x01:
+            guard let body = LocalProxySocket.recvExact(fd, 6), body.count == 6 else { return nil }
+            return (addressText(Array(body[0..<4])), portText(Array(body[4..<6])))
+        case 0x04:
+            guard let body = LocalProxySocket.recvExact(fd, 18), body.count == 18 else { return nil }
+            return (addressText(Array(body[0..<16])), portText(Array(body[16..<18])))
         case 0x03:
-            guard let length = LocalProxySocket.recvExact(fd, 1), let count = length.first else { return false }
-            return LocalProxySocket.recvExact(fd, Int(count) + 2) != nil
+            guard let length = LocalProxySocket.recvExact(fd, 1), let count = length.first else { return nil }
+            guard let body = LocalProxySocket.recvExact(fd, Int(count) + 2),
+                  body.count == Int(count) + 2 else { return nil }
+            return (String(decoding: body[0..<(body.count - 2)], as: UTF8.self),
+                    portText(Array(body[(body.count - 2)...])))
         default:
-            return false
+            return nil
         }
-        return LocalProxySocket.recvExact(fd, addressLength + 2) != nil
+    }
+
+    // The text of an address of the answer of a socks5 proxy.
+    private static func addressText(_ bytes: [UInt8]) -> String {
+        if bytes.count == 4 {
+            return bytes.map { String($0) }.joined(separator: ".")
+        }
+        if bytes.count == 16 {
+            let groups = stride(from: 0, to: 16, by: 2).map { index -> String in
+                let value = (UInt16(bytes[index]) << 8) | UInt16(bytes[index + 1])
+                return String(value, radix: 16)
+            }
+            return groups.joined(separator: ":")
+        }
+        return ""
+    }
+
+    // The number of a port of the answer of a socks5 proxy.
+    private static func portText(_ bytes: [UInt8]) -> Int {
+        guard bytes.count >= 2 else { return 0 }
+        return (Int(bytes[0]) << 8) | Int(bytes[1])
+    }
+
+    // MARK: - the association of udp
+
+    // The association of udp of a socks5 proxy.
+    //
+    // A socks5 proxy carries udp in an association: one tcp control connection
+    // that asks for it, and one udp socket that the datagrams go through. The
+    // address of the real destination travels in the header of every
+    // datagram, so one association can carry the datagrams of many
+    // destinations.
+    //
+    // The control connection has to stay open: a proxy that sees it closed
+    // takes the association away.
+    struct UDPAssociation {
+        // the socket the datagrams go out of
+        let socket: Int32
+        // the connection that holds the association open
+        let control: Int32
+        // where the datagrams have to go
+        let host: String
+        let port: Int
+    }
+
+    // The association of udp of a socks5 proxy.
+    //
+    // The proxy says where its relay is, and the datagrams go there. The
+    // request carries no address of its own: the proxy does not need one,
+    // and the address the datagrams come from is the one it remembers.
+    static func udpAssociate(endpoint: ProxyEndpoint) -> UDPAssociation? {
+        guard endpoint.type.lowercased() == "socks5" else { return nil }
+
+        let result = LocalProxySocket.connect(host: endpoint.host, port: endpoint.port, timeout: 15)
+        guard let control = result.fd else { return nil }
+        LocalProxySocket.clearTimeout(control)
+
+        guard socks5Greeting(fd: control, endpoint: endpoint) else {
+            Darwin.close(control)
+            return nil
+        }
+
+        let request = Data([0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        guard LocalProxySocket.sendAll(control, request) else {
+            Darwin.close(control)
+            return nil
+        }
+
+        guard let relay = socks5Reply(fd: control), relay.port != 0 else {
+            Darwin.close(control)
+            return nil
+        }
+        // many proxies answer with the address that means "the place you
+        // reached me at", and the relay is there
+        let host = (relay.host == "0.0.0.0" || relay.host == "::" || relay.host.isEmpty)
+            ? endpoint.host
+            : relay.host
+
+        // the socket of the datagrams
+        guard let socket = LocalProxySocket.bindUDP() else {
+            Darwin.close(control)
+            return nil
+        }
+
+        return UDPAssociation(socket: socket, control: control, host: host, port: relay.port)
+    }
+
+    // The header of a socks5 datagram: RSV RSV FRAG ATYP ADDR PORT DATA
+    //
+    // The address of the real destination is in it, and the header is what
+    // says which destination a datagram is for.
+    static func udpHeader(host: String, port: Int) -> Data {
+        var header = Data([0x00, 0x00, 0x00])
+        if let ipv4 = IPv4Address(host) {
+            header.append(0x01)
+            header.append(contentsOf: ipv4.rawValue)
+        } else if let ipv6 = IPv6Address(host) {
+            header.append(0x04)
+            header.append(contentsOf: ipv6.rawValue)
+        } else {
+            let name = Array(host.utf8)
+            header.append(0x03)
+            header.append(UInt8(name.count))
+            header.append(contentsOf: name)
+        }
+        header.append(UInt8((port >> 8) & 0xFF))
+        header.append(UInt8(port & 0xFF))
+        return header
+    }
+
+    // A datagram of a socks5 proxy without its header.
+    //
+    // The answer of the proxy carries the address the datagram came from, and
+    // the part that is behind the header is the datagram itself.
+    static func stripUDPHeader(_ datagram: Data) -> Data? {
+        guard datagram.count >= 4 else { return nil }
+        switch datagram[3] {
+        case 0x01:
+            guard datagram.count >= 10 else { return nil }
+            return datagram.subdata(in: 10..<datagram.count)
+        case 0x04:
+            guard datagram.count >= 22 else { return nil }
+            return datagram.subdata(in: 22..<datagram.count)
+        case 0x03:
+            guard datagram.count >= 5 else { return nil }
+            let offset = 5 + Int(datagram[4]) + 2
+            guard datagram.count >= offset else { return nil }
+            return datagram.subdata(in: offset..<datagram.count)
+        default:
+            return nil
+        }
     }
 
     private static func socks4(fd: Int32, endpoint: ProxyEndpoint, target: FlowTarget) -> Bool {

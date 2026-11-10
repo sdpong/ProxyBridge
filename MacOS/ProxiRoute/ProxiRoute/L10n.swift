@@ -151,6 +151,7 @@ enum L10n {
         "Choose": "请选择",
         "Status": "状态",
         "The gateway mode needs an interface: the network card the other terminals reach this machine through.": "网关模式需要一张网卡：其他终端连到本机所用的那张。",
+        "The interface %@ has no address on this network.": "网卡 %@ 在这个网络上没有地址。",
         "The gateway mode is on: the traffic of the network comes in through %@.": "网关模式已打开：网络里的流量从 %@ 进来。",
         "The gateway mode is on.": "网关模式已打开。",
         "The gateway mode is off.": "网关模式已关闭。",

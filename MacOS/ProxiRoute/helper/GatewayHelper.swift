@@ -36,6 +36,8 @@ final class GatewayHelper {
     private var interface: String?
     // The port the redirected traffic is taken in on.
     private var redirectPort: Int?
+    // The address the redirected traffic is taken in on.
+    private var redirectAddress: String?
 
     // The version of the helper, which is in every answer.
     static let version = "1"
@@ -241,6 +243,7 @@ final class GatewayHelper {
         answer.forwardingEnabled = GatewayFilter.forwardingEnabled()
         answer.interface = interface
         answer.redirectPort = redirectPort
+        answer.redirectAddress = redirectAddress
         return answer
     }
 
@@ -259,19 +262,56 @@ final class GatewayHelper {
             return GatewayProtocol.Response.failure(message: "The interface \(interface) has no address on this network.")
         }
 
+        // The address the traffic is redirected to.
+        //
+        // The app names it, because the app is the one that listens on it:
+        // the answer of the filter has to come from the same place the
+        // traffic was sent to, and the app is the one that sends it. The
+        // address has to be an address of this machine, or the answer would
+        // come from a place that does not exist.
+        let ownAddresses = GatewayNetwork.addresses()
+        let redirectAddress: String
+        if let named = request.redirectAddress, !named.isEmpty {
+            guard ownAddresses.contains(named) else {
+                return GatewayProtocol.Response.failure(
+                    message: "The address \(named) is not an address of this machine.")
+            }
+            redirectAddress = named
+        } else {
+            redirectAddress = network.address
+        }
+
+        // The addresses of the proxies: the traffic to a proxy does not go
+        // through a proxy, or the proxy would be talking to itself. Only the
+        // addresses that are written down as numbers can be named in a rule:
+        // a proxy that is named by a word is not known to the filter.
+        //
+        // The same proxy may be written down many times in the list of the
+        // app, and a rule that names an address twice is a rule that is read
+        // twice.
+        var seen = Set<String>()
+        let proxyAddresses = (request.proxyHosts ?? []).filter { host in
+            guard GatewayNetwork.number(host) != nil else { return false }
+            return seen.insert(host).inserted
+        }
+
         let rules = GatewayFilter.Rules(interface: interface,
-                                         address: network.address,
+                                         address: redirectAddress,
                                          subnet: network.subnet,
-                                         redirectPort: port)
+                                         redirectPort: port,
+                                         ownAddresses: ownAddresses,
+                                         proxyAddresses: proxyAddresses)
         switch GatewayFilter.enable(rules: rules) {
         case .success(let message):
             gatewayEnabled = true
             self.interface = interface
             redirectPort = port
+            self.redirectAddress = redirectAddress
             var answer = GatewayProtocol.Response.success(message: message, version: GatewayHelper.version)
             answer.gatewayEnabled = true
             answer.interface = interface
             answer.redirectPort = port
+            answer.redirectAddress = redirectAddress
             return answer
         case .failure(let failure):
             return GatewayProtocol.Response.failure(message: failure.reason)
@@ -312,11 +352,30 @@ final class GatewayHelper {
         var result = proxiroute_natlook_result()
         // the ports go in the way the kernel wants them: the order of the
         // network, the same order the answer comes back in
+        //
+        // The protocol is said as well, because the kernel keeps the states
+        // of tcp and of udp apart. A state of udp is only found when the
+        // variant of the protocol is the one the filter gives to its own
+        // rules: that was measured on this machine, where a lookup of a
+        // datagram finds its state with the variant at one and finds
+        // nothing with it at zero.
+        let transport = (request.transport ?? "TCP").uppercased()
+        let protocolNumber: Int32
+        let protocolVariant: Int32
+        if transport == "UDP" {
+            protocolNumber = IPPROTO_UDP
+            protocolVariant = PROXIROUTE_PF_EXTFILTER_APD
+        } else {
+            protocolNumber = IPPROTO_TCP
+            protocolVariant = 0
+        }
+
         let rc = proxiroute_natlook(client,
                                     UInt16(clientPort).bigEndian,
                                     destination,
                                     UInt16(destinationPort).bigEndian,
-                                    IPPROTO_TCP,
+                                    protocolNumber,
+                                    protocolVariant,
                                     &result)
         if rc != 0 {
             // the kernel says why: there is no such state, or there is more

@@ -61,9 +61,49 @@ enum GatewayFilter {
     // network the clients are on.
     struct Rules: Equatable {
         let interface: String
+        // the address of this machine on that interface. The traffic of the
+        // network is redirected to it, and not to the loopback: the answer
+        // of the filter has to come from the same place the traffic was sent
+        // to, or the kernel does not recognise it as the answer of the
+        // traffic it redirected.
         let address: String
         let subnet: String
         let redirectPort: Int
+        // every address of this machine. The traffic of this machine is not
+        // redirected, whichever address it goes out with, and a machine may
+        // have more than one address on the network of the clients.
+        let ownAddresses: [String]
+        // the addresses of the proxies of the app. The traffic to a proxy
+        // does not go through a proxy, or the proxy would be talking to
+        // itself.
+        let proxyAddresses: [String]
+
+        init(interface: String,
+             address: String,
+             subnet: String,
+             redirectPort: Int,
+             ownAddresses: [String] = [],
+             proxyAddresses: [String] = []) {
+            self.interface = interface
+            self.address = address
+            self.subnet = subnet
+            self.redirectPort = redirectPort
+            self.ownAddresses = ownAddresses
+            self.proxyAddresses = proxyAddresses
+        }
+
+        // The addresses of this machine that the rules name.
+        //
+        // The address of the interface is the first one, and it is always
+        // there even when the list of the other addresses is empty.
+        private var guardedAddresses: [String] {
+            var seen = Set<String>()
+            var out: [String] = []
+            for candidate in [address] + ownAddresses where !candidate.isEmpty {
+                if seen.insert(candidate).inserted { out.append(candidate) }
+            }
+            return out
+        }
 
         // The rules themselves.
         //
@@ -71,18 +111,47 @@ enum GatewayFilter {
         // out of the redirect comes first, because the rule that redirects
         // would otherwise catch it too.
         var text: String {
-            return """
-            # The traffic of this machine is not redirected, or the machine
-            # would take its own traffic in and send it out again.
-            no rdr on \(interface) from \(address) to any
-            no nat on \(interface) from \(address) to any
-            # The traffic that comes in from the network is redirected to the
-            # app, which takes it in and sends it on by the rules.
-            rdr pass on \(interface) proto tcp from \(subnet) to any -> 127.0.0.1 port \(redirectPort)
-            # The clients keep their own address on the way out, so that the
-            # way back comes through this machine.
-            nat on \(interface) from \(subnet) to any -> (\(interface))
-            """
+            var out = ""
+
+            // The traffic of this machine is not redirected, or the machine
+            // would take its own traffic in and send it out again.
+            //
+            // Every address of this machine gets a rule of its own: the
+            // machine may have more than one address on this network - a
+            // second card, or an address that was added by hand - and a rule
+            // that names one of them leaves the others open.
+            for own in guardedAddresses {
+                out += "no rdr on \(interface) from \(own) to any\n"
+                out += "no nat on \(interface) from \(own) to any\n"
+            }
+
+            // The traffic that is meant for this machine is not redirected
+            // either: a client that wants to reach a server that runs on this
+            // machine has to be able to reach it.
+            for own in guardedAddresses {
+                out += "no rdr on \(interface) to \(own)\n"
+            }
+
+            // The traffic to a proxy does not go through a proxy, or the
+            // proxy would be talking to itself.
+            for proxy in proxyAddresses {
+                out += "no rdr on \(interface) from \(subnet) to \(proxy)\n"
+            }
+
+            // The traffic that comes in from the network is redirected to the
+            // app, which takes it in and sends it on by the rules.
+            //
+            // The two protocols are two rules and not one rule that names
+            // both of them: the filter of macOS reads one protocol in a
+            // rule, and a rule that says "proto { tcp, udp }" is not a rule
+            // it reads.
+            out += "rdr pass on \(interface) proto tcp from \(subnet) to any -> \(address) port \(redirectPort)\n"
+            out += "rdr pass on \(interface) proto udp from \(subnet) to any -> \(address) port \(redirectPort)\n"
+
+            // The clients keep their own address on the way out, so that the
+            // way back comes through this machine.
+            out += "nat on \(interface) from \(subnet) to any -> (\(interface))\n"
+            return out
         }
     }
 
@@ -100,6 +169,24 @@ enum GatewayFilter {
     // list of rules.
     static let gatewayRulesPath = "/var/run/com.sdpong.proxiroute.pf.rules"
 
+    // The options of the filter.
+    //
+    // They belong to the first part of the ruleset, and the filter refuses a
+    // file in which they come later: "set timeout" in the middle of the file
+    // is refused with "Rules must be in order: options, normalization,
+    // queueing, translation, filtering". So they go in front of everything,
+    // and not next to the rules of the gateway.
+    //
+    // The times of udp in the filter are short: a state of udp that has had
+    // one packet dies after thirty seconds, and a state that has had more
+    // dies after a minute. A phone that talks over udp says something every
+    // few seconds and is quiet in between, and a filter that forgets the
+    // state of the udp in between cuts the talk in pieces.
+    static let options = """
+    set timeout udp.multiple 300
+    set timeout udp.single 120
+    """
+
     // The rules of the machine with the rules of the gateway put in.
     //
     // The rules of the gateway go in front of the first filtering rule of
@@ -110,9 +197,12 @@ enum GatewayFilter {
     // Nothing is added after the rules of the machine. The filter keeps the
     // part of the ruleset it is reading, and a rule of the translation part
     // that comes after a rule of the filtering part is refused.
+    //
+    // The options go in front of the rules of the machine as well, for the
+    // reason that is written down with them.
     static func mergedRules(base: String, gateway: Rules) -> String {
         let ours = gateway.text
-        var out: [String] = []
+        var out: [String] = [options]
         var placed = false
 
         for line in base.components(separatedBy: .newlines) {

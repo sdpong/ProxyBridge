@@ -196,6 +196,55 @@ enum LocalProxySocket {
         return (nil, "The connection to \(host):\(port) failed.")
     }
 
+    // The socket that takes datagrams in.
+    //
+    // The address may be a v4 address, and the port is the port the
+    // datagrams come in on. The socket is bound to the address and not to
+    // every address of the machine: the datagrams of the network are
+    // redirected to one address, and the answer of the filter has to come
+    // from that same address, or the kernel does not recognise it.
+    static func listenUDP(address: String, port: Int) -> (fd: Int32?, reason: String?) {
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return (nil, "The socket could not be made.") }
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+        var local = sockaddr_in()
+        local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        local.sin_family = sa_family_t(AF_INET)
+        local.sin_port = in_port_t(UInt16(clamping: port)).bigEndian
+        local.sin_addr = in_addr(s_addr: inet_addr(address))
+        let bound = withUnsafePointer(to: &local) { pointer -> Int32 in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                Darwin.bind(fd, generic, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if bound != 0 {
+            let code = errno
+            Darwin.close(fd)
+            if code == EADDRINUSE {
+                return (nil, "in use")
+            }
+            return (nil, String(cString: strerror(code)))
+        }
+        return (fd, nil)
+    }
+
+    // The socket that carries the datagrams of a socks5 association.
+    //
+    // It is bound to every address of the machine and not to the loopback:
+    // the proxy has to be able to reach it, and the proxy is not on this
+    // machine. The address the datagrams go out with is chosen by the way
+    // they are routed.
+    static func bindUDP() -> Int32? {
+        let fd = socket(AF_INET, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return nil }
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
+        return fd
+    }
+
     // The socket that reaches a host with udp. The socket is connected, so
     // that only the datagrams of that host come in.
     static func connectUDP(host: String, port: Int) -> Int32? {

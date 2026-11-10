@@ -49,6 +49,39 @@ enum GatewayNetwork {
         return Info(address: address, subnet: subnet)
     }
 
+    // Every address of this machine.
+    //
+    // The rules of the gateway have to keep the traffic of this machine out
+    // of the redirect, and this machine may have more than one address: a
+    // second card on the network of the clients, or an address that was
+    // added by hand. A guard that names one address leaves the others open,
+    // so every address gets a rule of its own.
+    //
+    // The loopback is not one of them: the traffic of the loopback never
+    // comes in through the interface of the clients.
+    static func addresses() -> [String] {
+        var out: [String] = []
+        var pointer: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&pointer) == 0, let first = pointer else { return out }
+        defer { freeifaddrs(pointer) }
+
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let entry = current {
+            let ifa = entry.pointee
+            if ifa.ifa_addr.pointee.sa_family == UInt8(AF_INET) {
+                if let address = host(of: ifa.ifa_addr), address != "127.0.0.1" {
+                    out.append(address)
+                }
+            }
+            current = ifa.ifa_next
+        }
+
+        // the same address may be on two cards, and a rule that names it
+        // twice is a rule that is read twice
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }.sorted()
+    }
+
     // The text of an address.
     private static func host(of address: UnsafeMutablePointer<sockaddr>) -> String? {
         var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))

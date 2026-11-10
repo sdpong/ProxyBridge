@@ -155,11 +155,23 @@ final class GatewayController: ObservableObject {
             return
         }
 
+        // The address the traffic of the network is redirected to.
+        //
+        // It is the address of this machine on that card, and not the
+        // loopback: the answer of the filter has to come from the same place
+        // the traffic was sent to, or the kernel does not recognise it as the
+        // answer of the traffic it redirected.
+        guard let redirectAddress = LocalAddresses.address(ofInterface: name) else {
+            status = L10n.f("The interface %@ has no address on this network.", name)
+            isRunning = false
+            return
+        }
+
         // The program that takes the traffic in has to be listening before the
         // rules of the filter are in place: a client whose connection is
         // redirected to a port that nobody listens on is a client with no
         // internet at all.
-        switch dataPlane.start() {
+        switch dataPlane.start(address: redirectAddress) {
         case .failure(let failure):
             isRunning = false
             status = failure.reason
@@ -169,7 +181,12 @@ final class GatewayController: ObservableObject {
             break
         }
 
-        let result = GatewayHelperClient.enable(interface: name, redirectPort: GatewayDataPlane.redirectPort)
+        // The addresses of the proxies go with it: the traffic to a proxy
+        // does not go through a proxy, or the proxy would be talking to
+        // itself.
+        let proxyHosts = proxies.map { $0.host }
+        let result = GatewayHelperClient.enable(interface: name, redirectPort: GatewayDataPlane.redirectPort,
+                                                redirectAddress: redirectAddress, proxyHosts: proxyHosts)
         if result.ok {
             isRunning = true
             helperInstalled = true

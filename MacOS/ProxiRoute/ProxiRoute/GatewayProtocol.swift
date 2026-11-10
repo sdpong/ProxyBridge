@@ -85,6 +85,17 @@ enum GatewayProtocol {
         var interface: String?
         // the port the redirected traffic is taken in on
         var redirectPort: Int?
+        // the address the redirected traffic is taken in on
+        //
+        // The address of this machine on the interface, and not the loopback:
+        // the answer of the filter has to come from the same place the
+        // traffic was sent to, or the kernel does not recognise it.
+        var redirectAddress: String?
+        // the addresses of the proxies of the app
+        //
+        // The traffic to a proxy does not go through a proxy, or the proxy
+        // would be talking to itself.
+        var proxyHosts: [String]?
         // the address of the client that opened the connection
         var clientAddress: String?
         // the port the client opened the connection from
@@ -93,20 +104,27 @@ enum GatewayProtocol {
         var destinationAddress: String?
         // the port the connection was going to before it was redirected
         var destinationPort: Int?
+        // the protocol of the flow: "TCP" or "UDP"
+        var transport: String?
 
         // the question of where a connection was going
         static func lookup(clientAddress: String, clientPort: Int,
-                           destinationAddress: String, destinationPort: Int) -> Request {
+                           destinationAddress: String, destinationPort: Int,
+                           transport: String = "TCP") -> Request {
             return Request(command: .lookup,
                            clientAddress: clientAddress,
                            clientPort: clientPort,
                            destinationAddress: destinationAddress,
-                           destinationPort: destinationPort)
+                           destinationPort: destinationPort,
+                           transport: transport)
         }
 
         // the question of turning the gateway on
-        static func enable(interface: String, redirectPort: Int) -> Request {
-            return Request(command: .enable, interface: interface, redirectPort: redirectPort)
+        static func enable(interface: String, redirectPort: Int,
+                           redirectAddress: String? = nil,
+                           proxyHosts: [String] = []) -> Request {
+            return Request(command: .enable, interface: interface, redirectPort: redirectPort,
+                           redirectAddress: redirectAddress, proxyHosts: proxyHosts)
         }
 
         // the question of turning the gateway off
@@ -143,6 +161,8 @@ enum GatewayProtocol {
         var interface: String?
         // the port the redirected traffic is taken in on
         var redirectPort: Int?
+        // the address the redirected traffic is taken in on
+        var redirectAddress: String?
         // the address of the client, when the answer is about one connection
         var clientAddress: String?
         // where the connection was going before it was redirected

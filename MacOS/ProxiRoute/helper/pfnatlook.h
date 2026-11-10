@@ -32,12 +32,34 @@ struct proxiroute_natlook_result {
 };
 
 /*
+ * The variant of the protocol that a udp state of the filter carries.
+ *
+ * A rule of the filter has a mode of looking at the traffic, and the mode a
+ * rule has when it does not say otherwise is PF_EXTFILTER_APD, the one that
+ * looks at the address and the port. The kernel copies that mode into every
+ * state of udp it makes, and it compares it when it looks a state up: the
+ * branch of the comparison for udp uses it and the branch for tcp does not.
+ *
+ * That was measured on this machine: a lookup of a datagram that the filter
+ * redirected finds its state with the variant at one and finds nothing with
+ * it at zero, while a lookup of a connection finds its state either way.
+ *
+ * The number is the one of the filter and not one of ours: it is the mode
+ * the filter gives to the states of its own rules.
+ */
+#define PROXIROUTE_PF_EXTFILTER_APD 1
+
+/*
  * Where was this connection going?
  *
  * The four numbers are the four of the connection: the address and the port
  * the client opened the connection from, and the address and the port it was
  * going to. The answer is the place the connection was going before the
  * filter redirected it.
+ *
+ * The protocol is said as well, because the kernel keeps the states of tcp
+ * and of udp apart. The variant is the one the filter gives to a udp state,
+ * and it is left at zero for tcp, where the kernel does not look at it.
  *
  * The device of the filter is opened here, and the ioctl is sent on it - not
  * on the socket: the kernel looks the state up by the four numbers, so the
@@ -52,7 +74,7 @@ struct proxiroute_natlook_result {
  */
 int proxiroute_natlook(uint32_t client_address, uint16_t client_port,
                        uint32_t destination_address, uint16_t destination_port,
-                       int protocol_number,
+                       int protocol_number, int protocol_variant,
                        struct proxiroute_natlook_result *result);
 
 #endif /* PROXIROUTE_PFNATLOOK_H */

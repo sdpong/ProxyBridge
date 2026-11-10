@@ -41,4 +41,15 @@ enum LocalAddresses {
         }
         return out
     }
+
+    // the address of one interface
+    //
+    // The gateway mode needs the address of the card it is the gateway of:
+    // the traffic of the network is redirected to that address, and not to
+    // the loopback. The answer of the filter has to come from the same
+    // place the traffic was sent to, or the kernel does not recognise it as
+    // the answer of the traffic it redirected.
+    static func address(ofInterface name: String) -> String? {
+        return all().first(where: { $0.name == name })?.address
+    }
 }
