@@ -340,6 +340,7 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         loadTrafficLoggingSetting()
         loadDNSSetting()
         loadProfiles()
+        restoreWorkingListsIfTheyAreMissing()
         loadProxyConfig()
         // the list of what the launch agent waits for is written down right
         // away, so that the agent of the next login waits for the upstream of
@@ -889,21 +890,109 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         let d = UserDefaults.standard
         var names = d.stringArray(forKey: "profiles") ?? []
         if names.isEmpty {
-            // first run, seed a Default profile from whatever is already stored
-            names = ["Default"]
-            d.set(names, forKey: "profiles")
-            d.set("Default", forKey: "activeProfile")
-            flushWorkingSet(to: "Default")
+            // The list of the profiles is not in the settings. The profiles
+            // that are there are taken as the list, so that the name of a
+            // profile and the rules of the person are not lost.
+            //
+            // It happened on the 10th of November 2026: the list was not in
+            // the settings, the app made a profile called Default, and the
+            // proxies and the rules of the person were written over with
+            // nothing.
+            names = profileNamesInTheSettings()
+            if names.isEmpty {
+                // first run, seed a Default profile from whatever is already stored
+                names = ["Default"]
+                d.set(names, forKey: "profiles")
+                d.set("Default", forKey: "activeProfile")
+                // the working keys are the ones of the profile that is made
+                workingSetProfile = "Default"
+                flushWorkingSet(to: "Default")
+            } else {
+                d.set(names, forKey: "profiles")
+            }
         }
         profiles = names
-        activeProfile = d.string(forKey: "activeProfile") ?? names.first ?? "Default"
+        let stored = d.string(forKey: "activeProfile")
+        if let stored = stored, names.contains(stored) {
+            activeProfile = stored
+        } else {
+            // the profile that was active is not in the list any more: the
+            // first one of the list takes its place, and not a new profile
+            // that is made on the way
+            activeProfile = names.first ?? "Default"
+            d.set(activeProfile, forKey: "activeProfile")
+        }
+        // The working keys are the ones of the profile that is active.
+        //
+        // They are when they hold something. When they hold nothing and the
+        // profile holds something, they are not: the profile was not loaded,
+        // and empty working keys must not be written over the lists that are
+        // there.
+        let workingConfigs = d.data(forKey: "proxyConfigs")
+        let workingRules = d.array(forKey: "proxyRules")
+        let workingHasSomething = (workingConfigs?.isEmpty == false) || (workingRules?.isEmpty == false)
+        let profileHasSomething = d.object(forKey: profileConfigsKey(activeProfile)) != nil
+            || d.object(forKey: profileRulesKey(activeProfile)) != nil
+        workingSetProfile = (workingHasSomething || !profileHasSomething) ? activeProfile : ""
+    }
+
+    // The lists of the active profile, when the working keys do not hold them.
+    //
+    // The working keys are a copy of the lists of the profile that is active.
+    // When the copy is not there and the profile has its lists, the copy is
+    // made again: the app works with the lists of the person and not with
+    // nothing.
+    private func restoreWorkingListsIfTheyAreMissing() {
+        let d = UserDefaults.standard
+        let workingConfigs = d.data(forKey: "proxyConfigs")
+        let workingRules = d.array(forKey: "proxyRules")
+        let workingHasSomething = (workingConfigs?.isEmpty == false) || (workingRules?.isEmpty == false)
+        guard !workingHasSomething else { return }
+        if let data = d.data(forKey: profileConfigsKey(activeProfile)), !data.isEmpty {
+            d.set(data, forKey: "proxyConfigs")
+        }
+        if let rules = d.array(forKey: profileRulesKey(activeProfile)), !rules.isEmpty {
+            d.set(rules, forKey: "proxyRules")
+        }
+        if let chains = d.data(forKey: profileChainsKey(activeProfile)), !chains.isEmpty {
+            d.set(chains, forKey: "chains")
+        }
+        workingSetProfile = activeProfile
+    }
+
+    // The names of the profiles that are in the settings.
+    //
+    // The name of a profile is in a key of the settings that begins with
+    // "profile." and that has the name of the profile in it. The list of the
+    // profiles is a key of its own, and it can be gone while the profiles are
+    // there.
+    private func profileNamesInTheSettings() -> [String] {
+        let prefix = "profile."
+        var names: [String] = []
+        for key in UserDefaults.standard.dictionaryRepresentation().keys {
+            guard key.hasPrefix(prefix) else { continue }
+            let rest = key.dropFirst(prefix.count)
+            guard let dot = rest.firstIndex(of: ".") else { continue }
+            let name = String(rest[rest.startIndex..<dot])
+            if !name.isEmpty && !names.contains(name) { names.append(name) }
+        }
+        return names.sorted()
     }
 
     // copy the live working keys into a profile's snapshot
     private func flushWorkingSet(to name: String) {
         let d = UserDefaults.standard
-        d.set(d.data(forKey: "proxyConfigs"), forKey: profileConfigsKey(name))
-        d.set(d.array(forKey: "proxyRules"), forKey: profileRulesKey(name))
+        // The lists are written back only into the profile they came from.
+        //
+        // The working keys are emptied when a profile that has no snapshot of
+        // its own is loaded, and those empty keys must not be written over
+        // the lists of a profile that has them: the proxies and the rules of
+        // the person would be gone, and nothing would say why.
+        if workingSetProfile == name {
+            d.set(d.data(forKey: "proxyConfigs"), forKey: profileConfigsKey(name))
+            d.set(d.array(forKey: "proxyRules") ?? [], forKey: profileRulesKey(name))
+            d.set(d.data(forKey: "chains"), forKey: profileChainsKey(name))
+        }
         d.set(isTrafficLoggingEnabled, forKey: profileLoggingKey(name))
         d.set(d.bool(forKey: "closeToMenuBar"), forKey: profileCloseKey(name))
         // a copy of the switch of the login, so that the profile carries it
@@ -912,18 +1001,45 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         d.set(d.bool(forKey: "runAtStartup"), forKey: profileStartupKey(name))
         d.set(isDNSEnabled, forKey: profileDNSKey(name))
         d.set(d.data(forKey: "dnsPolicy"), forKey: profileDNSPolicyKey(name))
-        d.set(d.data(forKey: "chains"), forKey: profileChainsKey(name))
     }
+
+    // The profile the working keys came from.
+    //
+    // The working keys are what the app works with, and they are written
+    // back into the profile when the profile is left. They are written back
+    // into the profile they came from and into no other.
+    //
+    // A build that starts with working keys that are not there - the profile
+    // of the person is not in the settings any more - would write empty
+    // lists over the lists that are there, and the proxies and the rules of
+    // the person would be gone without a word.
+    //
+    // That is what happened on the 10th of November 2026: the list of the
+    // profiles was not in the settings, the app made a profile called
+    // Default, and the proxies and the rules of the person were written over
+    // with nothing. They were found again in a snapshot of the disk.
+    private var workingSetProfile: String = ""
 
     // load a profile's snapshot into the live working keys
     private func loadWorkingSet(from name: String) {
         let d = UserDefaults.standard
+        // The profile is only the source of the working keys when it has a
+        // snapshot of its own. A profile that was never used has none, and
+        // then the working keys are not taken from it: they are emptied, and
+        // the empty working keys are not written back into any profile.
+        let hasConfigs = d.object(forKey: profileConfigsKey(name)) != nil
+        let hasRules = d.object(forKey: profileRulesKey(name)) != nil
+        workingSetProfile = (hasConfigs || hasRules) ? name : ""
         if let data = d.data(forKey: profileConfigsKey(name)) {
             d.set(data, forKey: "proxyConfigs")
         } else {
             d.removeObject(forKey: "proxyConfigs")
         }
-        d.set(d.array(forKey: profileRulesKey(name)) ?? [], forKey: "proxyRules")
+        if let rules = d.array(forKey: profileRulesKey(name)) {
+            d.set(rules, forKey: "proxyRules")
+        } else {
+            d.removeObject(forKey: "proxyRules")
+        }
         // traffic logging is per profile, default on when the snapshot has none
         d.set(d.object(forKey: profileLoggingKey(name)) as? Bool ?? true, forKey: "trafficLoggingEnabled")
         // window-close behaviour is per profile too, default off
@@ -1331,7 +1447,23 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 self.addLog("INFO", L10n.t("The system extension of this build is already installed. macOS is not asked for it again."))
                 // The extension is there and it is this build's, so the tunnel
                 // can go up right away.
+                //
+                // And the app knows that the extension of this build is in
+                // the system, which is what the DNS proxy waits for. Without
+                // this the DNS proxy is never written at all: the switch of
+                // the proxy opens only in the branch where macOS was asked
+                // to install the extension, and that branch is not taken when
+                // the extension is already there - which is the case of every
+                // start after the first one.
+                //
+                // The result was a machine whose traffic was proxied and
+                // whose names were not known: the provider of the DNS never
+                // started, the entry of ProxiRoute DNS was not in the
+                // settings of the system, and every rule that names a host
+                // missed.
+                self.extensionReady = true
                 self.startProxy()
+                self.applyDNSProxy()
                 return
             }
             self.submitExtensionActivationRequest()
@@ -1637,14 +1769,20 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                             // that passes, so it is worth a few tries: without the
                             // dns proxy there is no ip -> name map, and every rule
                             // that names a host misses.
-                            if attempt < 5 {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            if attempt < 12 {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                                     self.applyDNSProxy(attempt: attempt + 1)
                                 }
                                 return
                             }
+                            // The failure is written into the log of the system
+                            // and not only into the log of the window: the app
+                            // can come up without a window, and then the log of
+                            // the window is nowhere to be seen.
+                            NSLog("[ProxiRoute] the DNS proxy could not be written: \(error.localizedDescription)")
                             self.addLog("ERROR", L10n.f("DNS proxy setup failed: %@. Host name rules and send hostname will not work.", error.localizedDescription))
                         } else {
+                            NSLog("[ProxiRoute] the DNS proxy is written")
                             self.addLog("INFO", L10n.t("DNS proxy enabled"))
                         }
                     }
@@ -1753,6 +1891,13 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 // there and when the traffic of the machine was taken over.
                 NSLog("[ProxiRoute] the tunnel is up, the traffic of the machine is proxied")
                 UpstreamWait.appendLoginLog("the tunnel is up, the traffic of the machine is proxied")
+                // The DNS proxy is written here as well, and not only when the
+                // extension was asked for: the tunnel being up means that the
+                // extension of this build is in the system and is running,
+                // and the entry of the DNS proxy has to point at it. Without
+                // that the names of the machine are not known and every rule
+                // that names a host misses.
+                self.applyDNSProxy()
                 if !self.proxyConfigs.isEmpty {
                     self.sendProxyConfigsToExtension(session: session)
                 }
