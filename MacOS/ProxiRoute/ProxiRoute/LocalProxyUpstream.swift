@@ -16,6 +16,54 @@ import Network
 // and the answer of the proxy says whether the target may be reached.
 enum LocalProxyDialer {
 
+    // The connection to a proxy, with the greeting done.
+    //
+    // The timeout of the connection stays on while the greeting goes on: a
+    // proxy that takes the connection and says nothing would keep the flow of
+    // the client waiting for ever. The timeout goes off when the greeting is
+    // done, because the connection lives as long as the flow does and it is
+    // idle most of the time.
+    static func connectAndGreet(endpoint: ProxyEndpoint,
+                                 target: FlowTarget,
+                                 timeout: TimeInterval = 15) -> Int32? {
+        let result = LocalProxySocket.connect(host: endpoint.host, port: endpoint.port, timeout: timeout)
+        guard let fd = result.fd else { return nil }
+        guard handshake(fd: fd, through: endpoint, target: target) else {
+            Darwin.close(fd)
+            return nil
+        }
+        LocalProxySocket.clearTimeout(fd)
+        return fd
+    }
+
+    // A chain of proxies, walked through one at a time.
+    //
+    // Every proxy but the last one is asked to reach the next one, and the
+    // last one is asked to reach the place the client wanted to go. The
+    // timeout is on for the whole of it, for the same reason as above.
+    static func connectAndGreetChain(hops: [ProxyEndpoint],
+                                     target: FlowTarget,
+                                     timeout: TimeInterval = 15) -> Int32? {
+        guard let first = hops.first else { return nil }
+        let result = LocalProxySocket.connect(host: first.host, port: first.port, timeout: timeout)
+        guard let fd = result.fd else { return nil }
+        for i in 0..<(hops.count - 1) {
+            let next = hops[i + 1]
+            guard handshake(fd: fd, through: hops[i],
+                            target: FlowTarget(host: next.host, port: next.port)) else {
+                Darwin.close(fd)
+                return nil
+            }
+        }
+        let last = hops[hops.count - 1]
+        guard handshake(fd: fd, through: last, target: target) else {
+            Darwin.close(fd)
+            return nil
+        }
+        LocalProxySocket.clearTimeout(fd)
+        return fd
+    }
+
     static func handshake(fd: Int32, through endpoint: ProxyEndpoint, target: FlowTarget) -> Bool {
         switch endpoint.type.lowercased() {
         case "socks5":
@@ -163,13 +211,17 @@ enum LocalProxyDialer {
     // The proxy says where its relay is, and the datagrams go there. The
     // request carries no address of its own: the proxy does not need one,
     // and the address the datagrams come from is the one it remembers.
-    static func udpAssociate(endpoint: ProxyEndpoint) -> UDPAssociation? {
+    static func udpAssociate(endpoint: ProxyEndpoint,
+                             timeout: TimeInterval = 15) -> UDPAssociation? {
         guard endpoint.type.lowercased() == "socks5" else { return nil }
 
-        let result = LocalProxySocket.connect(host: endpoint.host, port: endpoint.port, timeout: 15)
+        let result = LocalProxySocket.connect(host: endpoint.host, port: endpoint.port, timeout: timeout)
         guard let control = result.fd else { return nil }
-        LocalProxySocket.clearTimeout(control)
 
+        // The timeout of the connection stays on while the greeting goes on.
+        // A proxy that takes the connection and says nothing would keep the
+        // session of the datagram waiting for ever, and the client of the
+        // network would wait with it.
         guard socks5Greeting(fd: control, endpoint: endpoint) else {
             Darwin.close(control)
             return nil
@@ -185,6 +237,10 @@ enum LocalProxyDialer {
             Darwin.close(control)
             return nil
         }
+        // The greeting is done, and the control connection lives as long as
+        // the association does. It is idle most of the time, so the timeout
+        // goes off now.
+        LocalProxySocket.clearTimeout(control)
         // many proxies answer with the address that means "the place you
         // reached me at", and the relay is there
         let host = (relay.host == "0.0.0.0" || relay.host == "::" || relay.host.isEmpty)

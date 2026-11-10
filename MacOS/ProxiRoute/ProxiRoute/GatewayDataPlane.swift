@@ -535,14 +535,7 @@ final class GatewayDataPlane {
             let result = LocalProxySocket.connect(host: target.proxyHost, port: target.port, timeout: 15)
             return result.fd
         case .proxy(let endpoint):
-            let result = LocalProxySocket.connect(host: endpoint.host, port: endpoint.port, timeout: 15)
-            guard let fd = result.fd else { return nil }
-            LocalProxySocket.clearTimeout(fd)
-            if !LocalProxyDialer.handshake(fd: fd, through: endpoint, target: target) {
-                Darwin.close(fd)
-                return nil
-            }
-            return fd
+            return LocalProxyDialer.connectAndGreet(endpoint: endpoint, target: target)
         case .chain(let hops):
             return dialChain(hops, target: target)
         }
@@ -552,24 +545,7 @@ final class GatewayDataPlane {
     // one is asked to reach the next one, and the last one is asked to reach
     // the place the client wanted to go.
     private func dialChain(_ hops: [ProxyEndpoint], target: FlowTarget) -> Int32? {
-        guard let first = hops.first else { return nil }
-        let result = LocalProxySocket.connect(host: first.host, port: first.port, timeout: 15)
-        guard let fd = result.fd else { return nil }
-        LocalProxySocket.clearTimeout(fd)
-        for i in 0..<(hops.count - 1) {
-            let next = hops[i + 1]
-            if !LocalProxyDialer.handshake(fd: fd, through: hops[i],
-                                          target: FlowTarget(host: next.host, port: next.port)) {
-                Darwin.close(fd)
-                return nil
-            }
-        }
-        let last = hops[hops.count - 1]
-        if !LocalProxyDialer.handshake(fd: fd, through: last, target: target) {
-            Darwin.close(fd)
-            return nil
-        }
-        return fd
+        return LocalProxyDialer.connectAndGreetChain(hops: hops, target: target)
     }
 
     // MARK: - the relay
