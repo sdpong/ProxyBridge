@@ -93,6 +93,7 @@ jobs:
   analyze-macos:
     name: Analyze (swift, macos)
     runs-on: macos-latest
+    timeout-minutes: 45
     permissions:
       security-events: write
 
@@ -124,6 +125,16 @@ jobs:
             printf '\nDEVELOPMENT_TEAM =\nPROVISIONING_PROFILE_SPECIFIER =\nCODE_SIGN_IDENTITY =\nCODE_SIGNING_ALLOWED = NO\nCODE_SIGNING_REQUIRED = NO\n' >> "MacOS/ProxiRoute/Signing-Config-$part.xcconfig"
           done
 
+      # The build of the analysis is the build of one architecture and not
+      # of two.
+      #
+      # The tracer of the analysis reads every line of swift that is
+      # compiled, and it reads it twice when the build is made for two
+      # architectures: the build of the analysis then takes twice as long for
+      # the same swift code, and the job does not fit in the time the runner
+      # gives it. The swift of this product is the same for both
+      # architectures, and the analysis of one of them says the same thing
+      # about the other.
       - name: Build (no signing)
         run: |
           cd MacOS/ProxiRoute
@@ -132,12 +143,12 @@ jobs:
             -scheme ProxiRoute \
             -configuration Release \
             -derivedDataPath build/DerivedData \
-            ARCHS="arm64 x86_64" \
-            ONLY_ACTIVE_ARCH=NO \
+            ARCHS="arm64" \
+            ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            clean build
+            build
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
