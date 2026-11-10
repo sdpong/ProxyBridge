@@ -106,30 +106,49 @@ check(UpstreamWait.endpoints(fromWaitFile: "127.0.0.1 9991\n\n127.0.0.1 9992\n")
 // ---------------------------------------------------------------- the script
 
 let script = UpstreamWait.scriptText(home: URL(fileURLWithPath: "/Users/tester"))
-check(script.contains(UpstreamWait.waitFileURL(home: URL(fileURLWithPath: "/Users/tester")).path),
-      "the script reads the file that says what to wait for")
 check(script.contains(UpstreamWait.startFlagURL(home: URL(fileURLWithPath: "/Users/tester")).path),
       "the script reads the file that says whether the app should start at all")
+check(script.contains(UpstreamWait.sessionMarkerURL(home: URL(fileURLWithPath: "/Users/tester")).path),
+      "the script reads the marker that says the app was already started")
 check(script.contains("pgrep -x \"ProxiRoute\""), "the script does not start a second copy of the app")
-check(script.contains("open -g"), "the app is started in the background, without a window in front")
-check(script.contains("nc -z"), "the script asks the port of the upstream")
+check(script.contains("open -g"), "the app is started through the system when the binary is not there")
 check(script.hasPrefix("#!/bin/sh"), "the script is a shell script")
 
-// The order: the app is started first, and the upstream is only looked at
-// afterwards. The app waits for the upstream by itself, before it takes the
-// traffic over, and it knows the rules and the proxies.
-let startAt = script.range(of: "starting the app")
-let waitAt = script.range(of: "nc -z")
-check(startAt != nil && waitAt != nil && startAt!.lowerBound < waitAt!.lowerBound,
-      "the app is started before the upstream is looked at")
-check(!script.contains("wait_for"), "the start of the app is not held back by a port")
-check(script.contains("the upstream $host:$port is ready"), "the order is written down")
+// The order that was asked for: the network of the machine is there before
+// the app is started, and the app is started right away - not through the
+// queue of the login items, where it came up seconds after everything else.
+let waitForNetwork = script.range(of: "route -n get default")
+let startTheApp = script.range(of: "\"$APP_BINARY\" &")
+check(waitForNetwork != nil && startTheApp != nil
+        && waitForNetwork!.lowerBound < startTheApp!.lowerBound,
+      "the app is started after the network of the machine is there")
+check(!script.contains("nc -z"), "the script does not hold the app back for a port")
+
+// The app goes into a group of its own, so that the agent cannot take it
+// down with it. The app puts the agent in place again when it starts, and
+// an agent that is taken out takes the app with it when the app is its
+// program. That was measured on this machine.
+check(script.contains("set -m"), "the app goes into a group of its own")
+check(script.contains("while kill -0 \"$APP_PID\""), "the agent stays until the app is gone")
+
+// The session of the login is read out of the system and handed over to
+// the app, and the app writes it into the marker. The marker of a session
+// that is over is of no use.
+check(script.contains("/usr/bin/who"), "the session of the login is read out of the system")
+check(script.contains("export PROXIRoute_SESSION"), "the session of the login is handed over to the app")
+check(script.contains("[ \"$MARKED\" = \"$SESSION\" ]"), "the marker is compared with the session")
 
 // ---------------------------------------------------------------- the agent
 
 let agent = UpstreamWait.agentDictionary(home: URL(fileURLWithPath: "/Users/tester"))
 check(agent["Label"] as? String == "com.sdpong.proxiroute.launch", "the agent has a name of its own")
 check(agent["RunAtLoad"] as? Bool == true, "the agent runs at every login")
+// The system does not always run the agent at the login: the domain of the
+// user is in the on-demand-only mode for the first seconds of the login,
+// and the job that is pending there can be dropped. It was measured on this
+// machine: the job was spawned and the script never ran. So the agent comes
+// back until the app is there.
+check(agent["StartInterval"] as? Int == 20, "the agent comes back until the app is there")
 check((agent["ProgramArguments"] as? [String])?.first == "/bin/sh", "the agent runs a shell script")
 check((agent["EnvironmentVariables"] as? [String: String])?["PROXIRoute_START_HIDDEN"] == "1",
       "the agent tells the app to stay out of the way")
@@ -176,6 +195,36 @@ check(!loadWorkingSet.contains("forKey: \"runAtStartup\""),
       "a profile does not write over the switch of the login")
 check(viewModelSource.contains("LoginItem.applyToSystem(LoginItem.isEnabled)"),
       "the machine is told what the switch of the app says")
+
+// ---------------------------------------------------------------- the session of the login
+
+// The session is what tells this login from the next one. The agent of the
+// launch reads it out of the system and hands it over in the environment,
+// and the app reads it out of the system again when it is started by hand.
+// Both have to give the same answer, or the marker means nothing.
+setenv("PROXIRoute_SESSION", "Nov 10 11:18", 1)
+check(UpstreamWait.currentSession() == "Nov 10 11:18", "the session of the agent is used")
+unsetenv("PROXIRoute_SESSION")
+check(UpstreamWait.currentSession() == UpstreamWait.consoleSession(),
+      "the session of the login is the same answer either way")
+
+// The marker carries the session, so that it is of no use at the next login.
+let markerHome = URL(fileURLWithPath: NSTemporaryDirectory())
+    .appendingPathComponent("proxiroute-marker-test")
+check(UpstreamWait.writeSessionMarker(session: "Nov 10 11:18", home: markerHome),
+      "the marker is written")
+let markerText = (try? String(contentsOf: UpstreamWait.sessionMarkerURL(home: markerHome),
+                              encoding: .utf8)) ?? ""
+check(markerText == "Nov 10 11:18", "the marker carries the session of the login")
+check(!UpstreamWait.writeSessionMarker(session: "   ", home: markerHome),
+      "a marker without a session is not written")
+try? FileManager.default.removeItem(at: markerHome)
+
+// The app writes the marker a moment after it comes up: an app that dies in
+// its first seconds has not really come up, and the agent has to try again.
+check(readAppFile("ProxiRouteGUI.swift")
+        .contains("UpstreamWait.writeSessionMarker(session: UpstreamWait.currentSession())"),
+      "the app writes down that it was started in this session")
 
 // ---------------------------------------------------------------- the probe
 

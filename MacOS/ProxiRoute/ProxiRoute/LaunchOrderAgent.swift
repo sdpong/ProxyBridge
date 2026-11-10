@@ -94,18 +94,33 @@ enum LaunchOrderAgent {
         // the agent itself
         let plist = UpstreamWait.agentDictionary(home: home)
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        try data.write(to: UpstreamWait.agentPlistURL(home: home), options: .atomic)
+        let plistURL = UpstreamWait.agentPlistURL(home: home)
 
-        // tell launchd about it. The agent that is already there is taken out
-        // first, because launchd does not load a second one under the same
-        // name.
-        _ = runLaunchctl(["bootout", "gui/\(getuid())/\(UpstreamWait.agentLabel)"])
-        _ = runLaunchctl(["enable", "gui/\(getuid())/\(UpstreamWait.agentLabel)"])
-        let result = runLaunchctl(["bootstrap", "gui/\(getuid())", UpstreamWait.agentPlistURL(home: home).path])
-        if result.status != 0 {
-            let reason = result.errorText.isEmpty ? "launchctl said nothing" : result.errorText
-            throw NSError(domain: "com.sdpong.ProxiRoute.launchAgent", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: reason])
+        // The agent is only taken out and put in again when the file really
+        // changed.
+        //
+        // The app puts the agent in place at every start of the app, and the
+        // agent is what starts the app: taking the agent out takes the app
+        // with it when the app is the program of the agent. So an agent that
+        // is already the one that is wanted is left alone.
+        //
+        // A file that is not there yet, or one that is not the one that is
+        // wanted, is written and the agent is loaded again: launchd does not
+        // load a second one under the same name, so the one that is there is
+        // taken out first.
+        let existing = (try? Data(contentsOf: plistURL)) ?? Data()
+        if existing != data {
+            try data.write(to: plistURL, options: .atomic)
+            _ = runLaunchctl(["bootout", "gui/\(getuid())/\(UpstreamWait.agentLabel)"])
+        }
+        if existing != data || !isLoaded() {
+            _ = runLaunchctl(["enable", "gui/\(getuid())/\(UpstreamWait.agentLabel)"])
+            let result = runLaunchctl(["bootstrap", "gui/\(getuid())", plistURL.path])
+            if result.status != 0 {
+                let reason = result.errorText.isEmpty ? "launchctl said nothing" : result.errorText
+                throw NSError(domain: "com.sdpong.ProxiRoute.launchAgent", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: reason])
+            }
         }
     }
 
@@ -167,6 +182,16 @@ enum LaunchOrderAgent {
     }
 
     // MARK: - launchctl
+
+    /// Whether launchd knows the agent.
+    ///
+    /// The file of the agent can be the one that is wanted while the agent
+    /// itself is not loaded - after the agent was taken out by hand, for
+    /// example. The file is then of no use on its own: the agent has to be
+    /// there.
+    static func isLoaded() -> Bool {
+        return runLaunchctl(["print", "gui/\(getuid())/\(UpstreamWait.agentLabel)"]).status == 0
+    }
 
     /// The answer of launchctl: what it said and whether it was happy.
     private struct LaunchctlResult {

@@ -623,6 +623,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             AppDelegate.startHidden = true
             NSApp.setActivationPolicy(.accessory)
         }
+        // The agent comes back every 20 seconds until the app is there, and
+        // the person may close the app afterwards. The marker says that the
+        // app was already started in this session, so that a closed app is
+        // not brought back behind the person's back.
+        //
+        // The marker is written a moment after the start and not right here:
+        // an app that dies in its first seconds has not really come up, and
+        // the agent has to try again.
+        //
+        // It is written in every case, and not only when the agent started
+        // the app: an app that the person opened by hand and closed again
+        // is not wanted either.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            UpstreamWait.writeSessionMarker(session: UpstreamWait.currentSession())
+        }
+        // The order of the start is written down, so that it can be seen
+        // afterwards. The log of the agent and the log of the app are the same
+        // file, and the agent starts the app at the login.
+        NSLog("[ProxiRoute] the app is starting (\(startedByAgent ? "by the agent" : "by hand"))")
     }
 
     // never let AppKit decide this. it counts every window, including the one

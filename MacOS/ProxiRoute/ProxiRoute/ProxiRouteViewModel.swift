@@ -1206,6 +1206,12 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     }
     
     private func installAndStartProxy() {
+        // The order of the start is written down, so that it can be seen
+        // afterwards. The log of the agent and the log of the app are the
+        // same file: the agent starts the app at the login, and what the
+        // person sees in it is when the app was there and when the traffic
+        // of the machine was taken over.
+        NSLog("[ProxiRoute] the proxy is starting")
         // The extension is asked for on every start, as it always was.
         //
         // An earlier version of this file skipped the request when the build
@@ -1710,6 +1716,12 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 observer = nil
 
                 self.setupLogPolling(session: session)
+                // The order of the start is written down here, so that it can
+                // be seen afterwards: the log of the agent and the log of the
+                // app are the same file, and the agent starts the app at the
+                // login. What the person sees in it is when the app was
+                // there and when the traffic of the machine was taken over.
+                NSLog("[ProxiRoute] the tunnel is up, the traffic of the machine is proxied")
                 if !self.proxyConfigs.isEmpty {
                     self.sendProxyConfigsToExtension(session: session)
                 }
