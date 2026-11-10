@@ -162,6 +162,21 @@ check(agentSource.contains("static var isEnabled: Bool { LoginItem.isEnabled }")
 check(!agentSource.contains("register(defaults:"),
       "the agent does not keep an answer of its own any more")
 
+// The switch of the login belongs to the app and not to a profile.
+//
+// The profile that was active held the answer from the day it was saved,
+// every start of the app wrote that answer over the switch, and the person
+// who had just turned the switch on found it off again the next morning.
+// The launch agent starts the app and the app then loads the profile that is
+// active: the profile cannot decide whether the app should be there at all.
+let viewModelSource = readAppFile("ProxiRouteViewModel.swift")
+let loadWorkingSet = viewModelSource.components(separatedBy: "private func loadWorkingSet(from name: String)").last?
+    .components(separatedBy: "private func applyActiveProfile()").first ?? ""
+check(!loadWorkingSet.contains("forKey: \"runAtStartup\""),
+      "a profile does not write over the switch of the login")
+check(viewModelSource.contains("LoginItem.applyToSystem(LoginItem.isEnabled)"),
+      "the machine is told what the switch of the app says")
+
 // ---------------------------------------------------------------- the probe
 
 // A port that nothing listens on is not ready.

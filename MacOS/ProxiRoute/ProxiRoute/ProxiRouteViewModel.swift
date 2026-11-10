@@ -877,6 +877,9 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         d.set(d.array(forKey: "proxyRules"), forKey: profileRulesKey(name))
         d.set(isTrafficLoggingEnabled, forKey: profileLoggingKey(name))
         d.set(d.bool(forKey: "closeToMenuBar"), forKey: profileCloseKey(name))
+        // a copy of the switch of the login, so that the profile carries it
+        // when it is exported. The switch itself belongs to the app: see
+        // loadWorkingSet.
         d.set(d.bool(forKey: "runAtStartup"), forKey: profileStartupKey(name))
         d.set(isDNSEnabled, forKey: profileDNSKey(name))
         d.set(d.data(forKey: "dnsPolicy"), forKey: profileDNSPolicyKey(name))
@@ -894,9 +897,22 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         d.set(d.array(forKey: profileRulesKey(name)) ?? [], forKey: "proxyRules")
         // traffic logging is per profile, default on when the snapshot has none
         d.set(d.object(forKey: profileLoggingKey(name)) as? Bool ?? true, forKey: "trafficLoggingEnabled")
-        // window + startup behaviour are per profile too, default off
+        // window-close behaviour is per profile too, default off
         d.set(d.object(forKey: profileCloseKey(name)) as? Bool ?? false, forKey: "closeToMenuBar")
-        d.set(d.object(forKey: profileStartupKey(name)) as? Bool ?? false, forKey: "runAtStartup")
+        // Whether the app starts at the login is NOT per profile.
+        //
+        // The launch agent starts the app, and the app then loads the profile
+        // that is active. The agent knows nothing about profiles, and a
+        // profile cannot decide whether the app should be there at the login:
+        // the profile that is active at the login may well be another one.
+        //
+        // So the switch belongs to the app, and a profile does not touch it.
+        //
+        // It used to be per profile, and that is the third reason the switch
+        // never did anything: the profile that was active held the answer
+        // from the day it was saved, every start of the app wrote that answer
+        // over the switch, and the person who had just turned the switch on
+        // found it off again the next morning.
         // DNS is on by default, also for profiles saved before the setting existed
         d.set(d.object(forKey: profileDNSKey(name)) as? Bool ?? true, forKey: "dnsEnabled")
         // the DNS policy is per profile too, a profile saved before the setting
@@ -920,7 +936,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         loadTrafficLoggingSetting()
         loadDNSSetting()
         // window-close behaviour is read live from the key, only startup needs applying
-        LoginItem.applyToSystem(UserDefaults.standard.bool(forKey: "runAtStartup"))
+        // The switch of the login belongs to the app and not to the profile,
+        // so it is read from where the person set it and not from the profile
+        // that is being loaded.
+        LoginItem.applyToSystem(LoginItem.isEnabled)
         if tunnelSession != nil {
             deliverChangeToExtension()
             sendTrafficLoggingToExtension(isTrafficLoggingEnabled)
