@@ -255,27 +255,16 @@ enum GatewayInstaller {
         let script = "do shell script \(appleQuoted(command)) with administrator privileges"
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", script]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-
-            do {
-                try process.run()
-            } catch {
-                finish(completion, Result(ok: false,
-                                          message: "The privilege could not be asked for: \(error.localizedDescription)"))
-                return
-            }
             // the dialog of the administrator is up until the password is
             // typed, so this waits for the person in front of the window
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            let output = String(data: data, encoding: .utf8) ?? ""
+            guard let answer = ToolRunner.run("/usr/bin/osascript", ["-e", script]) else {
+                finish(completion, Result(ok: false,
+                                          message: "The privilege could not be asked for: osascript could not be started."))
+                return
+            }
+            let output = answer.text
 
-            if process.terminationStatus == 0 {
+            if answer.status == 0 {
                 let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
                 finish(completion, Result(ok: true, message: text.isEmpty ? "Done." : text))
             } else {

@@ -35,27 +35,20 @@ enum ExtensionLogReader {
     /// refuses to run at all ("log: Cannot run while sandboxed"). So the
     /// question is put to the tool.
     static func canRead() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: toolPath)
-        process.arguments = [
+        let arguments = [
             "show",
             "--last", "1s",
             "--style", "compact",
             "--predicate", "subsystem == \"\(subsystem)\""
         ]
-        let errors = Pipe()
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = errors
-        process.standardInput = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
+        // The tool says why it cannot run on its error output, and in a
+        // sandboxed build that is the whole answer: "Cannot run while
+        // sandboxed". So the error output is the one that is kept.
+        guard let answer = ToolRunner.run(toolPath, arguments, capture: .error) else {
             return false
         }
-        let message = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        if String(decoding: message, as: UTF8.self).contains("sandboxed") { return false }
-        return process.terminationStatus == 0
+        if answer.text.contains("sandboxed") { return false }
+        return answer.status == 0
     }
 
     /// The reason the unified log cannot be read, in words.
@@ -394,16 +387,6 @@ final class UnifiedLogTail {
         process.standardError = errors
         process.standardInput = FileHandle.nullDevice
 
-        // the tool writes why it cannot run to its error output, and in a
-        // sandboxed build that is the whole answer: "Cannot run while sandboxed"
-        let errorPipe = errors.fileHandleForReading
-        Thread.detachNewThread {
-            let text = errorPipe.readDataToEndOfFile()
-            let message = String(decoding: text, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !message.isEmpty { self.onFailure?(message) }
-        }
-
         process.terminationHandler = { [weak self] finished in
             guard let self = self else { return }
             if !self.stopped {
@@ -414,14 +397,45 @@ final class UnifiedLogTail {
         do {
             try process.run()
         } catch {
+            ToolRunner.close(output.fileHandleForReading)
+            ToolRunner.close(output.fileHandleForWriting)
+            ToolRunner.close(errors.fileHandleForReading)
+            ToolRunner.close(errors.fileHandleForWriting)
             onFailure?(L10n.f("The tool that reads the unified log could not be started: %@", error.localizedDescription))
             return
+        }
+
+        // The writing ends of the pipes are closed here.
+        //
+        // The tool has a copy of them of its own, and a pipe that nobody
+        // writes to any more says that the end of the tool has come. A pipe
+        // that is left open keeps its two descriptors for ever, and the tail
+        // is started again every time the window of the log is opened.
+        ToolRunner.close(output.fileHandleForWriting)
+        ToolRunner.close(errors.fileHandleForWriting)
+
+        // the tool writes why it cannot run to its error output, and in a
+        // sandboxed build that is the whole answer: "Cannot run while sandboxed"
+        //
+        // The thread starts after the tool does: a thread that reads a pipe
+        // that is being closed under it is a thread that reads a handle that
+        // is not there any more.
+        let errorPipe = errors.fileHandleForReading
+        Thread.detachNewThread {
+            // The reading end is closed when the thread is done with it.
+            defer { ToolRunner.close(errorPipe) }
+            let text = errorPipe.readDataToEndOfFile()
+            let message = String(decoding: text, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !message.isEmpty { self.onFailure?(message) }
         }
 
         // the output is read on a thread of its own: a read that waits for
         // the next line must not wait on the thread that draws the window
         let pipe = output.fileHandleForReading
         Thread.detachNewThread {
+            // The reading end is closed when the thread is done with it.
+            defer { ToolRunner.close(pipe) }
             while true {
                 // What is there, not a fixed number of bytes.
                 //
@@ -477,30 +491,20 @@ final class UnifiedLogTail {
 // before, so the list starts with something in it.
 enum UnifiedLogBacklog {
     static func read(seconds: Int, completion: @escaping ([ExtensionLogReader.Line]) -> Void) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ExtensionLogReader.toolPath)
-        process.arguments = [
+        let arguments = [
             "show",
             "--last", "\(seconds)s",
             "--style", "compact",
             "--predicate", "subsystem == \"\(ExtensionLogReader.subsystem)\""
         ]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
 
-        Thread.detachNewThread {
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            let text = String(decoding: data, as: UTF8.self)
+        // The tool is run on a queue of its own: it takes about half a
+        // second, and the window should not wait for it.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let answer = ToolRunner.run(ExtensionLogReader.toolPath, arguments, capture: .output)
+            let text = answer?.text ?? ""
             let lines = text.split(separator: "\n").compactMap { ExtensionLogReader.parseCompact(String($0)) }
             completion(lines)
-        }
-
-        do {
-            try process.run()
-        } catch {
-            completion([])
         }
     }
 }

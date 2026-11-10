@@ -200,21 +200,11 @@ enum LaunchOrderAgent {
     }
 
     private static func runLaunchctl(_ arguments: [String]) -> LaunchctlResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = arguments
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
-        process.standardOutput = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return LaunchctlResult(status: -1, errorText: error.localizedDescription)
+        // launchctl says what went wrong on its error output.
+        guard let answer = ToolRunner.run("/bin/launchctl", arguments, capture: .error) else {
+            return LaunchctlResult(status: -1, errorText: "launchctl could not be started.")
         }
-        let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(data: data, encoding: .utf8) ?? ""
-        return LaunchctlResult(status: process.terminationStatus,
-                               errorText: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        return LaunchctlResult(status: answer.status,
+                               errorText: answer.text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

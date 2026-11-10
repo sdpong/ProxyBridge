@@ -127,24 +127,13 @@ enum ExtensionCleanup {
         guard FileManager.default.isExecutableFile(atPath: toolPath) else {
             return Answer(status: -1, text: "\(toolPath) is not there")
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: toolPath)
-        process.arguments = Array(arguments.dropFirst())
-        let errorPipe = Pipe()
-        let outputPipe = Pipe()
-        process.standardError = errorPipe
-        process.standardOutput = outputPipe
-        do {
-            try process.run()
-        } catch {
-            return Answer(status: -1, text: error.localizedDescription)
+        // The two outputs of the tool come from one pipe: a tool that fills
+        // the pipe of one of them while the other one is full waits for
+        // ever, and nobody is here to read them one after the other.
+        guard let answer = ToolRunner.run(toolPath, Array(arguments.dropFirst())) else {
+            return Answer(status: -1, text: "The tool could not be started.")
         }
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = (String(data: errorData, encoding: .utf8) ?? "")
-            + (String(data: outputData, encoding: .utf8) ?? "")
-        return Answer(status: process.terminationStatus,
-                      text: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        return Answer(status: answer.status,
+                      text: answer.text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

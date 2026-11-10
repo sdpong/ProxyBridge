@@ -230,8 +230,8 @@ enum GatewayFilter {
     // Is the filter on right now?
     static func filterEnabled() -> Bool {
         // pfctl says it in the first line: "Status: Enabled for 0 days ..."
-        guard let result = run("/sbin/pfctl", ["-s", "info"]) else { return false }
-        return result.output.contains("Status: Enabled")
+        guard let result = ToolRunner.run("/sbin/pfctl", ["-s", "info"]) else { return false }
+        return result.text.contains("Status: Enabled")
     }
 
     // Whether the filter was turned on by the gateway mode.
@@ -249,8 +249,8 @@ enum GatewayFilter {
     // forwarding is a separate switch of the kernel. Both are needed for the
     // traffic of the network to pass through this machine.
     static func forwardingEnabled() -> Bool {
-        guard let result = run("/usr/sbin/sysctl", ["-n", "net.inet.ip.forwarding"]) else { return false }
-        return result.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+        guard let result = ToolRunner.run("/usr/sbin/sysctl", ["-n", "net.inet.ip.forwarding"]) else { return false }
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
     }
 
     // Put the rules of the gateway in place and turn the forwarding on.
@@ -277,24 +277,24 @@ enum GatewayFilter {
         }
 
         // the file is checked before it is loaded
-        let check = run("/sbin/pfctl", ["-n", "-f", gatewayRulesPath])
+        let check = ToolRunner.run("/sbin/pfctl", ["-n", "-f", gatewayRulesPath])
         if let check, check.wasRefused {
-            return .failure(Failure("The filter would not take these rules: \(check.output)"))
+            return .failure(Failure("The filter would not take these rules: \(check.text)"))
         }
 
         // the rules go in
-        let load = run("/sbin/pfctl", ["-f", gatewayRulesPath])
+        let load = ToolRunner.run("/sbin/pfctl", ["-f", gatewayRulesPath])
         if let load, load.wasRefused {
-            return .failure(Failure("The filter refused these rules: \(load.output)"))
+            return .failure(Failure("The filter refused these rules: \(load.text)"))
         }
 
         // the filter has to be on for the rules to do anything
         if !filterEnabled() {
-            let enableFilter = run("/sbin/pfctl", ["-E"])
+            let enableFilter = ToolRunner.run("/sbin/pfctl", ["-E"])
             if let enableFilter, enableFilter.wasRefused {
                 // the filter could not be turned on: the rules are in place
                 // but nothing is going through them
-                return .failure(Failure("The filter could not be turned on: \(enableFilter.output)"))
+                return .failure(Failure("The filter could not be turned on: \(enableFilter.text)"))
             }
             // the gateway mode turned the filter on, so it is the one that has
             // to turn it off again
@@ -302,12 +302,12 @@ enum GatewayFilter {
         }
 
         // and the machine has to forward
-        let forward = run("/usr/sbin/sysctl", ["-w", "net.inet.ip.forwarding=1"])
+        let forward = ToolRunner.run("/usr/sbin/sysctl", ["-w", "net.inet.ip.forwarding=1"])
         if let forward, forward.wasRefused {
             // the rules are in place and the traffic of the network is
             // taken in, but it is not forwarded anywhere: the machine is
             // not a router, so the traffic goes nowhere
-            return .failure(Failure("The forwarding of the machine could not be turned on: \(forward.output)"))
+            return .failure(Failure("The forwarding of the machine could not be turned on: \(forward.text)"))
         }
 
         return .success("The gateway is on.")
@@ -323,12 +323,12 @@ enum GatewayFilter {
     static func disable() -> Result<String, Failure> {
         // the rules of the machine go back: that file is what the system
         // itself reads, so the machine is the way it was
-        _ = run("/sbin/pfctl", ["-f", baseRulesPath])
+        _ = ToolRunner.run("/sbin/pfctl", ["-f", baseRulesPath])
 
         // the forwarding goes off, unless something else turned it on
         // in the meantime
         if forwardingEnabled() {
-            _ = run("/usr/sbin/sysctl", ["-w", "net.inet.ip.forwarding=0"])
+            _ = ToolRunner.run("/usr/sbin/sysctl", ["-w", "net.inet.ip.forwarding=0"])
         }
 
         // the rules of the gateway are not needed any more
@@ -345,7 +345,7 @@ enum GatewayFilter {
                 // "-d" is what turns the filter off. There is no "-X": the
                 // tool says "option requires an argument" and the filter
                 // stays on.
-                _ = run("/sbin/pfctl", ["-d"])
+                _ = ToolRunner.run("/sbin/pfctl", ["-d"])
             }
         }
 
@@ -353,44 +353,24 @@ enum GatewayFilter {
     }
 
     // MARK: - running things
+}
 
-    // What a tool said, and whether it worked.
-    //
-    // The exit code of pfctl is 0 even when the filter refused what it was
-    // given: it says the reason on the error output and returns 0 all the
-    // same. So both are looked at, and the reason is kept.
-    struct ToolResult {
-        let output: String
-        let succeeded: Bool
-
-        // whether the output says that the filter refused something
-        var wasRefused: Bool {
-            return output.contains("pf rules not loaded")
-                || output.contains("Syntax error")
-                || output.contains("Permission denied")
-                || output.contains("Operation not permitted")
-        }
-    }
-
-    // Runs a tool and gives back what it said.
-    //
-    // The tool is run with its full path, because the helper runs with a
-    // small PATH and the paths of the tools are known.
-    static func run(_ path: String, _ arguments: [String]) -> ToolResult? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        return ToolResult(output: output, succeeded: process.terminationStatus == 0)
+// Whether the tool said that the filter refused something.
+//
+// The exit code of pfctl is 0 even when the filter refused what it was
+// given: it says the reason on the error output and returns 0 all the
+// same. So the text is looked at, and the reason is kept.
+//
+// The tool is run by the runner that the app uses as well, and that runner
+// closes the pipes of the tool. The helper runs for days and it runs tools
+// every few seconds, so a helper that keeps its pipes would run out of
+// descriptors within the hour - and a helper that cannot open a file cannot
+// write the rules of the gateway.
+extension ToolRunner.Answer {
+    var wasRefused: Bool {
+        return text.contains("pf rules not loaded")
+            || text.contains("Syntax error")
+            || text.contains("Permission denied")
+            || text.contains("Operation not permitted")
     }
 }

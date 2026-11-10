@@ -341,19 +341,8 @@ enum UpstreamWait {
 
     /// The output of "who", or nothing when it cannot be run.
     private static func outputOfWho() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/who")
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8)
+        guard let answer = ToolRunner.run("/usr/bin/who", [], capture: .output) else { return nil }
+        return answer.text
     }
 
     /// what the script writes down

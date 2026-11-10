@@ -27,18 +27,10 @@ enum NetworkReadiness {
     /// This is the honest answer: it says that there is somewhere to send a
     /// packet to.
     static func hasADefaultRoute() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/sbin/route")
-        process.arguments = ["-n", "get", "default"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
+        guard let answer = ToolRunner.run("/sbin/route", ["-n", "get", "default"]) else {
             return false
         }
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+        return answer.status == 0
     }
 
     /// whether the machine has an address
@@ -47,20 +39,9 @@ enum NetworkReadiness {
     /// that does not reach the internet. It is still a network, and the
     /// tunnel can be put up on it.
     static func hasAnAddress() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/scutil")
-        process.arguments = ["--nwi"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
+        guard let answer = ToolRunner.run("/usr/sbin/scutil", ["--nwi"], capture: .output) else {
             return false
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(data: data, encoding: .utf8) ?? ""
-        return text.contains("address")
+        return answer.text.contains("address")
     }
 }

@@ -145,20 +145,11 @@ enum PortOwner {
     // The name of the program that is listening on the port, or nil when the
     // port is free or when nothing says who has it.
     static func listener(ofPort port: Int) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F", "pc"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
+        let arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F", "pc"]
+        guard let answer = ToolRunner.run("/usr/sbin/lsof", arguments, capture: .output) else {
             return nil
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let text = answer.text
 
         // the -F output is one field per line: p for the pid, c for the name
         var name: String?

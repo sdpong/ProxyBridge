@@ -47,6 +47,7 @@ SWIFT_SOURCES=(
     "$HELPER_DIR/GatewayNetwork.swift"
     "$HELPER_DIR/GatewaySocket.swift"
     "$HELPER_DIR/../ProxiRoute/GatewayProtocol.swift"
+    "$HELPER_DIR/../ProxiRoute/ToolRunner.swift"
 )
 
 for source in "${SWIFT_SOURCES[@]}"; do
