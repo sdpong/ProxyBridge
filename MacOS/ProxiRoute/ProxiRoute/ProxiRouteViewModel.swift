@@ -25,6 +25,15 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
     private var tunnelWatchdog: DispatchWorkItem?
     private var tunnelFailureObserver: NSObjectProtocol?
     private var tunnelRepairTried = false
+    // The old records of the system extension were taken out of the system, so
+    // the extension is not there any more and macOS has to install it again.
+    //
+    // This is what tells the answer to the question macOS asks when the
+    // extension that is installed may be replaced: after a cleanup the answer
+    // is yes, because there is nothing to keep. Without it the answer would
+    // be "no" - the versions are the same - and the extension would stay out
+    // of the system and the tunnel would never come up.
+    private var extensionCleanedUp = false
     // the timer that asks the system again whether the extension has been approved
     private var approvalWatchTimer: Timer?
     private var approvalWatchAttempts = 0
@@ -1193,6 +1202,21 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         // So the request is made, and the app says what it knows about its
         // own signature instead of deciding for the system.
         //
+        // Except when the extension of this build is already in the system.
+        //
+        //   Asking for it again does not update the record that is already
+        //   there: macOS makes a new one, under a new folder in
+        //   /Library/SystemExtensions, and the old one is marked "terminated
+        //   waiting to uninstall on reboot". The records pile up, and the
+        //   network configuration of the app - which carries the signature of
+        //   the extension of the day it was written - can end up bound to a
+        //   record that is on its way out. macOS then says "the VPN app used
+        //   by this configuration is not installed" and nothing is proxied,
+        //   while the window shows no reason for it.
+        //
+        //   So the app looks at what the system has first, and asks for the
+        //   extension only when it is not there.
+        //
         // Stop our own tunnel first so macOS replaces the running extension binary with
         // the newly installed one instead of reusing the old cached process. Only the
         // configurations this app wrote are touched: another app's tunnel (the upstream
@@ -1207,18 +1231,56 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                 session.stopTunnel()
                 // Brief pause to let the old extension fully terminate
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    self.submitExtensionActivationRequest()
+                    self.requestExtensionIfNeeded()
                 }
             } else {
-                self.submitExtensionActivationRequest()
+                self.requestExtensionIfNeeded()
             }
         }
-        // Put the network configuration into the system right away, even when the
-        // extension is not approved yet. It shows up in System Settings > Network >
-        // VPN & Filters, and switching it on is what approves the extension - so the
-        // user gets the switch where they look for it instead of having to find the
-        // extension in another pane.
-        ensureNetworkConfiguration()
+    }
+
+    // Asks the system for the extension, but only when it is not there.
+    //
+    // The question is asked first, and it is a question that changes nothing:
+    // the properties request only reads what the system has. Asking for the
+    // extension itself is what makes a new record, and with the developer
+    // mode of the system turned on it does so on every start of the app.
+    //
+    // When the system cannot answer, the extension is asked for as it always
+    // was: asking for an extension that is already there costs a record that
+    // macOS cleans up, while not asking for one that is missing costs the
+    // proxy.
+    private func requestExtensionIfNeeded() {
+        InstalledExtension.query { [weak self] information in
+            guard let self = self else { return }
+
+            // The records that are on their way out are left alone.
+            //
+            // Taking them out of the system takes the record that is in use
+            // with them - the tool of the system cannot take out one record of
+            // a bundle id, only all of them - and macOS takes the network
+            // configuration of the app away with the extension it points at.
+            // Doing that on every start of the app would be a new record and a
+            // new configuration every time, which is the pile-up this is all
+            // about. The records that are on their way out go at the next
+            // restart of the machine, and they do no harm until then: the
+            // tunnel is bound to the record that is in use.
+            //
+            // They are taken out only when the tunnel is broken because of
+            // them, and then the extension is installed again and the
+            // configuration is written again right after. That is the repair
+            // path, and it is the only place where the records are touched.
+            if !InstalledExtension.needsActivationRequest(isCurrent: information.isCurrent,
+                                                     hasStaleRecord: information.hasStaleRecord,
+                                                     didCleanUp: false) {
+                self.addLog("INFO", L10n.t("The system extension of this build is already installed. macOS is not asked for it again."))
+                // The extension is there and it is this build's, so the tunnel
+                // can go up right away.
+                self.startProxy()
+                return
+            }
+            self.submitExtensionActivationRequest()
+        }
     }
     
     private func submitExtensionActivationRequest() {
@@ -1701,10 +1763,73 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.addLog("ERROR", L10n.f("%@. macOS says: %@", why, reason))
-                // macOS bound the tunnel to an extension whose app is gone. Say so and
-                // give the command that takes it out; retrying the configuration would
-                // not help, the system would bind it to the same extension again.
+                // macOS bound the tunnel to an extension whose app is gone.
+                //
+                // The saved network configuration carries the signature of the
+                // extension of the day it was written, and the record of that
+                // extension is on its way out - it was terminated and it goes
+                // at the next restart. So the configuration cannot start, no
+                // matter how often it is written again: it would be bound to
+                // the same record.
+                //
+                // What can be done without a person and without a password:
+                // the configuration is removed and written again, so that it
+                // carries the signature of the extension that is installed
+                // now. That is what the repair below does, and it is tried
+                // first - it needs no root and it works on a machine where
+                // the old record is still there.
+                //
+                // Only when that does not bring the tunnel up is the person
+                // asked to take the old record out of the system by hand.
+                // The command does not need a password, but the app cannot
+                // always run it either.
                 if ExtensionDiagnosis.isMissingProviderApp(reason: reason) {
+                    if !self.tunnelRepairTried {
+                        self.tunnelRepairTried = true
+                        // The old records of the extension are taken out of the
+                        // system first.
+                        //
+                        // The tunnel is bound to a record that the system has
+                        // terminated. Writing the configuration again does not
+                        // help by itself: the system binds it to the same
+                        // record. Taking the records out does help, and it does
+                        // not need a password: the tool of the system answers
+                        // the user who runs it.
+                        //
+                        // The tool takes out every record of the bundle id, the
+                        // one that was in use among them: it cannot take out
+                        // one record of a bundle id, only all of them. So the
+                        // extension is not in the system any more after this,
+                        // and the app installs it again right away - the
+                        // records that were taken out go at the next restart of
+                        // the machine, which is what the system does with
+                        // them, and the proxy comes back without a restart.
+                        self.addLog("INFO", L10n.t("The old records of the system extension are taken out of the system."))
+                        let cleanup = ExtensionCleanup.removeOldRecords()
+                        if cleanup.removed > 0 {
+                            self.addLog("INFO", L10n.f("Took %@ record(s) of the system extension out of the system.", "\(cleanup.removed)"))
+                        } else if cleanup.failed > 0 {
+                            self.addLog("ERROR", L10n.f("The old records of the system extension could not be taken out: %@", cleanup.message))
+                        } else {
+                            self.addLog("INFO", L10n.t("There was no old record of the system extension to take out."))
+                        }
+                        // macOS asks whether the extension that is installed may
+                        // be replaced. It has just been taken out, so the answer
+                        // is yes: the extension goes into the system again.
+                        self.extensionCleanedUp = true
+                        self.addLog("INFO", L10n.t("The saved network configuration points at an extension that macOS has terminated. It is removed and written again, so that it points at the extension of this build."))
+                        TunnelRepair.removeSavedConfigurations(extensionIdentifier: self.extensionIdentifier) { summary in
+                            DispatchQueue.main.async {
+                                self.addLog("INFO", summary)
+                                // the extension is asked for again: the records that
+                                // were taken out are gone, so the one that is
+                                // installed now is the only one
+                                self.installAndStartProxy()
+                                self.applyDNSProxy()
+                            }
+                        }
+                        return
+                    }
                     self.extensionProblem = ExtensionDiagnosis.missingProviderAppExplanation
                     self.extensionProblemDetails = nil
                     self.extensionProblemIsStanding = false
@@ -2818,6 +2943,20 @@ extension ProxiRouteViewModel: OSSystemExtensionRequestDelegate {
     
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         DispatchQueue.main.async {
+            // The request was cancelled because the app itself said so: the
+            // extension of this build is already installed and in use, so
+            // there was nothing to replace. That is not a failure - it is the
+            // outcome the app asked for - and the tunnel goes up.
+            if let code = (error as NSError).code as Int?,
+               code == OSSystemExtensionError.requestCanceled.rawValue {
+                self.addLog("INFO", L10n.t("The system extension of this build is already installed. macOS is not asked to install it again."))
+                self.extensionReady = true
+                self.needsExtensionApproval = false
+                self.stopApprovalWatch()
+                self.startProxy()
+                self.applyDNSProxy()
+                return
+            }
             self.addLog("ERROR", L10n.f("Extension failed: %@", error.localizedDescription))
             // The message on its own does not say what to do. An unsigned build has no
             // entitlements at all, and macOS will not install a system extension from
@@ -2862,8 +3001,40 @@ extension ProxiRouteViewModel: OSSystemExtensionRequestDelegate {
         approvalWatchTimer = nil
     }
     
+    // macOS asks whether the extension that is installed may be replaced.
+    //
+    // With the developer mode of the system turned on, macOS asks this on
+    // every request, even when the extension that is installed is exactly the
+    // one this build carries. Saying yes every time is what made the records
+    // of the extension pile up: every start of the app installed a new copy
+    // and marked the previous one as "terminated waiting to uninstall on
+    // reboot". The tunnel of the app was then bound to a record that was on
+    // its way out, and macOS said "the VPN app used by this configuration is
+    // not installed" - so nothing was proxied.
+    //
+    // So the answer is: replace only when the installed one is not the one
+    // this build carries. The extension is told apart by the version of the
+    // bundle, which is what macOS itself uses.
+    //
+    // When the two carry the same version, the one that is installed is this
+    // build's - the app asked for it, the system installed it, and the
+    // version is the number of this build - so there is nothing to replace.
     func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
-        print("Replacing existing extension")
+        // The records of the extension were just taken out of the system, so
+        // there is nothing to keep: macOS has to install it again, or the
+        // tunnel can never come up.
+        if extensionCleanedUp {
+            addLog("INFO", L10n.t("The old records were taken out of the system, so the extension goes into it again."))
+            extensionCleanedUp = false
+            return .replace
+        }
+        // the extension that is installed and in use is this build's: there is
+        // nothing to replace, and saying so keeps the records from piling up
+        if existing.bundleVersion == ext.bundleVersion {
+            addLog("INFO", L10n.t("The system extension of this build is already installed. macOS is not asked to install it again."))
+            return .cancel
+        }
+        addLog("INFO", L10n.f("The system extension that is installed is version %@ and this build carries version %@. The installed one is replaced.", existing.bundleVersion, ext.bundleVersion))
         return .replace
     }
 }

@@ -791,13 +791,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // An older ProxiRoute extension can stay registered under the same bundle id.
     // The system may then bind the tunnel to it, and that one speaks an older
     // protocol: the rules and the proxies never arrive, so nothing is proxied.
-    // Taking it out needs root, so the command goes on the clipboard and the user
-    // runs it in a terminal.
+    // Taking it out does not need a password, so the command goes on the
+    // clipboard and the user runs it in a terminal. The app does it by itself
+    // when it can; this is here for the records of another team, which the
+    // app may not be allowed to touch.
     @objc func takeOutOlderExtensions() {
         let command = ExtensionDiagnosis.removeOldExtensionsCommand
         let alert = NSAlert()
         alert.messageText = L10n.t("Take the older ProxiRoute extensions out")
-        alert.informativeText = L10n.t("Run this in the Terminal. It removes the ProxiRoute extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxiRoute on in System Settings > General > Login Items & Extensions > Network Extensions.")
+        alert.informativeText = L10n.t("Run this in the Terminal. It does not ask for a password. It removes the ProxiRoute extensions that were signed by another team, so the system can only use this build.\n\nAfter that, switch ProxiRoute on in System Settings > General > Login Items & Extensions > Network Extensions.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 44))
         field.stringValue = command
         field.isEditable = false

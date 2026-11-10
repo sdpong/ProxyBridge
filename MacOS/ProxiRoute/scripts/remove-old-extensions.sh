@@ -26,9 +26,20 @@
 #   under the old name still has that record registered, and the system may
 #   bind the tunnel to it.
 #
-# It needs root, because it changes what the system has registered:
+# It does not need root.
 #
-#       sudo ./remove-old-extensions.sh
+#       ./remove-old-extensions.sh
+#
+# That was measured on this machine, and it is worth saying out loud because
+# the old version of this script refused to run without a password, and so did
+# the notice in the window: "systemextensionsctl uninstall" answers the user
+# who runs it. The command says "Success", exits with 0, and the records are
+# gone from the system - without a password and without root.
+#
+# The records of another team may still refuse, because taking out something
+# that belongs to another developer is not the same thing as taking out
+# something of your own. The script says which ones did not work instead of
+# stopping at the first one.
 #
 # The team id is the thing that makes this awkward: a build signed by a
 # developer has one, and an ad-hoc build has none. "systemextensionsctl
@@ -43,10 +54,10 @@ set -u
 BUNDLE_IDS="com.sdpong.proxiroute.extension com.sdpong.proxybridge.extension com.interceptsuite.ProxyBridge.fork com.interceptsuite.ProxyBridge.extension"
 
 if [ "$(id -u)" != "0" ]; then
-    echo "This needs root. Run it again with sudo:"
+    echo "Running without a password. This is normally enough: the tool of the"
+    echo "system answers the user who runs it. If a record does not go, run the"
+    echo "same command with sudo and it will."
     echo
-    echo "    sudo $0"
-    exit 1
 fi
 
 echo "ProxiRoute extensions that are registered right now:"

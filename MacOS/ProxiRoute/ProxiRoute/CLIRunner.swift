@@ -233,6 +233,9 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     private var startAttempt = 0
     private var startFailureHandled = false
     private var repairTried = false
+    // The old records of the system extension were taken out of the system, so
+    // the extension is not there any more and macOS has to install it again.
+    private var extensionCleanedUp = false
     private let clock: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
@@ -249,14 +252,23 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     func start() {
         installSignalHandlers()
         CLI.say("ProxiRoute CLI \(CLI.version())")
-        CLI.say("Extension: activating...")
-        let request = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: CLI.extensionIdentifier, queue: .main)
-        request.delegate = self
-        OSSystemExtensionManager.shared.submitRequest(request)
+        self.activateExtension()
         // the first run can wait for a person to approve the extension, but not forever
         DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
             if let self = self, !self.extensionActive { self.fail("Timed out waiting for the extension. Approve it in System Settings > Privacy & Security and run the command again.") }
         }
+    }
+
+    // Asks macOS for the extension.
+    //
+    // The request is made by the app itself, not by a script that runs with
+    // more rights, so it can be made again after the old records have been
+    // taken out of the system.
+    private func activateExtension() {
+        CLI.say("Extension: activating...")
+        let request = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: CLI.extensionIdentifier, queue: .main)
+        request.delegate = self
+        OSSystemExtensionManager.shared.submitRequest(request)
     }
 
     // MARK: - extension
@@ -283,14 +295,56 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        DispatchQueue.main.async { self.fail("The system extension could not be activated: \(error.localizedDescription)") }
+        DispatchQueue.main.async {
+            // The request was cancelled because the command itself said so:
+            // the extension of this build is already installed and in use, so
+            // there was nothing to replace. That is not a failure - it is the
+            // outcome the command asked for - and the tunnel goes up.
+            if let code = (error as NSError).code as Int?,
+               code == OSSystemExtensionError.requestCanceled.rawValue {
+                self.extensionActive = true
+                CLI.say("Extension: active (the one that is installed is this build's, macOS was not asked to install it again)")
+                if !self.diagnoseOnly {
+                    self.applyDNSProxy()
+                }
+                self.configureTunnel()
+                return
+            }
+            self.fail("The system extension could not be activated: \(error.localizedDescription)")
+        }
     }
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         CLI.say("Extension: waiting for your approval. Open System Settings > Privacy & Security and click Allow, then enter your password. This is needed once.")
     }
 
+    // macOS asks whether the extension that is installed may be replaced.
+    //
+    // With the developer mode of the system turned on, macOS asks this on
+    // every request, even when the extension that is installed is exactly the
+    // one this build carries. Saying yes every time is what made the records
+    // of the extension pile up: every start of the app installed a new copy
+    // and marked the previous one as "terminated waiting to uninstall on
+    // reboot". The tunnel of the app was then bound to a record that was on
+    // its way out, and macOS said "the VPN app used by this configuration is
+    // not installed".
+    //
+    // So the answer is: replace only when the installed one is not the one
+    // this build carries.
     func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
+        // The records of the extension were just taken out of the system, so
+        // there is nothing to keep: macOS has to install it again, or the
+        // tunnel can never come up.
+        if self.extensionCleanedUp {
+            self.extensionCleanedUp = false
+            CLI.say("Extension: the old records were taken out of the system, so the extension goes into it again.")
+            return .replace
+        }
+        if existing.bundleVersion == ext.bundleVersion {
+            CLI.say("Extension: the one that is installed is this build's, macOS is not asked to install it again.")
+            return .cancel
+        }
+        CLI.say("Extension: the one that is installed is version \(existing.bundleVersion) and this build carries version \(ext.bundleVersion). The installed one is replaced.")
         return .replace
     }
 
@@ -393,13 +447,48 @@ final class CLIRunner: NSObject, OSSystemExtensionRequestDelegate {
         TunnelRepair.lastDisconnectReason(session) { reason in
             DispatchQueue.main.async {
                 CLI.warn("\(why). macOS says: \(CLIText.safe(reason))")
-                // macOS bound the tunnel to an extension whose app is gone. The
-                // configuration is fine, so creating a new one would not help: the
-                // system would bind it to the same extension again.
+                // macOS bound the tunnel to an extension whose app is gone.
+                //
+                // The saved network configuration carries the signature of the
+                // extension of the day it was written, and the record of that
+                // extension is on its way out. Writing the configuration again
+                // on its own does not help: the system binds it to the same
+                // record.
+                //
+                // What does help is taking the old records out of the system
+                // and writing the configuration again, and neither needs a
+                // password: "systemextensionsctl uninstall" answers the user
+                // who runs it.
                 if ExtensionDiagnosis.isMissingProviderApp(reason: reason) {
-                    CLI.warn(ExtensionDiagnosis.missingProviderAppExplanation)
-                    CLI.warn("Command: \(ExtensionDiagnosis.removeOldExtensionsCommand)")
-                    self.fail("The other ProxiRoute extension has to be taken out of the system before this one can be used.")
+                    if !self.repairTried {
+                        self.repairTried = true
+                        CLI.say("The old records of the system extension are taken out of the system.")
+                        let cleanup = ExtensionCleanup.removeOldRecords()
+                        if cleanup.removed > 0 {
+                            CLI.say("Took \(cleanup.removed) record(s) of the system extension out of the system.")
+                        } else if cleanup.failed > 0 {
+                            CLI.warn("The old records of the system extension could not be taken out: \(CLIText.safe(cleanup.message))")
+                        } else {
+                            CLI.say("There was no old record of the system extension to take out.")
+                        }
+                        // the tool takes out every record of the bundle id, the
+                        // one that was in use among them, so the extension is
+                        // not in the system any more and macOS has to install
+                        // it again
+                        self.extensionCleanedUp = true
+                        CLI.say("Removing the saved network configuration and creating a new one. macOS may ask you to allow it again.")
+                        TunnelRepair.removeSavedConfigurations(extensionIdentifier: CLI.extensionIdentifier) { summary in
+                            DispatchQueue.main.async {
+                                CLI.say(CLIText.safe(summary))
+                                // the extension is asked for again: the records that were
+                                // taken out are gone, so the one that is installed now
+                                // is the only one
+                                self.activateExtension()
+                            }
+                        }
+                        return
+                    }
+                    self.fail("The tunnel is still bound to a system extension that macOS has terminated. Run: \(ExtensionDiagnosis.removeOldExtensionsCommand) and then run the command again.")
                     return
                 }
                 if self.repairTried {

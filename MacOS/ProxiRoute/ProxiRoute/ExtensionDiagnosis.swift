@@ -11,15 +11,16 @@ import Security
 // (NEVPNConnectionErrorDomain code 14). Nothing is proxied, and the reason is not
 // obvious: the app looks fine, the extension is approved, and it even runs.
 //
-// The fix is to take the other extension out of the system. That needs root, so the
-// command goes to the user instead of being run behind their back.
+// The fix is to take the other extension out of the system. That does not need
+// root: "systemextensionsctl uninstall" answers the user who runs it. The app
+// does it by itself; the command is here for the cases where the app cannot.
 enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration is not installed." The message is
     // localised, so the domain and the code are what is matched on.
     static func isMissingProviderApp(reason: String) -> Bool {
         return reason.contains("NEVPNConnectionErrorDomain 14")
     }
 
-    static let missingProviderAppExplanation = L10n.t("macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxiRoute is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Copy the command and run it in the Terminal to take the old extension out, then start the proxy again. macOS finishes the removal at the next restart.")
+    static let missingProviderAppExplanation = L10n.t("macOS bound the tunnel to an extension whose app is no longer installed. Another build of ProxiRoute is still registered in the system (its app was removed), and the system picked that one, so no traffic is proxied. Copy the command and run it in the Terminal to take the old extension out, then start the proxy again. It needs no password. macOS finishes the removal at the next restart.")
 
     // The command that takes the old records out of the system.
     //
@@ -30,15 +31,22 @@ enum ExtensionDiagnosis {    // macOS: "The VPN app used by this configuration i
     // usage and do nothing, so the person is left with the old extensions and no
     // way to get rid of them.
     //
+    // No "sudo" in front of it, and none is needed: the tool of the system
+    // answers the user who runs it. That was measured on this machine - the
+    // command answers "Success", exits with 0, and the records are gone from the
+    // system, without a password and without root. Asking for a password for a
+    // command that does not need one is what made people think they had to turn
+    // to an administrator for something the app can do by itself.
+    //
     // The script that ships with the app does the whole job: it finds every
     // ProxiRoute bundle id that is registered and uses the right team id for
     // each. When the script is not in the bundle the command falls back to the
     // one line that removes the records of this build.
     static var removeOldExtensionsCommand: String {
         if let script = Bundle.main.url(forResource: "remove-old-extensions", withExtension: "sh")?.path {
-            return "sudo \(script)"
+            return script
         }
-        return "sudo /usr/bin/systemextensionsctl uninstall - com.sdpong.proxiroute.extension"
+        return "/usr/bin/systemextensionsctl uninstall - com.sdpong.proxiroute.extension"
     }
 
     // ---- can the app reach its own extension at all? ----

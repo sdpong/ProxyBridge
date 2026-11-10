@@ -46,7 +46,101 @@ check("the probe never returns an empty team id", !(team?.isEmpty ?? false))
 check("the probe and the decision agree",
       ExtensionDiagnosis.hasTeamIdentifier(team) == (team != nil))
 
-// the notice about a build without a team id says what is known
+// The extension is not asked for again when it is already in the system.
+//
+// Asking again does not update the record that is there: macOS makes a new
+// one and the old one goes on its way out, and the network configuration of
+// the app can end up bound to the record that goes. Then macOS says "the VPN
+// app used by this configuration is not installed" and nothing is proxied.
+func readAppFile(_ name: String) -> String {
+    let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PROXIRoute_APP"] ?? "")
+        .appendingPathComponent(name)
+    return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+}
+let viewModelSource = readAppFile("ProxiRouteViewModel.swift")
+check("the app asks macOS for the extension through one place",
+      viewModelSource.contains("func requestExtensionIfNeeded()"))
+check("the app looks at what the system has before it asks for the extension",
+      viewModelSource.contains("InstalledExtension.query"))
+check("the app still asks macOS for the extension when it is not there",
+      viewModelSource.contains("submitExtensionActivationRequest()"))
+
+// The tunnel is repaired by itself when macOS bound it to an extension that
+// is gone. The person is only asked to run a command when that did not work.
+check("the saved network configuration is removed and written again",
+      viewModelSource.contains("TunnelRepair.removeSavedConfigurations(extensionIdentifier: self.extensionIdentifier)"))
+check("the repair of the configuration is tried before the person is asked",
+      viewModelSource.contains("if !self.tunnelRepairTried {"))
+
+// The extension that is installed is not replaced when it is this build's.
+//
+// With the developer mode of the system turned on, macOS asks the app on
+// every request whether the extension that is installed may be replaced. The
+// app used to say yes every time, and every start of the app installed a new
+// copy and marked the previous one as "terminated waiting to uninstall on
+// reboot". The records piled up, and the tunnel of the app was bound to a
+// record that was on its way out.
+check("the extension that is installed is replaced only when it is another build",
+      viewModelSource.contains("if existing.bundleVersion == ext.bundleVersion"))
+check("the extension of this build is not replaced by itself",
+      viewModelSource.contains("return .cancel"))
+check("the cancellation of the app is not treated as a failure",
+      viewModelSource.contains("OSSystemExtensionError.requestCanceled"))
+
+// The command that takes the old records out does not ask for a password.
+//
+// "systemextensionsctl uninstall" answers the user who runs it. That was
+// measured on this machine: the command answers "Success", exits with 0, and
+// the records are gone from the system, without a password and without root.
+// The old command asked for one, and the old script refused to run without
+// one - which sent people to an administrator for something the app can do by
+// itself.
+let removalCommand = ExtensionDiagnosis.removeOldExtensionsCommand
+check("the command that takes the old records out does not ask for a password",
+      !removalCommand.contains("sudo"))
+check("the command that takes the old records out is the one of the system",
+      removalCommand.contains("systemextensionsctl") || removalCommand.contains("remove-old-extensions"))
+
+// the script that ships with the app says the same thing
+let scriptSource = readAppFile("../scripts/remove-old-extensions.sh")
+check("the script does not insist on root", !scriptSource.contains("This needs root"))
+check("the script does not tell the reader to use sudo", !scriptSource.contains("sudo $0"))
+
+// The old records are not touched on every start.
+//
+// Taking a record out of the system takes the record that is in use with it:
+// the tool of the system cannot take out one record of a bundle id, only all
+// of them. So cleaning up on every start would be a new record and a new
+// configuration every time - the pile-up that is being fixed here.
+let startupFunction = viewModelSource.components(separatedBy: "private func requestExtensionIfNeeded()").last?
+    .components(separatedBy: "private func submitExtensionActivationRequest()").first ?? ""
+check("the records are not taken out on every start of the app",
+      !startupFunction.contains("ExtensionCleanup.removeOldRecords"))
+check("the app still asks macOS for the extension when it is not there",
+      startupFunction.contains("submitExtensionActivationRequest()"))
+check("the app starts the tunnel when the extension is already there",
+      startupFunction.contains("self.startProxy()"))
+
+// The repair path is the one that takes the records out, and it installs the
+// extension again right after.
+let repairFunction = viewModelSource.components(separatedBy: "private func tunnelStartFailed").last?
+    .components(separatedBy: "func stopProxy(completion:").first ?? ""
+check("the repair takes the old records out of the system",
+      repairFunction.contains("ExtensionCleanup.removeOldRecords()"))
+check("the repair writes the network configuration again",
+      repairFunction.contains("TunnelRepair.removeSavedConfigurations(extensionIdentifier: self.extensionIdentifier)"))
+check("the repair installs the extension again",
+      repairFunction.contains("self.installAndStartProxy()"))
+check("the repair is tried once", repairFunction.contains("if !self.tunnelRepairTried {"))
+
+// After a cleanup the extension has to go into the system again, so the
+// answer to "may it be replaced" is yes.
+check("after a cleanup the extension goes into the system again",
+      viewModelSource.contains("if extensionCleanedUp {"))
+check("after a cleanup the answer is to replace it",
+      viewModelSource.contains("extensionCleanedUp = false\n            return .replace"))
+
+// The notice about a build without a team id says what is known
 //
 // The texts are checked in english: the key of a translation is the english
 // text itself, and a string that has no translation stays english. So the
