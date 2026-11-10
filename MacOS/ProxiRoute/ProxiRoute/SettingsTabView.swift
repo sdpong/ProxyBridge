@@ -214,8 +214,12 @@ struct SettingsTabView: View {
                         set: { viewModel.gateway.interface = $0 }
                     )) {
                         Text(L10n.t("Choose")).tag("")
-                        ForEach(gatewayInterfaces, id: \.self) { name in
-                            Text(name).tag(name)
+                        ForEach(gatewayInterfaces, id: \.name) { entry in
+                            // the kind is said as well: "en0" says nothing to
+                            // the person in front of the window, "en0 - Wi-Fi"
+                            // says which network the other terminals reach
+                            // this machine through
+                            Text("\(entry.name) - \(gatewayKindLabel(entry.kind))").tag(entry.name)
                         }
                     }
                     // the network card is only of use when the gateway can be
@@ -272,8 +276,17 @@ struct SettingsTabView: View {
     }
 
     // The interfaces the other terminals could reach this machine through.
-    private var gatewayInterfaces: [String] {
-        return InterfaceList.shared.entries.map { $0.name }
+    private var gatewayInterfaces: [(name: String, kind: String)] {
+        return InterfaceList.shared.entries.map { (name: $0.name, kind: $0.kind) }
+    }
+
+    // What kind of network card a name is.
+    private func gatewayKindLabel(_ kind: String) -> String {
+        switch kind {
+        case "wifi": return L10n.t("Wi-Fi")
+        case "ethernet": return L10n.t("Wired")
+        default: return L10n.t("Other")
+        }
     }
 
     // Whether the helper of the gateway mode is on the machine.

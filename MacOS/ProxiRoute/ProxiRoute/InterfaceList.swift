@@ -35,11 +35,7 @@ final class InterfaceList: ObservableObject {
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
-            let list = path.availableInterfaces.compactMap { interface -> Entry? in
-                let kind = InterfaceList.kind(of: interface)
-                guard kind != "loopback" else { return nil }
-                return Entry(name: interface.name, kind: kind)
-            }
+            let list = InterfaceList.entries(from: path.availableInterfaces)
             DispatchQueue.main.async {
                 self?.entries = list
                 // the proxy server binds its listener to one of them
@@ -47,6 +43,29 @@ final class InterfaceList: ObservableObject {
             }
         }
         monitor.start(queue: queue)
+    }
+
+    // The interfaces of the machine, in the shape the monitor gives them.
+    nonisolated static func entries(from interfaces: [NWInterface]) -> [Entry] {
+        return entries(from: interfaces.map { (name: $0.name, kind: kind(of: $0)) })
+    }
+
+    // The interfaces of the machine, without the ones that are said twice.
+    //
+    // The system does say the same interface more than once: on a Mac with a
+    // wireless network the monitor of the paths names en0 twice, once for the
+    // network and once for the radio behind it. Two entries with the same name
+    // are one interface as far as the app is concerned, and a list that says
+    // the same name twice is a picker with the same choice in it twice - and
+    // SwiftUI does not say which of the two is meant.
+    nonisolated static func entries(from interfaces: [(name: String, kind: String)]) -> [Entry] {
+        var seen = Set<String>()
+        var list: [Entry] = []
+        for interface in interfaces where interface.kind != "loopback" {
+            guard seen.insert(interface.name).inserted else { continue }
+            list.append(Entry(name: interface.name, kind: interface.kind))
+        }
+        return list
     }
 
     // the entries in the shape the old code used

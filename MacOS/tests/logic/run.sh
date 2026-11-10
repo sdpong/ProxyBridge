@@ -65,3 +65,4 @@ run_test extensioncleanup_tests.swift "$APP/ExtensionCleanup.swift"
 run_test upstreamwait_tests.swift "$APP/UpstreamWait.swift" "$APP/UpstreamReadiness.swift"
 run_test loginstart_tests.swift "$APP/UpstreamWait.swift" "$APP/InstanceLock.swift" "$APP/NetworkReadiness.swift" "$APP/LaunchOrigin.swift"
 run_test profilesafety_tests.swift
+run_test interfacelist_tests.swift "$APP/InterfaceList.swift"
