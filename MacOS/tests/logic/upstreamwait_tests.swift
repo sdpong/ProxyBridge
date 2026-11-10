@@ -137,6 +137,31 @@ check(UpstreamWait.agentPlistURL(home: URL(fileURLWithPath: "/Users/tester")).pa
         == "/Users/tester/Library/LaunchAgents/com.sdpong.proxiroute.launch.plist",
       "the agent is an agent of the user")
 
+// ---------------------------------------------------------------- the switch behind the agent
+
+// There is one answer to "does the app start at the login", and not two.
+//
+// The window asks the question, the launch agent asks it, and the script of
+// the agent reads what it was told. When the two answers drift apart, the
+// window says one thing and the machine does the other - which is what the
+// two switches that never did anything were: one of them wrote the file the
+// script reads, the other one was the one the window showed.
+func readAppFile(_ name: String) -> String {
+    let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PROXIRoute_APP"] ?? "")
+        .appendingPathComponent(name)
+    return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+}
+let guiSource = readAppFile("ProxiRouteGUI.swift")
+let agentSource = readAppFile("LaunchOrderAgent.swift")
+check(guiSource.contains("static let enabledKey = \"runAtStartup\""),
+      "the switch of the login has a key of its own")
+check(guiSource.contains("UserDefaults.standard.register(defaults: [enabledKey: true])"),
+      "the switch of the login is on until it is turned off")
+check(agentSource.contains("static var isEnabled: Bool { LoginItem.isEnabled }"),
+      "the agent asks the switch of the window, and not for an answer of its own")
+check(!agentSource.contains("register(defaults:"),
+      "the agent does not keep an answer of its own any more")
+
 // ---------------------------------------------------------------- the probe
 
 // A port that nothing listens on is not ready.
@@ -216,10 +241,11 @@ check(agentFile.contains("func writeStartFlag"), "the file that says whether to 
 
 // The login item follows the switch right away.
 //
-// The agent is the launcher of the app while it is in place, so the app must
-// not be a login item as well. And when the agent is taken out, the app has
-// to become a login item again - otherwise a person who quits it and
-// restarts the machine finds no proxy, and the app is only started by hand.
+// There is one switch now: the agent is the launcher of the app while it is in
+// place, so the app must not be a login item of macOS as well. And when the
+// agent cannot be put in place, the app has to become a login item - otherwise
+// a person who restarts the machine finds no proxy, and the app is only
+// started by hand.
 check(agentFile.contains("LoginItem.applyToSystem(LoginItem.isEnabled)"),
       "the login item follows the switch right away")
 check(agentFile.contains("func sync()"), "the machine is made to match the switch")
@@ -227,6 +253,29 @@ check(read("ProxiRouteGUI.swift").contains("LaunchOrderAgent.sync()"),
       "the machine is made to match the switch at every start")
 check(agentFile.contains("func writeWaitFile"), "the file that says what to wait for is written")
 check(agentFile.contains("UpstreamWait.oldScriptName"), "the script of the build before this one is taken away")
+
+// There is one switch for the start at the login, and it is the agent.
+//
+// Two switches were there before, and both of them did nothing: the login
+// item of macOS was taken out of the system while the agent was in place, so
+// the first switch changed nothing at all, and the second one - the agent -
+// was not asked for the flag that says whether the app should start.
+let gui = read("ProxiRouteGUI.swift")
+let options = read("OptionsTabView.swift")
+check(options.components(separatedBy: "Start ProxiRoute at the login").count - 1 == 1,
+      "there is one switch for the start at the login")
+check(!options.contains("Run at Startup"),
+      "the switch that did nothing is gone")
+check(!options.contains("startAfterUpstream"),
+      "the second key of the start at the login is gone")
+check(gui.contains("static let enabledKey = \"runAtStartup\""),
+      "the switch of the start at the login is the one that is in the profile")
+check(gui.contains("LaunchOrderAgent.writeStartFlag(enabled)"),
+      "the flag that says whether to start at the login is written with the switch")
+check(gui.contains("removeSystemLoginItem()"),
+      "the app is taken out of the login items of macOS when the agent is the launcher")
+check(gui.contains("addSystemLoginItem()"),
+      "the app goes into the login items of macOS when the agent cannot be put in place")
 
 // The wait ends with the upstream that carries the most: an upstream that is
 // not up must not hold up the whole proxy.

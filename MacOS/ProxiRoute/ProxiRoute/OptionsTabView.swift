@@ -20,10 +20,8 @@ struct OptionsTabView: View {
     // the switches of the app itself
     @AppStorage("closeToMenuBar") private var closeToMenuBar = false
     @AppStorage("keepProxyRunningInBackground") private var keepProxyRunningInBackground = true
+    // whether macOS should start the app at the login, before the browsers
     @State private var runAtStartup = LoginItem.isEnabled
-    // whether macOS should start the app as soon as the proxy on this
-    // machine is ready
-    @State private var startAfterUpstream = LaunchOrderAgent.isEnabled
     // what the last change of that switch did, in words
     @State private var launchOrderNote = ""
 
@@ -81,19 +79,11 @@ struct OptionsTabView: View {
 
                     Toggle(L10n.t("Keep Proxy Running in Background"), isOn: $keepProxyRunningInBackground)
 
-                    Toggle(L10n.t("Run at Startup"), isOn: Binding(
+                    Toggle(L10n.t("Start ProxiRoute at the login"), isOn: Binding(
                         get: { runAtStartup },
                         set: {
                             runAtStartup = $0
-                            LoginItem.setEnabled($0)
-                        }
-                    ))
-
-                    Toggle(L10n.t("Start ProxiRoute at the login"), isOn: Binding(
-                        get: { startAfterUpstream },
-                        set: {
-                            startAfterUpstream = $0
-                            launchOrderNote = LaunchOrderAgent.setEnabled($0)
+                            launchOrderNote = LoginItem.setEnabled($0)
                         }
                     ))
 

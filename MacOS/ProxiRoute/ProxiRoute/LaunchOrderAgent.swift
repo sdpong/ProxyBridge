@@ -24,20 +24,14 @@ import Foundation
 
 enum LaunchOrderAgent {
 
-    /// the key that says whether the agent is wanted
-    static let enabledKey = "startAfterUpstream"
-
     /// whether the agent is wanted
     ///
-    /// The agent is wanted from the start: the order of the start is the thing
-    /// a proxy on this machine needs, and a person who wants a proxy does not
-    /// want to look for a switch for it. When the agent cannot be put in
-    /// place, the switch turns itself off and the app stays a login item, so
-    /// that the proxy still comes up at the login.
-    static var isEnabled: Bool {
-        UserDefaults.standard.register(defaults: [enabledKey: true])
-        return UserDefaults.standard.bool(forKey: enabledKey)
-    }
+    /// The agent is the mechanism behind the one switch that starts the app at
+    /// the login, so the answer is the answer of that switch.
+    ///
+    /// It is the same answer and not one of its own: the window asks the same
+    /// question, and the two have to be given the same answer.
+    static var isEnabled: Bool { LoginItem.isEnabled }
 
     /// Turns the agent on or off.
     ///
@@ -45,31 +39,7 @@ enum LaunchOrderAgent {
     /// whether the machine was changed or not.
     @discardableResult
     static func setEnabled(_ enabled: Bool) -> String {
-        UserDefaults.standard.set(enabled, forKey: enabledKey)
-        if enabled {
-            do {
-                try install()
-                // The agent is the launcher now, so the app must not be a login
-                // item as well. It is taken out right away and not at the next
-                // start of the app: the app is started by hand most of the
-                // time, and the next login would come before that.
-                LoginItem.applyToSystem(LoginItem.isEnabled)
-                return L10n.t("ProxiRoute will be started by macOS at the login, before the browsers and the other apps that use the network.")
-            } catch {
-                UserDefaults.standard.set(false, forKey: enabledKey)
-                // The agent could not be put in place, so the app has to be a
-                // login item again, or the proxy would not come up at all.
-                LoginItem.applyToSystem(LoginItem.isEnabled)
-                return L10n.f("The launch agent could not be installed: %@", error.localizedDescription)
-            }
-        }
-        uninstall()
-        // The agent is gone, so the app goes back to being a login item - if
-        // the person wants it to be one. Without this the app would stay out
-        // of the login items until it is started by hand once, and a person
-        // who quits it and restarts the machine would find no proxy.
-        LoginItem.applyToSystem(LoginItem.isEnabled)
-        return L10n.t("ProxiRoute will be started by macOS at the same time as the other login items again.")
+        return LoginItem.setEnabled(enabled)
     }
 
     /// Makes the machine match the switch.
@@ -83,20 +53,7 @@ enum LaunchOrderAgent {
     /// turned somewhere else - by hand, or by an older version of the app -
     /// does not leave a machine in a state that nobody asked for.
     static func sync() {
-        if isEnabled {
-            if !isInstalled {
-                // the switch says yes and the agent is not there: put it in
-                // place. When that does not work, the switch turns itself off
-                // and the app goes back to being a login item.
-                _ = setEnabled(true)
-            }
-            return
-        }
-        // the switch says no: the agent goes away
-        if isInstalled {
-            uninstall()
-        }
-        LoginItem.applyToSystem(LoginItem.isEnabled)
+        _ = LoginItem.applyToSystem(LoginItem.isEnabled)
     }
 
     /// Whether the agent is in place.

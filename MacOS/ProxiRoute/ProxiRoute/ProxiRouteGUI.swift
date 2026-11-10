@@ -2,43 +2,114 @@ import SwiftUI
 import UniformTypeIdentifiers
 import ServiceManagement
 
-// launch-at-login. the desired state lives in the "runAtStartup" working key so
-// it can be part of a profile, and applyToSystem keeps the real login item in sync
+// Starting the app at the login.
+//
+// There is one switch for it, and one mechanism behind it: the launch agent.
+//
+// Why one and not two:
+//
+//   macOS starts every login item at the same moment, and nothing in the
+//   system settings says that one of them comes before another one. The
+//   launch agent is the way to bring the order back: it runs at every login
+//   and starts the app right away, so that the proxy of the machine is up
+//   before the browsers and before the other apps that use the network.
+//
+//   The other mechanism - the login item of the system (SMAppService) - has
+//   no order at all: it starts the app together with everything else, which
+//   is exactly what the person does not want. So it was a second switch that
+//   could not do what the first one does, and it was worse than that: while
+//   the agent was in place the login item was taken out of the system, so
+//   turning that switch on changed nothing at all, and the person was told
+//   that the app would start at the login.
+//
+//   Now there is one switch and it is the one that works. The login item of
+//   the system is still there as the fallback: when the agent cannot be put
+//   in place, the app goes into the login items of macOS, so that the proxy
+//   still comes up at the login - it is only later than wanted, but it is
+//   there.
 enum LoginItem {
-    static var isEnabled: Bool { UserDefaults.standard.bool(forKey: "runAtStartup") }
+    // the key that says whether the app is started at the login. it is part of
+    // a profile, so a profile can have its own answer.
+    static let enabledKey = "runAtStartup"
 
-    static func setEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: "runAtStartup")
+    // Whether the app is started at the login.
+    //
+    // The answer is wanted from the start: the order of the start is the
+    // thing a proxy on this machine needs, and a person who wants a proxy
+    // does not want to look for a switch for it. So the switch is on until
+    // it is turned off.
+    //
+    // There is one answer to this question and not two. The window, the
+    // launch agent and the script of the agent all ask the same thing, and
+    // they have to be given the same answer - otherwise the window says the
+    // app starts at the login while the machine has been told not to, or the
+    // other way around.
+    static var isEnabled: Bool {
+        UserDefaults.standard.register(defaults: [enabledKey: true])
+        return UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    // Turns the switch on or off and makes the machine match it.
+    //
+    // The answer comes back in words, because the person has to know whether
+    // the machine was changed or not.
+    @discardableResult
+    static func setEnabled(_ enabled: Bool) -> String {
+        UserDefaults.standard.set(enabled, forKey: enabledKey)
         // the script of the launch agent reads this file: it is the only way
         // the script can know whether the app should start at all, because the
         // script runs before the app does
         LaunchOrderAgent.writeStartFlag(enabled)
-        applyToSystem(enabled)
+        return applyToSystem(enabled)
     }
 
-    static func applyToSystem(_ enabled: Bool) {
-        // The launch agent starts the app when the upstream is ready. When it
-        // is in place, the app must not be a login item as well: two
-        // launchers would start the app twice, and the one that waits for the
-        // upstream would be the one that loses.
-        guard !LaunchOrderAgent.isEnabled else {
-            unregister()
-            return
+    // Makes the machine match the switch and says what was done.
+    //
+    // The agent is the launcher when it can be put in place: it starts the
+    // app at the login, before the browsers. When it cannot, the app goes
+    // into the login items of macOS instead, so that the proxy still comes
+    // up at the login - it is only later than wanted, but it is there.
+    @discardableResult
+    static func applyToSystem(_ enabled: Bool) -> String {
+        if enabled {
+            // The agent is the launcher now, so the app must not be a login
+            // item as well: two launchers would start the app twice.
+            removeSystemLoginItem()
+            do {
+                try LaunchOrderAgent.install()
+                return L10n.t("ProxiRoute will be started by macOS at the login, before the browsers and the other apps that use the network.")
+            } catch {
+                // The agent could not be put in place, so the app has to be a
+                // login item, or the proxy would not come up at all.
+                addSystemLoginItem()
+                return L10n.f("The launch agent could not be installed, so macOS will start ProxiRoute together with the other login items: %@", error.localizedDescription)
+            }
         }
+        // the switch is off: the agent goes away and so does the login item
+        LaunchOrderAgent.uninstall()
+        removeSystemLoginItem()
+        return L10n.t("ProxiRoute will not be started at the login.")
+    }
+
+    // Puts the app into the login items of macOS.
+    //
+    // It is the fallback for the case where the launch agent cannot be put
+    // in place. The registration can fail - an app that is not in
+    // /Applications, for example - and there is nothing to do about that
+    // here.
+    static func addSystemLoginItem() {
         guard #available(macOS 13.0, *) else { return }
         do {
-            if enabled, SMAppService.mainApp.status != .enabled {
+            if SMAppService.mainApp.status != .enabled {
                 try SMAppService.mainApp.register()
-            } else if !enabled, SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
             }
         } catch {
-            // registration can fail if the app isn't in /Applications, ignore
+            // registration can fail if the app isn't in /Applications
         }
     }
 
     // Takes the app out of the login items of the system.
-    private static func unregister() {
+    static func removeSystemLoginItem() {
         guard #available(macOS 13.0, *) else { return }
         guard SMAppService.mainApp.status == .enabled else { return }
         try? SMAppService.mainApp.unregister()
@@ -527,16 +598,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // The launch agent is the launcher of the app when the person wants
         // the app to come up behind the proxy on this machine. It is put in
         // place here, so that it is there for the next login even when the app
-        // was started by hand. When it cannot be put in place, the switch
-        // turns itself off and the app stays a login item.
+        // was started by hand. When it cannot be put in place, the app stays
+        // a login item of macOS, so that the proxy still comes up at the
+        // login.
         //
         // And when the switch is off, the agent goes away: the switch is the
         // truth, and a machine that keeps an agent nobody asked for is a
         // machine that starts an app at the login that should stay closed.
         LaunchOrderAgent.sync()
-        // keep the real login item in sync with the active profile's setting
+        // the flag the script of the agent reads has to say the same thing
+        // the switch says: the script runs before the app does, so it cannot
+        // ask the app
         LaunchOrderAgent.writeStartFlag(LoginItem.isEnabled)
-        LoginItem.applyToSystem(LoginItem.isEnabled)
 
         // a login-item / resume launch is not a "default" launch. if we got here
         // that way and startup is enabled, come up in the menu bar with no window
