@@ -938,7 +938,13 @@ class AppProxyProvider: NETransparentProxyProvider {
     // udp has no close signal we can rely on (quic flows come and go), so idle
     // sockets are reaped here, otherwise each one pins a flow for the life of
     // the extension
-    private static let udpIdleTimeout: TimeInterval = 120
+    //
+    // The time is the same as the one the filter of the gateway mode gives to
+    // a state of udp, and the one a state of udp is given by the proxies
+    // themselves: a socket that says something every half minute is a socket
+    // that is alive, and a socket that is given up too early is a socket that
+    // is opened again and again.
+    private static let udpIdleTimeout: TimeInterval = 300
     private var udpSweepTimer: DispatchSourceTimer?
 
     private func startUDPSweepTimer() {
@@ -977,6 +983,43 @@ class AppProxyProvider: NETransparentProxyProvider {
         }
         udpLock.unlock()
         for association in staleAssociations { self.teardownUDPAssociation(association) }
+
+        // the pool is not allowed to grow for ever
+        self.trimUDPAssociations()
+    }
+
+    // The most associations of udp that are kept at the same time.
+    //
+    // The pool holds one association for every program and every proxy, so a
+    // machine with many programs has many of them, and each one is a
+    // connection to the proxy and a socket that is held open. The cap keeps
+    // the machine from holding more of them than it should.
+    private static let udpAssociationLimit = 256
+
+    // The associations that no socket rides on are given up.
+    //
+    // They are the oldest ones first, and they are only given up when the
+    // pool is over the cap: an association that a socket rides on is kept,
+    // because the socket would have to make a new one.
+    private func trimUDPAssociations() {
+        udpLock.lock()
+        let over = udpAssociations.count - AppProxyProvider.udpAssociationLimit
+        guard over > 0 else {
+            udpLock.unlock()
+            return
+        }
+        let free = udpAssociations.values
+            .filter { $0.clients.isEmpty }
+            .sorted { $0.idleTime() > $1.idleTime() }
+        let victims = Array(free.prefix(over))
+        for victim in victims {
+            udpAssociations.removeValue(forKey: victim.key)
+        }
+        udpLock.unlock()
+
+        for victim in victims {
+            victim.release()
+        }
     }
 
     // tcp and udp proxy handshakes have no timeout of their own, so a proxy that
