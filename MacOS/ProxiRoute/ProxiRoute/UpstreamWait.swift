@@ -386,18 +386,18 @@ enum UpstreamWait {
             echo "$(/bin/date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG" 2>/dev/null
         }
 
-        say "the agent started"
-
         # Does the app want to start at all? The switch in the window of the
         # person says it, and the file is written by the app.
+        #
+        # There is nothing to say about it here: the agent is not even there
+        # when the switch is off, and what the agent does not do is not worth
+        # a line in the log.
         if [ -f "$START_FLAG" ]; then
             read -r want < "$START_FLAG"
             if [ "$want" != "1" ]; then
-                say "the app should not start at the login"
                 exit 0
             fi
         else
-            say "the file that says to start at the login is not there"
             exit 0
         fi
 
@@ -408,9 +408,11 @@ enum UpstreamWait {
         # It is handed over to the app, which writes it into the marker.
         SESSION=$(/usr/bin/who 2>/dev/null | /usr/bin/awk '$2 == "console" { print $3, $4, $5; exit }')
 
-        # The app is already running. There is nothing to start.
+        # The app is already running. There is nothing to start, and there is
+        # nothing to say about it either: the agent comes back every 20
+        # seconds, and a line every 20 seconds would bury the order that the
+        # person wants to see afterwards.
         if pgrep -x "\(processName)" > /dev/null 2>&1; then
-            say "the app is already running"
             exit 0
         fi
 
@@ -424,10 +426,13 @@ enum UpstreamWait {
         if [ -n "$SESSION" ] && [ -f "$MARKER" ]; then
             MARKED=$(/bin/cat "$MARKER" 2>/dev/null)
             if [ "$MARKED" = "$SESSION|quit" ]; then
-                say "the app was started in this session and was closed again"
                 exit 0
             fi
         fi
+
+        # There is something to do now. This is where the log starts: what
+        # the person sees in it afterwards is the order of the start.
+        say "the agent started"
 
         # The network of the machine has to be there before the app is
         # started.
