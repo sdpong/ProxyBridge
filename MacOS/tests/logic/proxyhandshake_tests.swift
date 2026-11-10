@@ -108,10 +108,13 @@ final class PoliteProxy {
                 // connection: the first proxy is asked to reach the second
                 // one, and the second one is asked over that tunnel.
                 while true {
-                    // the greeting: the version and the way of saying who it is
-                    var greeting = [UInt8](repeating: 0, count: 3)
-                    let read1 = read(client, &greeting, greeting.count)
-                    if read1 <= 0 { break }
+                    // the greeting: the version, the number of the ways, and
+                    // the ways themselves
+                    var head = [UInt8](repeating: 0, count: 2)
+                    if read(client, &head, head.count) <= 0 { break }
+                    let ways = Int(head[1])
+                    var methods = [UInt8](repeating: 0, count: max(0, ways))
+                    if !methods.isEmpty { _ = read(client, &methods, methods.count) }
                     var answer: [UInt8] = [0x05, 0x00]
                     _ = write(client, answer, answer.count)
                     // the request: the version, the command, the reserved, the
@@ -129,10 +132,99 @@ final class PoliteProxy {
     }
 }
 
-func endpoint(_ name: String, _ port: Int) -> ProxyEndpoint {
-    return ProxyEndpoint(id: name, name: name, type: "socks5", host: "127.0.0.1", port: port,
-                         username: "", password: "")
+// A proxy that writes down the greeting it was given.
+final class RecordingProxy {
+    let port: Int
+    private let fd: Int32
+    private(set) var greeting: Data = Data()
+
+    init() {
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        var yes: Int32 = 1
+        setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var local = sockaddr_in()
+        local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        local.sin_family = sa_family_t(AF_INET)
+        local.sin_port = 0
+        local.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        withUnsafePointer(to: &local) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                _ = bind(listener, generic, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        _ = listen(listener, 16)
+        var named = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        withUnsafeMutablePointer(to: &named) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                _ = getsockname(listener, generic, &length)
+            }
+        }
+        fd = listener
+        port = Int(UInt16(bigEndian: named.sin_port))
+
+        let thread = Thread { [weak self] in
+            guard let self = self else { return }
+            while true {
+                let client = accept(self.fd, nil, nil)
+                if client < 0 { continue }
+                var head = [UInt8](repeating: 0, count: 2)
+                let n = read(client, &head, head.count)
+                guard n == 2 else { close(client); continue }
+                let ways = Int(head[1])
+                var methods = [UInt8](repeating: 0, count: max(0, ways))
+                if !methods.isEmpty { _ = read(client, &methods, methods.count) }
+                self.greeting = Data([head[0], head[1]] + methods)
+                var answer: [UInt8] = [0x05, 0x00]
+                _ = write(client, answer, answer.count)
+                var request = [UInt8](repeating: 0, count: 10)
+                _ = read(client, &request, request.count)
+                var reply: [UInt8] = [0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 80]
+                _ = write(client, reply, reply.count)
+                var scratch = [UInt8](repeating: 0, count: 64)
+                while read(client, &scratch, scratch.count) > 0 {}
+                close(client)
+            }
+        }
+        thread.start()
+    }
 }
+
+func endpoint(_ name: String, _ port: Int) -> ProxyEndpoint {
+    // A proxy of the person has no name and no password, and that is
+    // nothing and not an empty text: a proxy with an empty name is a proxy
+    // with a name.
+    return ProxyEndpoint(id: name, name: name, type: "socks5", host: "127.0.0.1", port: port,
+                         username: nil, password: nil)
+}
+
+// The greeting says what it says
+//
+// The number of the ways of saying who it is and the ways themselves have to
+// agree, or the proxy waits for a way that never comes.
+let recorder = RecordingProxy()
+_ = LocalProxyDialer.connectAndGreet(
+    endpoint: ProxyEndpoint(id: "recorded", name: "recorded", type: "socks5",
+                            host: "127.0.0.1", port: recorder.port,
+                            username: nil, password: nil),
+    target: target, timeout: 5)
+let withoutName = Array(recorder.greeting)
+check("the greeting of a proxy without a name offers the way without a name",
+      withoutName.count >= 3 && withoutName[0] == 0x05 && withoutName[1] == 0x01 && withoutName[2] == 0x00)
+print("       the greeting without a name: \(withoutName)")
+
+let recorder2 = RecordingProxy()
+_ = LocalProxyDialer.connectAndGreet(
+    endpoint: ProxyEndpoint(id: "recorded", name: "recorded", type: "socks5",
+                            host: "127.0.0.1", port: recorder2.port,
+                            username: "user", password: "secret"),
+    target: target, timeout: 5)
+let withName = Array(recorder2.greeting)
+check("the greeting of a proxy with a name says how many ways there are",
+      withName.count >= 4 && withName[0] == 0x05 && withName[1] == 2)
+check("the ways of the greeting are the two that are said",
+      withName.count >= 4 && withName[2] == 0x00 && withName[3] == 0x02)
+print("       the greeting with a name: \(withName)")
 
 // A proxy that says nothing: the greeting gives up instead of waiting
 let silent = SilentProxy()

@@ -90,8 +90,19 @@ enum LocalProxyDialer {
     // connection.
     static func socks5Greeting(fd: Int32, endpoint: ProxyEndpoint) -> Bool {
         let hasAuth = endpoint.username != nil && endpoint.password != nil
-        var greeting = Data([0x05, hasAuth ? 0x02 : 0x01])
-        greeting.append(hasAuth ? 0x02 : 0x00)
+        // The greeting says how many ways of saying who it is there are, and
+        // then the ways themselves.
+        //
+        // The way without a name is offered together with the way with a
+        // name: the proxy takes the one it likes best, and a proxy that takes
+        // the one without a name asks for nothing.
+        //
+        // The number of the ways and the ways themselves have to agree: a
+        // proxy that is told of two ways waits for two of them, and the
+        // greeting of a proxy with a user name hung there for ever.
+        let methods: [UInt8] = hasAuth ? [0x00, 0x02] : [0x00]
+        var greeting = Data([0x05, UInt8(methods.count)])
+        greeting.append(contentsOf: methods)
         guard LocalProxySocket.sendAll(fd, greeting) else { return false }
         guard let answer = LocalProxySocket.recvExact(fd, 2), answer.count == 2, answer[0] == 0x05 else {
             return false
