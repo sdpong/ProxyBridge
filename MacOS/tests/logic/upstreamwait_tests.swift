@@ -136,7 +136,8 @@ check(script.contains("while kill -0 \"$APP_PID\""), "the agent stays until the 
 // that is over is of no use.
 check(script.contains("/usr/bin/who"), "the session of the login is read out of the system")
 check(script.contains("export PROXIRoute_SESSION"), "the session of the login is handed over to the app")
-check(script.contains("[ \"$MARKED\" = \"$SESSION\" ]"), "the marker is compared with the session")
+check(script.contains("[ \"$MARKED\" = \"$SESSION|quit\" ]"),
+      "the app that the person closed is left alone")
 
 // ---------------------------------------------------------------- the agent
 
@@ -218,6 +219,15 @@ let markerText = (try? String(contentsOf: UpstreamWait.sessionMarkerURL(home: ma
 check(markerText == "Nov 10 11:18", "the marker carries the session of the login")
 check(!UpstreamWait.writeSessionMarker(session: "   ", home: markerHome),
       "a marker without a session is not written")
+
+// The marker says two things: that the app was started, and that the person
+// closed it. An app that died is not the same as an app that was closed.
+check(UpstreamWait.writeSessionMarker(session: "Nov 10 11:18", quit: true, home: markerHome),
+      "the marker of a closed app is written")
+let quitText = (try? String(contentsOf: UpstreamWait.sessionMarkerURL(home: markerHome),
+                            encoding: .utf8)) ?? ""
+check(quitText == "Nov 10 11:18" + UpstreamWait.quitSuffix,
+      "the marker says that the person closed the app")
 try? FileManager.default.removeItem(at: markerHome)
 
 // The app writes the marker a moment after it comes up: an app that dies in
@@ -225,6 +235,9 @@ try? FileManager.default.removeItem(at: markerHome)
 check(readAppFile("ProxiRouteGUI.swift")
         .contains("UpstreamWait.writeSessionMarker(session: UpstreamWait.currentSession())"),
       "the app writes down that it was started in this session")
+check(readAppFile("ProxiRouteGUI.swift")
+        .contains("writeSessionMarker(session: UpstreamWait.currentSession(), quit: true)"),
+      "the app writes down that the person closed it")
 
 // ---------------------------------------------------------------- the probe
 

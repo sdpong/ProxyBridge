@@ -220,6 +220,13 @@ enum UpstreamWait {
         return supportFolderURL(home: home).appendingPathComponent(startFlagName)
     }
 
+    /// what the marker says when the person closed the app
+    ///
+    /// The marker carries the session of the login, and this is what is put
+    /// behind it when the app is closed by the person: the agent reads it and
+    /// leaves the app alone.
+    static let quitSuffix = "|quit"
+
     /// the file that says that the agent already started the app in this session
     static func sessionMarkerURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         return supportFolderURL(home: home).appendingPathComponent(sessionMarkerName)
@@ -234,16 +241,37 @@ enum UpstreamWait {
     /// The session is what the script of the agent handed over. It is the
     /// time the console was logged in, and it is what tells this login from
     /// the next one: the marker of a session that is over is of no use.
+    /// Writes down that the app was started in this session.
+    ///
+    /// The agent comes back every 20 seconds until the app is there, and the
+    /// person may close the app afterwards. Closing it means that the proxy
+    /// is wanted no more, so the agent must not bring it back.
+    ///
+    /// The session is what the script of the agent handed over. It is the
+    /// time the console was logged in, and it is what tells this login from
+    /// the next one: the marker of a session that is over is of no use.
+    ///
+    /// The marker says two things, and the difference between them is what
+    /// the agent needs:
+    ///
+    ///   - the app was started in this session. The agent starts it again
+    ///     when it is not there: an app that died is a proxy that is not
+    ///     there, and the person did not ask for that.
+    ///   - the app was closed by the person (the quit suffix). The agent
+    ///     leaves it alone: closing it means that the proxy is wanted no
+    ///     more.
     @discardableResult
     static func writeSessionMarker(session: String,
+                                   quit: Bool = false,
                                    home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
         let manager = FileManager.default
         let session = session.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !session.isEmpty else { return false }
+        let text = quit ? session + quitSuffix : session
         do {
             try manager.createDirectory(at: supportFolderURL(home: home),
                                         withIntermediateDirectories: true)
-            try session.write(to: sessionMarkerURL(home: home), atomically: true, encoding: .utf8)
+            try text.write(to: sessionMarkerURL(home: home), atomically: true, encoding: .utf8)
             return true
         } catch {
             return false
@@ -386,13 +414,17 @@ enum UpstreamWait {
             exit 0
         fi
 
-        # The app was already started in this session, and the person closed
-        # it again. It is not started a second time: closing it means that the
-        # proxy is wanted no more.
+        # The person closed the app in this session. It is not started again:
+        # closing it means that the proxy is wanted no more.
+        #
+        # An app that was started and that died is a different thing: the
+        # marker of it says that it was started and not that it was closed,
+        # and the agent starts it again - a proxy that is not there is a
+        # proxy that the person asked for.
         if [ -n "$SESSION" ] && [ -f "$MARKER" ]; then
             MARKED=$(/bin/cat "$MARKER" 2>/dev/null)
-            if [ -n "$MARKED" ] && [ "$MARKED" = "$SESSION" ]; then
-                say "the app was already started in this session and was closed again"
+            if [ "$MARKED" = "$SESSION|quit" ]; then
+                say "the app was started in this session and was closed again"
                 exit 0
             fi
         fi

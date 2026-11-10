@@ -834,6 +834,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         }
     }
 
+    // The app is closed by the person: the agent has to leave it alone.
+    //
+    // The agent comes back every 20 seconds, and it starts the app when it is
+    // not there. A closed app means that the proxy is wanted no more, so the
+    // marker says that the app was closed and not only that it was started.
+    func applicationWillTerminate(_ notification: Notification) {
+        UpstreamWait.writeSessionMarker(session: UpstreamWait.currentSession(), quit: true)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Clear extension memory before app quits
         AppDelegate.viewModel?.stopProxy()
