@@ -58,7 +58,7 @@ let helperLines = [
     "handle = open(sys.argv[1], \"r+\") if os.path.exists(sys.argv[1]) else open(sys.argv[1], \"w+\")",
     "fcntl.flock(handle, fcntl.LOCK_EX)",
     "handle.seek(0); handle.truncate(); handle.write(str(os.getpid())); handle.flush()",
-    "time.sleep(5)"
+    "time.sleep(30)"
 ]
 let helper = helperLines.joined(separator: "\n") + "\n"
 let helperPath = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -70,10 +70,28 @@ if (try? helper.write(to: helperPath, atomically: true, encoding: .utf8)) != nil
     process.standardOutput = Pipe()
     process.standardError = Pipe()
     if (try? process.run()) != nil {
-        // the other program takes the lock and keeps it for a moment
-        Thread.sleep(forTimeInterval: 1.5)
+        // The other program takes the lock and keeps it for a moment.
+        //
+        // The test waits for the other program to say that it has the lock
+        // instead of waiting for a fixed time and hoping. The other program
+        // is a program of its own, and on a machine that is busy it takes a
+        // moment to come up: a test that waits for a fixed time fails on a
+        // busy machine and passes on a quiet one, and it says nothing about
+        // the app.
+        //
+        // The other program writes its number into the file of the lock only
+        // after it has the lock, so the number is the sign that it is there.
+        var waited = 0.0
+        while waited < 15.0, InstanceLock.otherInstance(home: lockHome) == nil {
+            Thread.sleep(forTimeInterval: 0.1)
+            waited += 0.1
+        }
+        check(InstanceLock.otherInstance(home: lockHome) != nil,
+              "the other program has the lock")
         check(!InstanceLock.acquire(home: lockHome), "the app gives up when another app has the lock")
         check(InstanceLock.otherInstance(home: lockHome) != nil, "the instance that holds the lock is known")
+        // the other program lets the lock go, and the kernel gives it back
+        process.terminate()
         process.waitUntilExit()
         check(InstanceLock.acquire(home: lockHome), "the lock of a process that is gone is free again")
     }
