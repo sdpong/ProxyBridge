@@ -7,6 +7,11 @@ import Network
 // container, which meant a full serialize and write on every new address, a stat
 // on every connection, a re-parse on every change, and a list of the sites that
 // were visited sitting on disk.
+//
+// The file lives in the shared folder because the gateway mode of the app needs
+// the same two things: the map itself, and the parser that fills it. Each
+// process keeps a map of its own - the two do not share memory - and each one
+// fills its own map with the answers it saw.
 final class DNSMapStore {
     static let shared = DNSMapStore()
 

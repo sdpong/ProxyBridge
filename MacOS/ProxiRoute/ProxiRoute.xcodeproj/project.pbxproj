@@ -73,6 +73,11 @@
 			path = extension;
 			sourceTree = "<group>";
 		};
+		AB020000000000000000C001 /* shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = shared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +106,7 @@
 				84B1D8002F141B2300D0E39B /* Signing-Config-app.xcconfig */,
 				8466A1D52EC63B9400A8C2E5 /* ProxiRoute */,
 				8466A1EA2EC63C5600A8C2E5 /* extension */,
+				AB020000000000000000C001 /* shared */,
 				AB010000000000000000A001 /* remove-old-extensions.sh */,
 				8466A1E72EC63C5600A8C2E5 /* Frameworks */,
 				8466A1D42EC63B9400A8C2E5 /* Products */,
@@ -147,6 +153,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				8466A1D52EC63B9400A8C2E5 /* ProxiRoute */,
+				AB020000000000000000C001 /* shared */,
 			);
 			name = ProxiRoute;
 			packageProductDependencies = (
@@ -169,6 +176,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				8466A1EA2EC63C5600A8C2E5 /* extension */,
+				AB020000000000000000C001 /* shared */,
 			);
 			name = extension;
 			packageProductDependencies = (
