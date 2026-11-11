@@ -309,12 +309,19 @@ final class GatewayController: ObservableObject {
         // is on - it remembers that it put the rules in place, and it does
         // not know that the machine took them away.
         //
+        // The other way round is the same trouble with a different face: the
+        // switch of the window is on, and the helper says that the gateway
+        // is off. That is what a helper that was put in place again looks
+        // like, and what a machine that was restarted looks like - the helper
+        // does not remember that it had the rules of the gateway in place,
+        // and without them the traffic of the network is redirected nowhere.
+        //
         // The rules are put in place again. Only the rules of the filter are
         // loaded again: the program that carries the traffic keeps carrying
         // it, and the connections that are open are not dropped.
         let filterOn = result.response.filterEnabled ?? true
         let forwardingOn = result.response.forwardingEnabled ?? true
-        if isEnabled, enabled, !filterOn || !forwardingOn {
+        if isEnabled, !enabled || !filterOn || !forwardingOn {
             reapplyRules()
         }
         // what the traffic of the network has carried so far
