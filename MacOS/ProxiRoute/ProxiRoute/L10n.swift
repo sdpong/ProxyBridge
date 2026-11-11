@@ -440,6 +440,8 @@ enum L10n {
         "None of the rules speaks about UDP, so the datagrams of the clients - the DNS, the QUIC, the tunnels of a call - go where the global mode sends them, and not by a rule. The connections of the clients are the ones the rules speak about.": "没有任何规则提到 UDP，所以客户端的数据报（DNS、QUIC、通话的隧道）不按规则走，而是走全局模式指定的地方。客户端的连接走的才是规则说的那些。",
         "None of the rules speaks about the traffic of the network: every rule names a program, and a client of the network has no program. The traffic goes where the global mode sends it.": "没有任何规则提到网络的流量：每条规则都写明了程序，而网络上的客户端没有程序。这些流量走全局模式指定的地方。",
         "The datagrams of the clients cannot go through %@: only a SOCKS5 proxy can carry them, so they go out directly.": "客户端的数据报不能走 %@：只有 SOCKS5 代理能带数据报，所以它们直连出去。",
+        "This machine is the gateway of the network: the traffic of the clients goes by these rules as well, except that a rule naming a program does not apply to it - a client of the network has no program. What such a rule can still match is the host, the port and the protocol.": "这台机器是网络的网关：客户端的流量也按这些规则走，但写明了程序的规则对它们不适用——网络上的客户端没有程序。这样的规则仍然能匹配的是主机、端口和协议。",
+        "In the gateway mode the traffic of the clients of the network has no program, so this rule matches them by the host, the port and the protocol only. The name of the program says nothing about them.": "网关模式下，网络客户端的流量没有程序，所以这条规则只能按主机、端口和协议来匹配它们。程序名对它们没有任何意义。",
         "Where the Traffic Goes": "流量去向",
         "Outgoing Interface": "出口网卡",
         "Automatic": "自动",

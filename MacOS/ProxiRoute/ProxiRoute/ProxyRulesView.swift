@@ -268,6 +268,24 @@ struct ProxyRulesView: View {
                     .width(min: 120, ideal: 160)
                 }
                 .padding()
+
+                // What the rules can match when this machine is the gateway of
+                // the network.
+                //
+                // The traffic of the clients of the network has no program
+                // behind it, so a rule that names one is not about that
+                // traffic. It is said here because the rules are written for
+                // the traffic of this machine, and a person who writes a rule
+                // for a program and then watches the traffic of the network
+                // go somewhere else should know why.
+                if viewModel.runtimeMode == .gateway {
+                    Text(L10n.t("This machine is the gateway of the network: the traffic of the clients goes by these rules as well, except that a rule naming a program does not apply to it - a client of the network has no program. What such a rule can still match is the host, the port and the protocol."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal)
+                        .padding(.bottom, 12)
+                }
             }
         }
         .frame(minWidth: 900, minHeight: 500)
@@ -619,6 +637,17 @@ struct RuleEditorView: View {
                         Image(systemName: "info.circle").foregroundColor(.secondary)
                         Text(L10n.t("Target hosts and ports only apply to TCP. UDP rules match on the app (bundle id) only."))
                             .font(.caption).foregroundColor(.secondary)
+                    }
+
+                    // The gateway mode reads the rules a different way, and
+                    // the difference is worth saying where the rule is
+                    // written.
+                    if viewModel.runtimeMode == .gateway {
+                        HStack(spacing: 4) {
+                            Image(systemName: "info.circle").foregroundColor(.secondary)
+                            Text(L10n.t("In the gateway mode the traffic of the clients of the network has no program, so this rule matches them by the host, the port and the protocol only. The name of the program says nothing about them."))
+                                .font(.caption).foregroundColor(.secondary)
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
