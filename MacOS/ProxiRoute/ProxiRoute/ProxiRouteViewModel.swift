@@ -690,6 +690,28 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         gateway.apply()
     }
 
+    // What the rules of the app cover for the traffic of the network.
+    //
+    // The card of the gateway mode says it, because a rule that says TCP and
+    // a rule that names a program look the same in the list of the rules and
+    // mean very different things for a client of the network.
+    var gatewayCoverage: GatewayCoverage.Report {
+        return GatewayCoverage.report(rules: localProxyRules())
+    }
+
+    // The proxy the global mode sends everything to, as the engine reads it.
+    //
+    // It is nil when the global mode sends everything straight out, and when
+    // it names a proxy that is not in the list any more.
+    var gatewayGlobalProxy: ProxyEndpoint? {
+        guard routeSettings.globalMode, routeSettings.globalProxyId != "DIRECT" else { return nil }
+        return proxyConfigs.first(where: { $0.id == routeSettings.globalProxyId }).map { config in
+            ProxyEndpoint(id: config.id, name: config.name, type: config.type,
+                          host: config.host, port: config.port,
+                          username: config.username, password: config.password)
+        }
+    }
+
     // The gateway mode goes off.
     func stopGateway() {
         gateway.isEnabled = false

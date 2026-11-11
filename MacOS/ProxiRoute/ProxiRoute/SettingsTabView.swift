@@ -250,6 +250,22 @@ struct SettingsTabView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    // What the rules cover for the traffic of the network.
+                    //
+                    // The rules are written for the traffic of this machine,
+                    // and the traffic of the network is not that traffic: a
+                    // client has no program, so a rule that names one is
+                    // never about it. The card says so when the rules leave
+                    // the traffic of the network uncovered, because a person
+                    // who watches the dns of a phone go somewhere else should
+                    // know that no rule said so.
+                    if let notice = gatewayCoverageNotice {
+                        Text(notice)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     // The dns of the clients.
                     //
                     // The gateway mode takes the dns of the clients over: the
@@ -293,6 +309,19 @@ struct SettingsTabView: View {
     // The interfaces the other terminals could reach this machine through.
     private var gatewayInterfaces: [(name: String, kind: String)] {
         return InterfaceList.shared.entries.map { (name: $0.name, kind: $0.kind) }
+    }
+
+    // What the card says about the rules and the traffic of the network.
+    //
+    // It says nothing when the rules cover the traffic. It says something
+    // when they do not, and the thing it says is the one that matters: the
+    // datagrams of the clients are not covered by a rule, and the traffic of
+    // the network is not covered at all.
+    private var gatewayCoverageNotice: String? {
+        let report = viewModel.gatewayCoverage
+        return GatewayCoverage.noRulesNotice(report)
+            ?? GatewayCoverage.udpNotice(report)
+            ?? GatewayCoverage.proxyNotice(viewModel.gatewayGlobalProxy)
     }
 
     // What the card says about the dns of the clients.
