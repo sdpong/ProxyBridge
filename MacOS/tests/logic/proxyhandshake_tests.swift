@@ -202,6 +202,12 @@ func endpoint(_ name: String, _ port: Int) -> ProxyEndpoint {
 //
 // The number of the ways of saying who it is and the ways themselves have to
 // agree, or the proxy waits for a way that never comes.
+//
+// The place the client wants to reach is said before anything else: a value
+// that is read before it is set holds nothing, and reading it is a crash
+// that has nothing to do with the thing the test is about.
+let target = FlowTarget(host: "example.com", port: 443)
+
 let recorder = RecordingProxy()
 _ = LocalProxyDialer.connectAndGreet(
     endpoint: ProxyEndpoint(id: "recorded", name: "recorded", type: "socks5",
@@ -229,7 +235,6 @@ print("       the greeting with a name: \(withName)")
 // A proxy that says nothing: the greeting gives up instead of waiting
 let silent = SilentProxy()
 let silentEndpoint = endpoint("silent", silent.port)
-let target = FlowTarget(host: "example.com", port: 443)
 
 var began = Date()
 let silentTCP = LocalProxyDialer.connectAndGreet(endpoint: silentEndpoint, target: target, timeout: 2)
