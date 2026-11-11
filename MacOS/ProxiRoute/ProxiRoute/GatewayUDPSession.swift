@@ -55,6 +55,14 @@ final class GatewayUDPSession {
     // when the flow was last heard from
     private var lastActivity = Date()
 
+    // Whether this flow is a flow of dns.
+    //
+    // The answer of a resolver is where the name and the address are said
+    // together, and the gateway mode needs it: a rule that names a host has
+    // nothing else to match against. The flow knows it once the way out is
+    // open, because that is when the place it is going to is known.
+    private var isDNS = false
+
     // The question of where the datagrams were going and where they go now.
     //
     // It is asked on the thread of the flow, so that the thread that takes
@@ -261,13 +269,15 @@ final class GatewayUDPSession {
         let port = Int(UInt16(bigEndian: clientAddress.sin_port))
         guard let plan = planner(host, port) else { return false }
 
+        isDNS = GatewayDNS.isDNS(port: plan.target.port)
+
         switch plan.upstream {
         case .blocked:
             // a rule blocks the traffic: the datagrams are dropped, and the
             // flow is not opened
             return false
         case .direct:
-            guard let socket = LocalProxySocket.connectUDP(host: plan.target.proxyHost,
+            guard let socket = LocalProxySocket.connectUDP(host: plan.target.directHost,
                                                            port: plan.target.port) else {
                 return false
             }
@@ -286,7 +296,7 @@ final class GatewayUDPSession {
         case .chain:
             // a chain cannot carry a datagram, and the engine has already said
             // so: the traffic goes straight out
-            guard let socket = LocalProxySocket.connectUDP(host: plan.target.proxyHost,
+            guard let socket = LocalProxySocket.connectUDP(host: plan.target.directHost,
                                                            port: plan.target.port) else {
                 return false
             }
@@ -353,6 +363,12 @@ final class GatewayUDPSession {
                 return
             }
             payload = bare
+        }
+        // The answer of a resolver is where the name and the address are said
+        // together. The gateway mode remembers it, and the rules that name a
+        // host have something to match against afterwards.
+        if isDNS {
+            GatewayDNS.record(answer: payload)
         }
         sendBack(payload)
     }

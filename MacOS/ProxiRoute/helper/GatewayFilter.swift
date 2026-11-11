@@ -125,6 +125,23 @@ enum GatewayFilter {
                 out += "no nat on \(interface) from \(own) to any\n"
             }
 
+            // The dns of the clients is taken in as well, even when it is
+            // meant for this machine.
+            //
+            // A client of the network may use this machine as its resolver,
+            // and then the query comes to the address of this machine. The
+            // rule that keeps the traffic meant for this machine out of the
+            // redirect comes after this one, so that the query is taken in
+            // and answered by the app: the name of a place is the only thing
+            // that says which place it is, and without it the rules that
+            // name a host cannot match the traffic of the clients.
+            //
+            // The traffic of this machine itself is not in this rule: it was
+            // let go of above, or the machine would ask itself for a name
+            // and wait for the answer for ever.
+            out += "rdr pass on \(interface) proto udp from \(subnet) to any port 53 -> \(address) port \(redirectPort)\n"
+            out += "rdr pass on \(interface) proto tcp from \(subnet) to any port 53 -> \(address) port \(redirectPort)\n"
+
             // The traffic that is meant for this machine is not redirected
             // either: a client that wants to reach a server that runs on this
             // machine has to be able to reach it.

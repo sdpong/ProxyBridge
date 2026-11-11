@@ -64,20 +64,27 @@ final class GatewayDataPlane {
 
     // The decision for one connection.
     //
-    // The address is the one the connection was going to, and there is no
-    // name: the client of the network resolved the name by itself, and the
-    // filter does not say what the name was. A rule that names a host is
-    // therefore matched against the address, and the rules that want the name
-    // will get it when the dns of the clients is taken over as well.
+    // The address is the one the connection was going to, and the names are
+    // the ones that address is known by - the gateway mode learned them from
+    // the dns of the clients. A rule that names a host is matched against
+    // the names as well as against the address, and the proxy server is
+    // asked for the name, so that the name is resolved where the proxy
+    // server is and not here.
     static func plan(rules: [EngineRule],
                      proxies: [ProxyEndpoint],
                      chains: [String: [String]],
+                     options: GatewayRouting.Options = GatewayRouting.Options(),
                      originalAddress: String,
                      originalPort: Int,
-                     transport: FlowProtocol = .tcp) -> Plan {
-        let target = FlowTarget(address: originalAddress, port: originalPort, transport: transport)
-        let decision = ProxyRuleEngine.decide(rules: rules, target: target,
-                                              proxies: proxies, chains: chains)
+                     transport: FlowProtocol = .tcp,
+                     names: [String] = []) -> Plan {
+        let target = FlowTarget(name: names.first,
+                                address: originalAddress,
+                                aliases: Array(names.dropFirst()),
+                                port: originalPort,
+                                transport: transport)
+        let decision = GatewayRouting.decide(rules: rules, proxies: proxies, chains: chains,
+                                             options: options, target: target)
         return Plan(target: target, upstream: decision.upstream, note: decision.note)
     }
 
@@ -89,6 +96,8 @@ final class GatewayDataPlane {
     private var rules: [EngineRule] = []
     private var proxies: [ProxyEndpoint] = []
     private var chains: [String: [String]] = [:]
+    // the switches above the rules
+    private var options = GatewayRouting.Options()
 
     // The port the datagrams are taken in on.
     //
@@ -131,6 +140,14 @@ final class GatewayDataPlane {
     // The port the traffic of the network is redirected to.
     private var redirectPort: Int = GatewayDataPlane.redirectPort
 
+    // Every address of this machine.
+    //
+    // A client of the network may ask this machine for a name, and then the
+    // query comes to an address of this machine. The query cannot be
+    // answered by this machine - it would come back to where it started -
+    // so it goes to a resolver of the system instead.
+    private var ownAddresses: Set<String> = ["127.0.0.1"]
+
     // What the traffic has carried so far.
     private var connectionCount = 0
     private var bytesUp: Int64 = 0
@@ -154,19 +171,21 @@ final class GatewayDataPlane {
     // rules of the app may have been changed since the last time.
     func update(rules newRules: [EngineRule],
                 proxies newProxies: [ProxyEndpoint],
-                chains newChains: [String: [String]]) {
+                chains newChains: [String: [String]],
+                options newOptions: GatewayRouting.Options = GatewayRouting.Options()) {
         stateLock.lock()
         rules = newRules
         proxies = newProxies
         chains = newChains
+        options = newOptions
         stateLock.unlock()
     }
 
     // The rules as they are right now.
-    private func snapshot() -> ([EngineRule], [ProxyEndpoint], [String: [String]]) {
+    private func snapshot() -> ([EngineRule], [ProxyEndpoint], [String: [String]], GatewayRouting.Options) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return (rules, proxies, chains)
+        return (rules, proxies, chains, options)
     }
 
     // MARK: - what the traffic has carried
@@ -216,6 +235,11 @@ final class GatewayDataPlane {
         self.datagramFD = datagramFD
         redirectAddress = address
         redirectPort = port
+        // The addresses of this machine are asked once and then kept: a
+        // client that asks this machine for a name has to be told where the
+        // query really goes, and the addresses of the machine do not change
+        // while the gateway is on.
+        ownAddresses = Set(LocalAddresses.all().map { $0.address } + ["127.0.0.1", address])
         running = true
         stateLock.unlock()
 
@@ -425,14 +449,41 @@ final class GatewayDataPlane {
             return nil
         }
 
-        let (allRules, allProxies, allChains) = snapshot()
+        // The query for a name that was meant for this machine goes to a
+        // resolver of the system instead. It cannot be answered here: the
+        // answer would come back to where the query started, and the client
+        // would wait for ever.
+        let destination = dnsDestination(for: originalAddress, port: originalPort)
+
+        let (allRules, allProxies, allChains, allOptions) = snapshot()
         let plan = GatewayDataPlane.plan(rules: allRules, proxies: allProxies, chains: allChains,
-                                         originalAddress: originalAddress, originalPort: originalPort,
+                                         options: allOptions,
+                                         originalAddress: destination, originalPort: originalPort,
                                          transport: .udp)
         if let note = plan.note {
             log(note, level: "WARN")
         }
         return GatewayUDPSession.Plan(target: plan.target, upstream: plan.upstream, note: plan.note)
+    }
+
+    // Where a query for a name really goes.
+    //
+    // A client of the network may use this machine as its resolver, and then
+    // the query comes to an address of this machine. The answer cannot come
+    // from here: it would come back to where the query started, and the
+    // client would wait for ever. A resolver of the system is asked instead,
+    // and it is the one the machine itself uses.
+    private func dnsDestination(for address: String, port: Int) -> String {
+        guard GatewayDNS.isDNS(port: port), isOwnAddress(address) else { return address }
+        guard let resolver = GatewayDNS.systemResolver() else { return address }
+        return resolver
+    }
+
+    // Whether the address is one of this machine.
+    private func isOwnAddress(_ address: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return ownAddresses.contains(address)
     }
 
     // The flows that have been quiet for too long are given up.
@@ -479,9 +530,18 @@ final class GatewayDataPlane {
             return
         }
 
-        let (allRules, allProxies, allChains) = snapshot()
+        let (allRules, allProxies, allChains, allOptions) = snapshot()
+        // The names the address is known by. They were learned from the dns
+        // of the clients, and they are what a rule that names a host is
+        // matched against.
+        let names = GatewayDNS.names(for: originalAddress)
+        // A query for a name that was meant for this machine goes to a
+        // resolver of the system instead.
+        let destination = dnsDestination(for: originalAddress, port: originalPort)
         let plan = GatewayDataPlane.plan(rules: allRules, proxies: allProxies, chains: allChains,
-                                         originalAddress: originalAddress, originalPort: originalPort)
+                                         options: allOptions,
+                                         originalAddress: destination, originalPort: originalPort,
+                                         names: names)
         if let note = plan.note {
             // the reason the traffic did not go where the rule said is worth
             // a line in the log: a rule that points at something that is not
@@ -507,7 +567,7 @@ final class GatewayDataPlane {
         stateLock.unlock()
 
         log("The connection of \(peer.address) to \(plan.target.text) goes \(description(of: plan.upstream))", level: "INFO")
-        relay(client: fd, upstream: upstreamFD)
+        relay(client: fd, upstream: upstreamFD, dns: GatewayDNS.isDNS(port: plan.target.port))
     }
 
     // The question to the helper.
@@ -532,7 +592,7 @@ final class GatewayDataPlane {
         case .blocked:
             return nil
         case .direct:
-            let result = LocalProxySocket.connect(host: target.proxyHost, port: target.port, timeout: 15)
+            let result = LocalProxySocket.connect(host: target.directHost, port: target.port, timeout: 15)
             return result.fd
         case .proxy(let endpoint):
             return LocalProxyDialer.connectAndGreet(endpoint: endpoint, target: target)
@@ -554,7 +614,7 @@ final class GatewayDataPlane {
     //
     // The idle time is the limit of the wait: a client that goes away without
     // closing the connection does not stay open for ever.
-    private func relay(client fd: Int32, upstream upstreamFD: Int32) {
+    private func relay(client fd: Int32, upstream upstreamFD: Int32, dns: Bool = false) {
         defer { Darwin.close(upstreamFD) }
         LocalProxySocket.clearTimeout(fd)
         LocalProxySocket.clearTimeout(upstreamFD)
@@ -564,6 +624,15 @@ final class GatewayDataPlane {
             pollfd(fd: upstreamFD, events: Int16(POLLIN), revents: 0)
         ]
         var buffer = [UInt8](repeating: 0, count: 32 * 1024)
+
+        // The answer of a resolver, when the flow is a flow of dns.
+        //
+        // A resolver that is asked over tcp says how long the message is in
+        // front of the message, and the message itself follows. The bytes go
+        // to the client as they are, and the name is taken out of them on
+        // the way: it is the only place the name is said.
+        var dnsBuffer = Data()
+        var dnsAnswerSeen = false
 
         while isRunning {
             fds[0].revents = 0
@@ -596,9 +665,29 @@ final class GatewayDataPlane {
                     }
                     sent += written
                 }
+                if dns, index == 1, !dnsAnswerSeen {
+                    dnsBuffer.append(contentsOf: buffer[0..<count])
+                    if GatewayDataPlane.takeDNSAnswer(&dnsBuffer) {
+                        dnsAnswerSeen = true
+                    }
+                }
                 countBytes(up: index == 0 ? count : 0, down: index == 0 ? 0 : count)
             }
         }
+    }
+
+    // The name of a dns answer that came over tcp.
+    //
+    // The message says how long it is in front of it, and it is only read
+    // when all of it has come. The name is remembered and the message is
+    // left alone: the client is waiting for it.
+    private static func takeDNSAnswer(_ buffer: inout Data) -> Bool {
+        guard buffer.count >= 2 else { return false }
+        let length = Int(buffer[buffer.startIndex]) << 8 | Int(buffer[buffer.startIndex + 1])
+        guard length > 0, buffer.count >= length + 2 else { return false }
+        let message = Data(buffer[(buffer.startIndex + 2)..<(buffer.startIndex + length + 2)])
+        GatewayDNS.record(answer: message)
+        return true
     }
 
     private func countBytes(up: Int, down: Int) {

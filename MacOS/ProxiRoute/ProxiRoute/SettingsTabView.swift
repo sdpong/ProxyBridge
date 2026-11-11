@@ -249,6 +249,21 @@ struct SettingsTabView: View {
                             .foregroundColor(viewModel.gateway.isRunning ? .secondary : .orange)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+
+                    // The dns of the clients.
+                    //
+                    // The gateway mode takes the dns of the clients over: the
+                    // names they look up are learned from it, and a rule that
+                    // names a host can then match their traffic. A client that
+                    // asks the router of its own network for a name never
+                    // comes through this machine, so the card says where the
+                    // dns of the clients has to point.
+                    if let notice = gatewayDNSNotice {
+                        Text(notice)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } footer: {
                     Text(L10n.t("The other terminals of the network point at this machine as their gateway. Their traffic goes out by the rules of the app, the same rules as the traffic of this machine, except that a rule naming a program does not apply to them: they have no program."))
                 }
@@ -278,6 +293,20 @@ struct SettingsTabView: View {
     // The interfaces the other terminals could reach this machine through.
     private var gatewayInterfaces: [(name: String, kind: String)] {
         return InterfaceList.shared.entries.map { (name: $0.name, kind: $0.kind) }
+    }
+
+    // What the card says about the dns of the clients.
+    //
+    // The names the clients look up are learned from the dns that goes
+    // through this machine, and a rule that names a host can only match a
+    // traffic that has a name. The card says where the dns of the clients
+    // has to point, because a client that asks the router of its own network
+    // for a name never comes through here.
+    private var gatewayDNSNotice: String? {
+        let name = viewModel.gateway.interface.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        let address = LocalAddresses.address(ofInterface: name) ?? ""
+        return L10n.f("The DNS of the clients is taken over: the names they look up are learned from it, so that the rules that name a host can match their traffic. Point the DNS of the clients at this machine (%@) or at a resolver outside their own network - a client that asks the router of its own network never comes through here.", address)
     }
 
     // What kind of network card a name is.

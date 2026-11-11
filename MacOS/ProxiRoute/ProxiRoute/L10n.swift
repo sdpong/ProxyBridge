@@ -156,6 +156,7 @@ enum L10n {
         "The gateway mode is on.": "网关模式已打开。",
         "The gateway mode is off.": "网关模式已关闭。",
         "The other terminals of the network point at this machine as their gateway. Their traffic goes out by the rules of the app, the same rules as the traffic of this machine, except that a rule naming a program does not apply to them: they have no program.": "网络里的其他终端把本机设为网关。它们的流量按应用的规则走，和本机流量用同一套规则，只是点名程序的规则对它们不适用：它们没有程序。",
+        "The DNS of the clients is taken over: the names they look up are learned from it, so that the rules that name a host can match their traffic. Point the DNS of the clients at this machine (%@) or at a resolver outside their own network - a client that asks the router of its own network never comes through here.": "客户端的 DNS 由网关接管：它们查到的名字会被记下来，所以点名主机的规则才能匹配它们的流量。把客户端的 DNS 指向本机（%@），或者指向不在客户端自己网段里的解析器——直接问自家路由器的客户端根本不会经过本机。",
         "The traffic of this machine goes through the proxy, and the proxy server waits for the clients of the network. The processor of the machine pays for both.": "本机的流量走代理，同时代理服务器等待网络中的客户端。处理器要为两份开销买单。",
         "The server listens when the running mode is Proxy Server. The traffic of this machine is taken over in every mode.": "运行模式为「代理服务器」时服务器才监听。本机的流量在每种模式下都被接管。",
         "Logging and DNS": "日志与 DNS",

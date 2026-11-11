@@ -591,6 +591,10 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
         routeSettings = settings
         settings.save()
         sendRouteOptionsToExtension(routeOptionsInEffect)
+        // the gateway mode reads the same settings, and it reads them right
+        // away: a person who turns the global mode on expects the traffic of
+        // the network to change way at once
+        updateGatewayRouteOptions(settings)
         addLog("INFO", L10n.t("Gateway settings saved"))
     }
 
@@ -670,6 +674,19 @@ class ProxiRouteViewModel: NSObject, ObservableObject {
                           username: config.username, password: config.password)
         }
         gateway.chains = localProxyChains()
+        gateway.routeOptions = GatewayRouting.Options(routeSettings)
+        gateway.apply()
+    }
+
+    // The routing options of the gateway mode.
+    //
+    // The gateway reads the settings of the app itself, and not the copy that
+    // goes to the extension: the extension gets the defaults when the app is
+    // not the gateway of the network, because the switches above the rules
+    // are about the traffic of the other terminals. The gateway is that
+    // traffic, so it reads the settings as they are.
+    func updateGatewayRouteOptions(_ settings: RouteSettings) {
+        gateway.routeOptions = GatewayRouting.Options(settings)
         gateway.apply()
     }
 

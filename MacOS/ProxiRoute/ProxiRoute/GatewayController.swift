@@ -94,6 +94,14 @@ final class GatewayController: ObservableObject {
     var proxies: [ProxyEndpoint] = []
     var chains: [String: [String]] = [:]
 
+    // The switches above the rules.
+    //
+    // They are the settings of the app: the global mode, the proxy the
+    // traffic that no rule names goes through, and whether udp may go
+    // through a proxy at all. The gateway mode reads them the way the
+    // extension reads them.
+    var routeOptions = GatewayRouting.Options()
+
     // What the log says.
     var logHandler: ((String, String) -> Void)?
 
@@ -125,6 +133,11 @@ final class GatewayController: ObservableObject {
                 self?.log(message, level: level)
             }
         }
+        // The names that were learned from the dns of the clients are said in
+        // the log as well. A person who wonders why a rule did not match the
+        // traffic of a phone has to see whether the name of the place was
+        // ever learned at all.
+        GatewayDNS.logHandler = dataPlane.logHandler
     }
 
     // The gateway is asked to start.
@@ -135,7 +148,7 @@ final class GatewayController: ObservableObject {
     func apply() {
         // the rules of the app are the rules the traffic of the network goes
         // by, and they may have changed since the last time
-        dataPlane.update(rules: rules, proxies: proxies, chains: chains)
+        dataPlane.update(rules: rules, proxies: proxies, chains: chains, options: routeOptions)
         if isEnabled {
             start()
         } else {

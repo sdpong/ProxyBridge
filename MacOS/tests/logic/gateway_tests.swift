@@ -142,6 +142,34 @@ check(text.contains("no rdr on en0 from 192.168.254.0/24 to 1.2.3.4"),
 check(text.contains("nat on en0 from 192.168.254.0/24 to any -> (en0)"),
       "the clients keep their own address on the way out")
 
+// The dns of the clients is taken in, even when it is meant for this
+// machine: a client may use this machine as its resolver, and then the
+// query comes to the address of this machine
+check(text.contains("rdr pass on en0 proto udp from 192.168.254.0/24 to any port 53 -> 192.168.254.205 port 18081"),
+      "the dns of the clients is redirected to the app")
+check(text.contains("rdr pass on en0 proto tcp from 192.168.254.0/24 to any port 53 -> 192.168.254.205 port 18081"),
+      "the dns of the clients is redirected to the app over tcp as well")
+
+// the dns rule comes after the rule that keeps the traffic of this machine
+// out of the redirect: the machine must not ask itself for a name
+let dnsRule = text.range(of: "rdr pass on en0 proto udp from 192.168.254.0/24 to any port 53")
+let ownTraffic = text.range(of: "no rdr on en0 from 192.168.254.205 to any")
+check(dnsRule != nil && ownTraffic != nil, "the dns rule and the rule of this machine are there")
+if let dnsRule = dnsRule, let ownTraffic = ownTraffic {
+    check(ownTraffic.lowerBound < dnsRule.lowerBound,
+          "the rule that keeps this machine's traffic out comes before the rule of the dns")
+}
+
+// and it comes before the rule that keeps the traffic meant for this
+// machine out of the redirect: a query that is meant for this machine is
+// still a query of a client
+let meantForThisMachine = text.range(of: "no rdr on en0 to 192.168.254.205")
+check(meantForThisMachine != nil, "the rule of the traffic meant for this machine is there")
+if let dnsRule = dnsRule, let meantForThisMachine = meantForThisMachine {
+    check(dnsRule.lowerBound < meantForThisMachine.lowerBound,
+          "the rule of the dns comes before the rule of the traffic meant for this machine")
+}
+
 // the traffic is redirected to the address of the machine and not to the
 // loopback: the answer of the filter has to come from the same place the
 // traffic was sent to

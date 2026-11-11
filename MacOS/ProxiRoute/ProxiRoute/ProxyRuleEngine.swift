@@ -41,14 +41,22 @@ enum FlowProtocol: String, Equatable {
 struct FlowTarget: Equatable {
     // the name of the host, when it is known
     let name: String?
+    // the other names the same host is known by
+    //
+    // One address may serve many names, and a rule that names one of them
+    // has to be able to match it. They are kept apart from the name above,
+    // because the name above is the one the proxy server is asked for: a
+    // name that has gone stale would take the traffic to the wrong place.
+    let aliases: [String]
     // the address of the host, when it is known
     let address: String?
     let port: Int
     let transport: FlowProtocol
 
-    init(name: String? = nil, address: String? = nil, port: Int, transport: FlowProtocol = .tcp) {
+    init(name: String? = nil, address: String? = nil, aliases: [String] = [], port: Int, transport: FlowProtocol = .tcp) {
         self.name = name
         self.address = address
+        self.aliases = aliases
         self.port = port
         self.transport = transport
     }
@@ -69,12 +77,20 @@ struct FlowTarget: Equatable {
     var hostCandidates: [String] {
         var out: [String] = []
         if let name, !name.isEmpty { out.append(name) }
-        if let address, !address.isEmpty, out.first != address { out.append(address) }
+        for alias in aliases where !alias.isEmpty && !out.contains(alias) { out.append(alias) }
+        if let address, !address.isEmpty, !out.contains(address) { out.append(address) }
         return out
     }
 
     // the host that is asked of the proxy: the name when there is one
     var proxyHost: String { hostCandidates.first ?? "" }
+
+    // the host that a connection going straight out goes to
+    //
+    // It is the address when there is one. A name is only good for the proxy
+    // server that resolves it, and a name that has gone stale would take
+    // the traffic to a place the client did not ask for.
+    var directHost: String { address ?? proxyHost }
 
     var text: String { "\(proxyHost):\(port)" }
 
